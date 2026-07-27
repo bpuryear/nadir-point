@@ -1,0 +1,17 @@
+[
+  {
+    "id": "wide",
+    "description": "Maximum tactical zoom. Cruiser as a speck against the celestial. Tests scale cues and atmospheric perspective.",
+    "settle": 90
+  },
+  {
+    "id": "close",
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity.",
+    "settle": 90
+  },
+  {
+    "id": "silhouette",
+    "description": "Cruiser against the bright celestial, key light behind. Tests whether modules read from silhouette alone.",
+    "settle": 90
+  }
+]

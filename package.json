@@ -1,0 +1,22 @@
+{
+  "name": "nadir-point",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Nadir Point - a single-ship space roguelike RTS built on three.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173",
+    "capture": "node tools/capture.mjs",
+    "bench": "node tools/bench.mjs",
+    "smoke": "node tools/smoke.mjs"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.0",
+    "vite": "^8.1.5"
+  }
+}
