@@ -15,13 +15,20 @@ import { setupPOIProbe } from './poi_common.js';
 
 export default {
   name: 'POI — Near Star',
+  // Pitched up to 17 degrees so the star clears the top edge and sits IN frame —
+  // the god-ray pass fades to nothing the moment its anchor leaves the viewport, and
+  // this POI's whole identity is volumetrics. It also puts the hull's top deck (the
+  // one surface the 17-degree key actually reaches) into view.
   camera: {
     distance: 3000,
-    pitch: 0.13,
+    pitch: 0.30,
     yaw: 5.30,
     target: new THREE.Vector3(0, 30, 0),
   },
   async setup(ctx) {
-    await setupPOIProbe(ctx, 'near-star', { yaw: 1.05, extraShips: 2 });
+    // Near broadside. Here the key is only 26 degrees off the view axis, so there
+    // is no yaw that lights a visible flank — the correct read is a blown-out top
+    // deck over black sides, and a broadside hull maximises that silhouette.
+    await setupPOIProbe(ctx, 'near-star', { yaw: 0.85, extraShips: 2 });
   },
 };

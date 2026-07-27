@@ -165,7 +165,11 @@ export function buildAsteroidField({
       flatShading: true,
       tint,
       ore: cls.ore,
-      scale: Math.max(0.25, Math.min(4, cls.base / 55)),
+      // The registry's rock maps tile at 40 m * scale. Left at 1, a 700 m boulder
+      // gets seventeen repeats of the same pitting across its face and reads as a
+      // golf ball. Scaling with the class's authored radius keeps roughly one and a
+      // half tiles per rock at every size, which is what makes a big rock look big.
+      scale: Math.max(0.25, Math.min(14, cls.base / 55)),
     });
 
     // split the class across shape variants

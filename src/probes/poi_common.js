@@ -132,19 +132,24 @@ export async function setupPOIProbe(ctx, poiId, { yaw = 0.22, position = new THR
   scene.add(ref);
   ctx.scaleReference = ref;
 
-  // A couple more hulls at distance: two identical boxes at different ranges are
-  // the cheapest possible proof that the depth in the frame is real.
+  /**
+   * More hulls at range. Identical boxes at different distances are the cheapest
+   * possible proof that the depth in the frame is real.
+   *
+   * They are placed on a RING well outside the hero, not in a box around it. Placed
+   * freely, one lands a few hundred metres off the camera axis, and a 1.4 km hull
+   * that close puts its 6 m running-light strip across the whole frame as a chain
+   * of blooming dashes — which reads as a rendering artefact, not as a ship.
+   */
   for (let i = 0; i < extraShips; i++) {
     const r = world.rng.fork(`probe-extra:${poiId}:${i}`);
+    const a = (i / Math.max(1, extraShips)) * Math.PI * 2 + r.range(-0.5, 0.5);
+    const rad = r.range(6500, 17000);
     const extra = buildScaleReference(registry, {
       yaw: r.range(-Math.PI, Math.PI),
-      position: new THREE.Vector3(
-        r.range(-9000, 9000),
-        r.range(-900, 1400),
-        r.range(-11000, 5000),
-      ),
+      position: new THREE.Vector3(Math.cos(a) * rad, r.range(-1400, 1900), Math.sin(a) * rad),
     });
-    extra.scale.setScalar(r.range(0.55, 1.05));
+    extra.scale.setScalar(r.range(0.5, 1.0));
     scene.add(extra);
   }
 

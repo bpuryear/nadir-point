@@ -224,7 +224,7 @@ export function hullParts({ rng, lod = 0 }) {
   };
 
   // =========================================================================
-  // LOD2: silhouette only. Five masses, one surface, ~150 triangles.
+  // LOD2: silhouette only. Six masses, one surface, ~150 triangles.
   // =========================================================================
   if (lod >= 2) {
     const hull = G.loft(toStations(decimate(HULL_STATIONS, 3)));
@@ -256,7 +256,7 @@ export function hullParts({ rng, lod = 0 }) {
   B.add('core', 'hull', hullGeo);
   mass('spine', hullGeo);
 
-  // Flank armour: four separate plates a side, gaps and all. This is where the key
+  // Flank armour: three separate plates a side, gaps and all. This is where the key
   // light catches - bright plating against the darker hull below it.
   for (const s of [-1, 1]) {
     B.add('core', 'plating', G.armourBelt({
@@ -553,9 +553,10 @@ function emptyMount(B, id, anchor, { up, padRadius, struts, conduits, plinth = n
   for (let i = 0; i < struts; i++) {
     const a = (i / Math.max(1, struts)) * Math.PI * 2 + jitter.range(0, 0.6);
     const rr = padRadius * 1.3;
+    // The rotation already sends the strut outward; do not also offset the origin.
     B.add('core', 'greeble', G.hexStrut({ length: 44, radius: 7, axis: 'y', detail }), {
-      pos: [ax + Math.cos(a) * rr, ay - (face === 'down' ? 44 : 0), az + Math.sin(a) * rr],
-      rot: face === 'down' ? [Math.PI, 0, 0] : null,
+      pos: [ax + Math.cos(a) * rr, ay, az + Math.sin(a) * rr],
+      rot: padRot,
     });
   }
   for (let i = 0; i < conduits; i++) {
