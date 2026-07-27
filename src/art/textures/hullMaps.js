@@ -30,7 +30,7 @@ import { greebleMap } from './greeble.js';
 import { wear } from './wear.js';
 import { drawText, factionSigil, hullCode, hazardStripes } from './decals.js';
 import { fbmField, cellularField } from './noise.js';
-import { getFactionPalette, saturate as desat, NEUTRAL } from '../palette.js';
+import { getFactionPalette, saturate as desat, shade, NEUTRAL } from '../palette.js';
 
 export const HULL_MAP_DEFAULTS = {
   size: 512,
@@ -50,8 +50,15 @@ function variantSpec(pal, variant) {
     case 'hullDark': return { base: pal.baseDark, alt: pal.base, surface: pal.surface.hullDark, greeble: 1.4, markings: false, wearMul: 1.15 };
     case 'plating': return { base: pal.plating, alt: pal.base, surface: pal.surface.plating, greeble: 0.55, markings: true, wearMul: 0.85 };
     case 'greeble': return { base: pal.greeble, alt: pal.baseDark, surface: pal.surface.greeble, greeble: 2.2, markings: false, wearMul: 1.0 };
-    case 'trim': return { base: pal.trim, alt: pal.base, surface: pal.surface.trim, greeble: 0.25, markings: false, wearMul: 1.25 };
-    case 'debris': return { base: desat(pal.base, 0.15), alt: desat(pal.baseDark, 0.15), surface: pal.surface.hull, greeble: 0.8, markings: false, wearMul: 1.6 };
+    // Trim's second tone must be a darker TRIM, not the hull grey - blending an
+    // accent band towards the hull colour is how a faction's identity colour ends
+    // up as beige.
+    case 'trim': return { base: pal.trim, alt: shade(pal.trim, 0.78), surface: pal.surface.trim, greeble: 0.25, markings: false, wearMul: 1.25 };
+    // Debris albedo is deliberately near-neutral and light. An InstancedMesh tints
+    // each fragment with setColorAt, and instanceColor MULTIPLIES the map - so if
+    // the map already carried the faction hue the wreckage would be double-tinted
+    // and end up nearly black.
+    case 'debris': return { base: desat(pal.bare, 0.18), alt: desat(pal.base, 0.18), surface: pal.surface.hull, greeble: 0.8, markings: false, wearMul: 1.3 };
     case 'hull':
     case 'derelictHull':
     default: return { base: pal.base, alt: pal.baseAlt, surface: pal.surface.hull, greeble: 1.0, markings: true, wearMul: 1.0 };
@@ -131,7 +138,7 @@ export function hullMaps(opts = {}) {
 
     // Grime pools, then streaks run over the top of everything.
     const gr = wr.grime[i] * 0.85;
-    if (gr > 0.01) { r = lerp(r, or_, gr * 0.55) * (1 - gr * 0.30); g = lerp(g, og_, gr * 0.55) * (1 - gr * 0.30); b = lerp(b, ob_, gr * 0.55) * (1 - gr * 0.34); }
+    if (gr > 0.01) { r = lerp(r, or_, gr * 0.42) * (1 - gr * 0.26); g = lerp(g, og_, gr * 0.42) * (1 - gr * 0.26); b = lerp(b, ob_, gr * 0.42) * (1 - gr * 0.30); }
 
     const st = wr.streak[i];
     if (st > 0.01) { r = lerp(r, or_ * 0.55, st * 0.7); g = lerp(g, og_ * 0.55, st * 0.7); b = lerp(b, ob_ * 0.55, st * 0.7); }
@@ -237,15 +244,15 @@ function stampMarkings(ctx, size, panel, pal, faction, rng, tier) {
   const pw = (plate.x1 - plate.x0) * size, ph = (plate.y1 - plate.y0) * size;
 
   ctx.save();
-  ctx.globalAlpha = 0.80;
+  ctx.globalAlpha = 0.62;
   if (rng.bool(0.55)) {
     const code = hullCode(rng, faction);
-    const cell = Math.max(2, Math.min(ph * 0.34 / 7, pw * 0.72 / (code.length * 6)));
+    const cell = Math.max(2, Math.min(ph * 0.13 / 7, pw * 0.40 / (code.length * 6)));
     ctx.fillStyle = css(pal.marking.ink);
     drawText(ctx, code, px + pw * 0.5, py + ph * 0.5, cell, { align: 'center', baseline: 'middle' });
   } else {
     ctx.fillStyle = css(pal.marking.ink);
-    factionSigil(ctx, faction, px + pw * 0.5, py + ph * 0.5, Math.min(pw, ph) * 0.30, pal.marking.ink);
+    factionSigil(ctx, faction, px + pw * 0.5, py + ph * 0.5, Math.min(pw, ph) * 0.16, pal.marking.ink);
   }
   ctx.restore();
 

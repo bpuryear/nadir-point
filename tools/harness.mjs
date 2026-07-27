@@ -30,7 +30,20 @@ const SWIFTSHADER_ARGS = [
   '--hide-scrollbars',
 ];
 
-export async function startServer({ port = 5173, mode = 'dev' } = {}) {
+export async function startServer({ port = 5173, mode = 'dev', build = false } = {}) {
+  if (build || mode === 'preview') {
+    // Build first so `preview` has something to serve. Preview mode exists because
+    // the dev server's HMR full-reloads the page mid-settle whenever another stream
+    // writes to the tree, which the harness would otherwise report as a boot failure.
+    await new Promise((resolve, reject) => {
+      const b = spawn('npx', ['vite', 'build', '--logLevel', 'error'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+      let err = '';
+      b.stderr.on('data', (d) => { err += d.toString(); });
+      b.stdout.on('data', (d) => { err += d.toString(); });
+      b.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`vite build failed:\n${err}`))));
+    });
+  }
+
   const cmd = mode === 'dev'
     ? ['npx', ['vite', '--port', String(port), '--host', '127.0.0.1', '--strictPort']]
     : ['npx', ['vite', 'preview', '--port', String(port), '--host', '127.0.0.1', '--strictPort']];

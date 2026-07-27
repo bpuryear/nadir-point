@@ -32,6 +32,24 @@
  * Derived colours are legal, but only through `shade`/`mix`/`saturate` here, which
  * record their provenance. That way the audit can say "this near-black came from
  * derelict.baseDark darkened 0.4" rather than shrugging.
+ *
+ * TWO THINGS IN HERE ARE PHYSICS, NOT TASTE, AND BOTH LOOK WRONG UNTIL THEY DO NOT
+ *
+ * 1. Metal albedo is bright. For a metallic surface the albedo channel IS the
+ *    specular reflectance F0 - iron is about 0.56 linear, aluminium 0.91. A
+ *    "dark gunmetal" greeble authored at 0x40444a is not dark metal, it is a
+ *    black hole, because metals have no diffuse term to fall back on. Anything
+ *    with metalness above ~0.7 in this file is authored bright.
+ *
+ * 2. Painted hull is a dielectric. A coated warship plate is metalness ~0.1-0.3.
+ *    Metal only appears where the coating is gone - which is why the wear layer
+ *    raises metalness at plate edges instead of the palette raising it globally.
+ *
+ * POI `intensity` values are in three's physical light units (r155+, legacy
+ * lighting removed): a directional light contributes irradiance = colour x
+ * intensity, and diffuse out = albedo/PI x irradiance x NdotL. A 0.18-albedo hull
+ * needs irradiance around 8 to land mid-frame after ACES. Numbers around 1-3 are
+ * the old pre-r155 convention and will render everything as sludge.
  */
 
 import * as THREE from 'three';
@@ -57,15 +75,15 @@ export const FACTION_PALETTES = {
     blurb: 'Heavy industrial. Built to be repaired in the field by someone angry.',
 
     // --- albedo ---
-    base: 0x767a68,        // warm grey-green steel
-    baseAlt: 0x646855,     // second plate tone, for panel-to-panel variance
-    baseDark: 0x2e3129,    // recessed structure
-    plating: 0x878a76,     // secondary armour, slightly brighter
-    greeble: 0x4c5049,     // small mechanical detail
+    base: 0x707c66,        // warm grey-green steel
+    baseAlt: 0x5d6a51,     // second plate tone, for panel-to-panel variance
+    baseDark: 0x373b31,    // recessed structure
+    plating: 0x828d74,     // secondary armour, slightly brighter
+    greeble: 0x9aa094,     // small mechanical detail - METAL, so a bright F0
     trim: 0xc4671b,        // the identity carrier: safety orange
     glass: 0x0a0e11,
     burn: 0x171512,        // carbon scoring
-    bare: 0xa9a396,        // bare metal revealed by edge wear
+    bare: 0xc6c0af,        // bare metal revealed by edge wear
 
     // --- emissive ---
     emissive: 0xff9126,    // amber running lights and panel glow
@@ -82,7 +100,7 @@ export const FACTION_PALETTES = {
     // metalness locally, which is what makes edge wear read as metal and not paint.
     surface: {
       hull: { metalness: 0.22, roughness: 0.62, variance: 0.30 },
-      hullDark: { metalness: 0.44, roughness: 0.74, variance: 0.22 },
+      hullDark: { metalness: 0.30, roughness: 0.74, variance: 0.22 },
       plating: { metalness: 0.30, roughness: 0.52, variance: 0.28 },
       greeble: { metalness: 0.86, roughness: 0.42, variance: 0.20 },
       trim: { metalness: 0.10, roughness: 0.54, variance: 0.14 },
@@ -90,7 +108,7 @@ export const FACTION_PALETTES = {
 
     // --- plating layout ---
     panel: {
-      tileM: 14,           // metres of hull one texture tile covers
+      tileM: 17,           // metres of hull one texture tile covers
       minPanel: 0.155,     // smallest panel as a fraction of the tile
       gap: 0.0105,         // seam width, fraction of the tile
       bevel: 0.012,
@@ -102,7 +120,7 @@ export const FACTION_PALETTES = {
     },
 
     // --- weathering ---
-    wear: { edge: 0.80, streak: 0.72, grime: 0.58, pit: 0.18, oxide: 0x3a2c17 },
+    wear: { edge: 0.80, streak: 0.86, grime: 0.58, pit: 0.18, oxide: 0x353120 },
 
     // --- markings ---
     marking: { ink: 0xd9d3c3, inkDark: 0x161513, hazardA: 0xd6981c, hazardB: 0x191712 },
@@ -115,13 +133,13 @@ export const FACTION_PALETTES = {
 
     base: 0xc6cfd6,
     baseAlt: 0xb0bcc6,
-    baseDark: 0x333d47,
+    baseDark: 0x495561,
     plating: 0xd7dee3,
-    greeble: 0x5c6773,
+    greeble: 0xbcc5cd,
     trim: 0x2f7fa8,
     glass: 0x080d14,
     burn: 0x14161a,
-    bare: 0x9aa6b0,
+    bare: 0xc2ccd4,
 
     emissive: 0x7fe4ff,
     emissiveHot: 0xd6f6ff,
@@ -133,14 +151,14 @@ export const FACTION_PALETTES = {
     // which is the contrast the whole faction identity rests on.
     surface: {
       hull: { metalness: 0.07, roughness: 0.30, variance: 0.12 },
-      hullDark: { metalness: 0.68, roughness: 0.38, variance: 0.14 },
+      hullDark: { metalness: 0.60, roughness: 0.38, variance: 0.14 },
       plating: { metalness: 0.05, roughness: 0.21, variance: 0.09 },
       greeble: { metalness: 0.90, roughness: 0.28, variance: 0.15 },
       trim: { metalness: 0.16, roughness: 0.26, variance: 0.09 },
     },
 
     panel: {
-      tileM: 18,
+      tileM: 23,
       minPanel: 0.26,      // bigger, cleaner plates
       gap: 0.0062,
       bevel: 0.008,
@@ -161,15 +179,15 @@ export const FACTION_PALETTES = {
     name: 'Derelict',
     blurb: 'Ancient. Nothing about the panel layout was decided by a person.',
 
-    base: 0x6d5c3c,
-    baseAlt: 0x574a31,
-    baseDark: 0x241f16,
-    plating: 0x7d6b45,
-    greeble: 0x3c3627,
+    base: 0x836b3c,
+    baseAlt: 0x6b5730,
+    baseDark: 0x332c1e,
+    plating: 0x917943,
+    greeble: 0x9a8a5e,
     trim: 0x8f9a35,
     glass: 0x0b0f09,
     burn: 0x120f0b,
-    bare: 0x8e8262,
+    bare: 0xb5a67e,
 
     emissive: 0x9fbe33,    // sickly green-gold
     emissiveHot: 0xd8ea7a,
@@ -188,7 +206,7 @@ export const FACTION_PALETTES = {
     },
 
     panel: {
-      tileM: 22,
+      tileM: 27,
       minPanel: 0.13,
       gap: 0.014,
       bevel: 0.020,
@@ -199,9 +217,9 @@ export const FACTION_PALETTES = {
       splits: 5,
     },
 
-    wear: { edge: 0.62, streak: 0.44, grime: 0.86, pit: 0.85, oxide: 0x2f2a12 },
+    wear: { edge: 0.62, streak: 0.58, grime: 0.86, pit: 0.85, oxide: 0x2f2a12 },
 
-    marking: { ink: 0x9aa14e, inkDark: 0x100e08, hazardA: 0x7f8a2c, hazardB: 0x14140c },
+    marking: { ink: 0x8a8f63, inkDark: 0x100e08, hazardA: 0x7f8a2c, hazardB: 0x14140c },
   },
 
   player: {
@@ -209,15 +227,15 @@ export const FACTION_PALETTES = {
     name: 'Nadir',
     blurb: 'Neutral gunmetal. Whatever you bolt on has to look like it belongs.',
 
-    base: 0x5f646a,
-    baseAlt: 0x53585e,
-    baseDark: 0x26292d,
-    plating: 0x6d7278,
-    greeble: 0x44484d,
+    base: 0x71777e,
+    baseAlt: 0x62686e,
+    baseDark: 0x32363b,
+    plating: 0x7e848b,
+    greeble: 0xa4aab0,
     trim: 0xa8a294,        // bone, not a hue. Reads as "unfactioned".
     glass: 0x090c10,
     burn: 0x151517,
-    bare: 0x9ea3a8,
+    bare: 0xc3c9ce,
 
     emissive: 0xd9e6ee,    // cool neutral white
     emissiveHot: 0xf4fbff,
@@ -228,14 +246,14 @@ export const FACTION_PALETTES = {
     // this hull is repaired in the field with whatever is to hand.
     surface: {
       hull: { metalness: 0.40, roughness: 0.52, variance: 0.24 },
-      hullDark: { metalness: 0.58, roughness: 0.66, variance: 0.20 },
+      hullDark: { metalness: 0.44, roughness: 0.66, variance: 0.20 },
       plating: { metalness: 0.52, roughness: 0.44, variance: 0.22 },
       greeble: { metalness: 0.90, roughness: 0.34, variance: 0.18 },
       trim: { metalness: 0.12, roughness: 0.50, variance: 0.12 },
     },
 
     panel: {
-      tileM: 16,
+      tileM: 20,
       minPanel: 0.185,
       gap: 0.0085,
       bevel: 0.010,
@@ -246,7 +264,7 @@ export const FACTION_PALETTES = {
       splits: 4,
     },
 
-    wear: { edge: 0.55, streak: 0.48, grime: 0.40, pit: 0.12, oxide: 0x2b2a24 },
+    wear: { edge: 0.55, streak: 0.62, grime: 0.40, pit: 0.12, oxide: 0x2b2a24 },
 
     marking: { ink: 0xc9ccd0, inkDark: 0x131417, hazardA: 0xbfa53a, hazardB: 0x16171a },
   },
@@ -268,9 +286,9 @@ export const POI_PALETTES = {
   'giant-orbit': {
     id: 'giant-orbit',
     name: 'Gas Giant Orbit',
-    key: { color: 0xfff0d8, intensity: 3.4, angularRadius: 0.009 },
-    fill: { color: 0x3f63b4, intensity: 0.55 },     // planetshine, enormous and blue
-    bounce: { color: 0x6f8ed8, intensity: 0.30 },
+    key: { color: 0xfff0d8, intensity: 9.5, angularRadius: 0.009 },
+    fill: { color: 0x3f63b4, intensity: 1.50 },     // planetshine, enormous and blue
+    bounce: { color: 0x6f8ed8, intensity: 0.80 },
     shadow: 0x050912,
     fog: { color: 0x16223c, density: 0.000012 },
     accent: 0x8fb4ff,
@@ -281,9 +299,9 @@ export const POI_PALETTES = {
   belt: {
     id: 'belt',
     name: 'The Belt',
-    key: { color: 0xffe2b6, intensity: 2.7, angularRadius: 0.014 },
-    fill: { color: 0x6b5a44, intensity: 0.42 },     // dust bouncing off a million rocks
-    bounce: { color: 0x8a7350, intensity: 0.26 },
+    key: { color: 0xffe2b6, intensity: 8.0, angularRadius: 0.014 },
+    fill: { color: 0x6b5a44, intensity: 1.10 },     // dust bouncing off a million rocks
+    bounce: { color: 0x8a7350, intensity: 0.70 },
     shadow: 0x0a0806,
     fog: { color: 0x2a2018, density: 0.000042 },
     accent: 0xd89a4a,
@@ -294,9 +312,9 @@ export const POI_PALETTES = {
   graveyard: {
     id: 'graveyard',
     name: 'The Graveyard',
-    key: { color: 0xb6c6da, intensity: 1.9, angularRadius: 0.006 },
-    fill: { color: 0x1b2a3a, intensity: 0.32 },
-    bounce: { color: 0x2b3c4e, intensity: 0.18 },
+    key: { color: 0xb6c6da, intensity: 5.5, angularRadius: 0.006 },
+    fill: { color: 0x1b2a3a, intensity: 0.85 },
+    bounce: { color: 0x2b3c4e, intensity: 0.50 },
     shadow: 0x02040a,
     fog: { color: 0x0e1620, density: 0.000030 },
     accent: 0x8fb04a,                                // derelict light, leaking
@@ -307,9 +325,9 @@ export const POI_PALETTES = {
   yard: {
     id: 'yard',
     name: 'Fitting Yard',
-    key: { color: 0xffd9a0, intensity: 2.2, angularRadius: 0.02 },   // work lights, not a star
-    fill: { color: 0x2b3442, intensity: 0.50 },
-    bounce: { color: 0x4a5468, intensity: 0.30 },
+    key: { color: 0xffd9a0, intensity: 6.5, angularRadius: 0.02 },   // work lights, not a star
+    fill: { color: 0x2b3442, intensity: 1.40 },
+    bounce: { color: 0x4a5468, intensity: 0.80 },
     shadow: 0x05070c,
     fog: { color: 0x1a212c, density: 0.000022 },
     accent: 0xffa93c,
@@ -320,9 +338,9 @@ export const POI_PALETTES = {
   'near-star': {
     id: 'near-star',
     name: 'Near Star',
-    key: { color: 0xfff6ea, intensity: 6.2, angularRadius: 0.05 },   // brutal
-    fill: { color: 0x7a4226, intensity: 0.40 },
-    bounce: { color: 0xa85c2e, intensity: 0.24 },
+    key: { color: 0xfff6ea, intensity: 20.0, angularRadius: 0.05 },  // brutal
+    fill: { color: 0x7a4226, intensity: 1.10 },
+    bounce: { color: 0xa85c2e, intensity: 0.65 },
     shadow: 0x0c0603,
     fog: { color: 0x3c1e0e, density: 0.000055 },
     accent: 0xff7a2a,
@@ -333,13 +351,13 @@ export const POI_PALETTES = {
   station: {
     id: 'station',
     name: 'Station Approach',
-    key: { color: 0xdce8f4, intensity: 2.4, angularRadius: 0.008 },
-    fill: { color: 0x27374e, intensity: 0.46 },
-    bounce: { color: 0x3c5170, intensity: 0.26 },
+    key: { color: 0xdce8f4, intensity: 7.5, angularRadius: 0.008 },
+    fill: { color: 0x27374e, intensity: 1.20 },
+    bounce: { color: 0x3c5170, intensity: 0.70 },
     shadow: 0x04070e,
     fog: { color: 0x141e2c, density: 0.000018 },
     accent: 0x59c8ff,
-    ibl: { zenith: 0x050912, horizon: 0x1c2c42, ground: 0x070b12, sun: 0xe6f0fa, sunSize: 0.04, intensity: 0.72 },
+    ibl: { zenith: 0x050912, horizon: 0x1c2c42, ground: 0x070b12, sun: 0xe6f0fa, sunSize: 0.04, intensity: 0.92 },
     grade: { exposure: 1.0, bloom: 0.6, godrays: 0.22, vignette: 0.40 },
   },
 };
@@ -360,10 +378,10 @@ export const NEUTRAL = {
   select: 0xf2e9c8,
   shieldHit: 0x76c6ff,
   scorchCore: 0x0d0b09,
-  scorchRim: 0x3a2a1c,
+  scorchRim: 0x30241a,
   ice: 0xcfe4f2,
-  rock: 0x6a6459,
-  rockDark: 0x2c2a26,
+  rock: 0x4f4a42,
+  rockDark: 0x1d1a17,
   rockOre: 0x8a6a3c,
 };
 

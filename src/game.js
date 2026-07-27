@@ -73,13 +73,17 @@ export async function bootGame(world, params) {
       poi: poiId,
     });
     world.register('materials', materials);
+    // The registry owns the active POI palette. Register it so BuildContext.palette
+    // is populated - without this every build(ctx) in the game receives palette:null
+    // and streams silently fall back to their own colours, defeating palette lock.
+    if (materials.palette) world.register('palette', materials.palette);
   }
   note('materials', !!materials);
 
   const ctx = () => ({
     rng: world.rng.fork('build'),
     materials,
-    palette: world.systems.palette ?? null,
+    palette: materials?.palette ?? world.systems.palette ?? null,
     faction: 'player',
     lod: 0,
   });

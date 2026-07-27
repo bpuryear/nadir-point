@@ -25,7 +25,8 @@ import * as THREE from 'three';
 import { createMaterialRegistry } from '../art/materials/index.js';
 import { textCanvas } from '../art/textures/decals.js';
 import { getPOIPalette, getFactionPalette, NEUTRAL } from '../art/palette.js';
-import { SCALE } from '../art/textures/index.js';
+import { SCALE, TextureFactory } from '../art/textures/index.js';
+import { RNG } from '../core/rng.js';
 
 const FACTION_ROWS = ['coalition', 'concord', 'derelict', 'player'];
 
@@ -88,7 +89,7 @@ function metreUVSphere(geometry, radius) {
 
 export default {
   name: 'Materials — registry, factions, generated maps',
-  camera: { distance: 920, pitch: 0.085, yaw: 0.075, target: new THREE.Vector3(0, 25, 0) },
+  camera: { distance: 985, pitch: 0.075, yaw: 0.065, target: new THREE.Vector3(0, 22, 0) },
 
   async setup(ctx) {
     const { scene, far, world, renderer } = ctx;
@@ -107,15 +108,17 @@ export default {
     scene.background = null;
 
     // --- one hard key, one cold rim, one procedural environment --------------
+    // Straight from the POI palette. If the chart looks wrong the palette is
+    // wrong - the probe is not allowed its own private lighting.
     const key = new THREE.DirectionalLight(
-      new THREE.Color().setHex(poi.key.color, THREE.SRGBColorSpace), 3.5,
+      new THREE.Color().setHex(poi.key.color, THREE.SRGBColorSpace), poi.key.intensity,
     );
     key.position.set(-0.55, 0.62, 0.86).normalize().multiplyScalar(4000);
     scene.add(key);
     scene.add(key.target);
 
     const rim = new THREE.DirectionalLight(
-      new THREE.Color().setHex(poi.fill.color, THREE.SRGBColorSpace), 0.75,
+      new THREE.Color().setHex(poi.fill.color, THREE.SRGBColorSpace), poi.fill.intensity,
     );
     rim.position.set(0.8, -0.30, -0.5).normalize().multiplyScalar(4000);
     scene.add(rim);
@@ -124,13 +127,21 @@ export default {
       new THREE.Color().setHex(poi.shadow, THREE.SRGBColorSpace), 1.4,
     ));
 
-    registry.applyEnvironment(scene, 'station', 1.0);
+    registry.applyEnvironment(scene, 'station', 1.25);
 
     // Volumetrics aimed at nothing would radially smear the chart from the frame
     // centre; a material read has to be clean.
     renderer.post.godrays.enabled = false;
-    renderer.post.gtao.updateGtaoMaterial({ radius: 8.0, thickness: 4.0, distanceExponent: 1.4, samples: 12 });
-    renderer.renderer.toneMappingExposure = 1.08;
+    // GTAO costs a full depth+normal prepass, which doubles the draw calls and,
+    // on the SwiftShader review machine, the frame time. On a chart of separated
+    // objects with no shared contact surfaces it contributes almost nothing - the
+    // baked cavity AO in the ORM map is doing that work already.
+    renderer.post.gtao.enabled = false;
+    renderer.renderer.toneMappingExposure = 1.18;
+    // A chart is not a shot: the shipping vignette pulls the outer columns two
+    // stops down and they cannot be compared with the middle ones.
+    renderer.post.grade.uniforms.vignette.value = 0.16;
+    renderer.post.grade.uniforms.grain.value = 0.014;
 
     // --- shared geometry ----------------------------------------------------
     const R = SPHERE_R;
@@ -139,7 +150,7 @@ export default {
     const slabGeo = metreUV(new THREE.BoxGeometry(70, 18, 40));
     const backGeo = metreUV(new THREE.BoxGeometry(74, 60, 12));
     const bellGeo = metreUV(new THREE.CylinderGeometry(13, 26, 40, 22, 1, true));
-    const shardGeo = metreUV(new THREE.IcosahedronGeometry(15, 0));
+    const shardGeo = metreUV(new THREE.IcosahedronGeometry(17, 0));
     const lampGeo = new THREE.SphereGeometry(9, 20, 14);
     const barGeo = new THREE.BoxGeometry(46, 4.5, 4.5);
 
@@ -163,11 +174,15 @@ export default {
       for (let c = 0; c < COLUMNS.length; c++) {
         const { key: mkey } = COLUMNS[c];
         const x = COL_X(c);
-        const wear = 0.18 + r * 0.24;
+        // Wear is held CONSTANT across the faction rows. Varying it here would
+        // conflate "this faction looks like that" with "this sample is dirtier",
+        // which is the single easiest way to misread a material chart. Wear gets
+        // its own axis in the DAMAGED and DERELICT columns instead.
+        const wear = 0.42;
 
         // --- debris: one InstancedMesh, one draw call, mixed faction colours ---
         if (mkey === 'debris') {
-          const mat = registry.get('debris', { faction, wear: 0.7, instanced: true });
+          const mat = registry.get('debris', { faction, wear: 0.5, instanced: true });
           const inst = new THREE.InstancedMesh(shardGeo, mat, 5);
           const m = new THREE.Matrix4();
           const q = new THREE.Quaternion();
@@ -177,7 +192,7 @@ export default {
           const rr = world.rng.fork(`debris:${r}`);
           const col = new THREE.Color();
           for (let i = 0; i < 5; i++) {
-            p.set(rr.signed() * 24, rr.signed() * 22, rr.signed() * 16);
+            p.set(rr.signed() * 20, rr.signed() * 20, rr.signed() * 14);
             e.set(rr.next() * 6.28, rr.next() * 6.28, rr.next() * 6.28);
             q.setFromEuler(e);
             const k = 0.55 + rr.next() * 0.7;
@@ -266,6 +281,20 @@ export default {
     const decalSheet = tex.get('decals', { faction: 'coalition', size: 512 });
     const lights = tex.get('runningLights', { faction: 'concord' });
 
+    // Scorch is only interesting composited. This one is an ordinary hull tile that
+    // has had four blasts stamped into its live albedo canvas after the fact, which
+    // is exactly what happens when a hardpoint takes a hit in game.
+    const burnt = registry.damageable('hull', { faction: 'coalition', wear: 0.5, tier: 2 });
+    const burnRng = world.rng.fork('probe-burn');
+    for (let i = 0; i < 4; i++) {
+      burnt.userData.applyScorch({
+        u: 0.18 + burnRng.next() * 0.64,
+        v: 0.18 + burnRng.next() * 0.64,
+        radius: 0.10 + burnRng.next() * 0.16,
+        severity: 0.45 + burnRng.next() * 0.5,
+      });
+    }
+
     const STRIP = [
       [coalitionHull.map, 'CLN ALBEDO'],
       [coalitionHull.normalMap, 'NORMAL'],
@@ -274,14 +303,20 @@ export default {
       [derelictMaps.map, 'DERELICT'],
       [greeb.normal, 'GREEBLE'],
       [wearMask.texture, 'WEAR RGB'],
-      [scorchTex.texture, 'SCORCH'],
+      [scorchTex.texture, 'SCORCH STAMP'],
+      [burnt.userData.maps.map, 'SCORCH ON HULL'],
       [decalSheet.texture, 'DECALS'],
       [lights.texture, 'LIGHTS 6M'],
     ];
 
     const quad = new THREE.PlaneGeometry(1, 1);
-    const stripY = ROW_Y(FACTION_ROWS.length - 1) - 118;
-    const stripW = 116;
+    const stripY = ROW_Y(FACTION_ROWS.length - 1) - 116;
+    const stripW = 106;
+    const cardMat = new THREE.MeshBasicMaterial({
+      color: new THREE.Color().setHex(NEUTRAL.rockDark, THREE.SRGBColorSpace),
+      toneMapped: false,
+    });
+    cardMat.userData.__paletteKey = 'probe:chrome';
     for (let i = 0; i < STRIP.length; i++) {
       const [src, label] = STRIP[i];
       const t = src.clone();
@@ -292,45 +327,58 @@ export default {
       // Display exactly what was authored: decode as sRGB so the output transform
       // becomes an identity rather than a gamma lift on the data maps.
       t.colorSpace = THREE.SRGBColorSpace;
-      const m = new THREE.MeshBasicMaterial({ map: t, toneMapped: false });
+      // transparent so the scorch stamp's alpha reads against the backdrop instead
+      // of showing its RGB with the coverage thrown away.
+      const m = new THREE.MeshBasicMaterial({ map: t, toneMapped: false, transparent: true });
       m.userData.__paletteKey = 'probe:chrome';
       const mesh = new THREE.Mesh(quad, m);
       const aspect = (src.image?.width ?? 1) / (src.image?.height ?? 1);
       const h = aspect > 2 ? stripW / aspect : stripW;
       mesh.scale.set(stripW, h, 1);
-      const x = (i - (STRIP.length - 1) / 2) * (stripW + 12);
+      const x = (i - (STRIP.length - 1) / 2) * (stripW + 10);
       mesh.position.set(x, stripY, 0);
+      // Backing card: the scorch stamp is black carbon with an alpha mask, and
+      // against a black frame that is a black square. Everything gets the same
+      // card so the tiles read as a strip.
+      const card = new THREE.Mesh(quad, cardMat);
+      card.scale.set(stripW + 4, h + 4, 1);
+      card.position.set(x, stripY, -2);
+      scene.add(card);
       scene.add(mesh);
-      addLabel(scene, label, x, stripY - h * 0.5 - 13, 100, NEUTRAL.select);
+      addLabel(scene, label, x, stripY - stripW * 0.5 - 16, 1.22, NEUTRAL.select);
     }
 
     // -----------------------------------------------------------------------
     // Labels: generated block glyphs on unlit quads.
     // -----------------------------------------------------------------------
     for (let c = 0; c < COLUMNS.length; c++) {
-      addLabel(scene, COLUMNS[c].label, COL_X(c), ROW_Y(0) + 64, 86, poi.accent);
+      addLabel(scene, COLUMNS[c].label, COL_X(c), ROW_Y(0) + 62, 1.7, poi.accent);
     }
     for (let r = 0; r < FACTION_ROWS.length; r++) {
       const pal = getFactionPalette(FACTION_ROWS[r]);
-      addLabel(scene, FACTION_ROWS[r], COL_X(0) - 66, ROW_Y(r) - 2, 112, pal.emissive, 1.2);
+      addLabel(scene, FACTION_ROWS[r], COL_X(0) - 82, ROW_Y(r) - 2, 2.0, pal.emissive, 1.25);
     }
-    addLabel(scene, 'NADIR POINT / MATERIAL REGISTRY', 0, ROW_Y(0) + 120, 360, NEUTRAL.select, 1.05);
-    addLabel(scene, `UV UNIT = 1 METRE / RUNNING LIGHT SPACING = ${SCALE.runningLightSpacingM} M`,
-      0, stripY - 96, 400, poi.accent, 0.85);
+    addLabel(scene, 'NADIR POINT / MATERIAL REGISTRY', 0, ROW_Y(0) + 116, 2.3, NEUTRAL.select, 1.05);
+    addLabel(scene,
+      `ONE UV UNIT = ONE METRE   /   RUNNING LIGHT SPACING = ${SCALE.runningLightSpacingM} M   /   EVERY MAP GENERATED AT RUNTIME`,
+      0, stripY - stripW * 0.5 - 44, 1.2, poi.accent, 0.9);
 
     // -----------------------------------------------------------------------
-    const audit = registry.audit();
-    const offenders = registry.auditScene(scene);
-    console.log('[probe:materials] registry audit', JSON.stringify(audit));
-    console.log('[probe:materials] off-palette colours:', registry.paletteAudit().foreign.length);
-    console.log('[probe:materials] materials outside registry:', offenders.length);
-    ctx.audit = audit;
+    ctx.audit = contractSelfTest(registry, scene);
   },
 };
 
-/** One line of block-glyph text on an unlit quad. */
-function addLabel(scene, text, x, y, width, colorHex, brightness = 1.0) {
-  const canvas = textCanvas(text, { cell: 6, pad: 5, ink: 0xffffff, tracking: 1 });
+/**
+ * One line of block-glyph text on an unlit quad.
+ *
+ * Sized by METRES PER GLYPH CELL, not by a fixed quad width. With a fixed width
+ * "HULL" renders at three times the size of "HULLDARK" and the chart reads like a
+ * ransom note - which is exactly what the first version of this did.
+ */
+const GLYPH_PX = 6;
+function addLabel(scene, text, x, y, cellM, colorHex, brightness = 1.0) {
+  const canvas = textCanvas(text, { cell: GLYPH_PX, pad: 5, ink: 0xffffff, tracking: 1 });
+  const width = (canvas.width / GLYPH_PX) * cellM;
   const t = new THREE.CanvasTexture(canvas);
   t.colorSpace = THREE.SRGBColorSpace;
   t.needsUpdate = true;
@@ -350,4 +398,77 @@ function addLabel(scene, text, x, y, width, colorHex, brightness = 1.0) {
   mesh.position.set(x, y, 40);
   scene.add(mesh);
   return mesh;
+}
+
+/**
+ * The registry is a contract three other streams code against. A probe that only
+ * renders it proves the pixels; this proves the promises. Anything failing here is
+ * a console.error, which makes tools/probe.mjs exit non-zero, so the guarantees
+ * cannot rot silently.
+ */
+function contractSelfTest(registry, scene) {
+  const fails = [];
+  const check = (name, ok) => { if (!ok) fails.push(name); };
+
+  // Memoisation: normalisation happens BEFORE the cache key, so explicitly passing
+  // a default must land on the same instance.
+  const a = registry.get('hull', { faction: 'coalition' });
+  const b = registry.get('hull', { faction: 'coalition', wear: 0.45, tier: 1, scale: 1 });
+  check('get() is memoised across default-filled opts', a === b);
+  check('get() is memoised across repeat calls', a === registry.get('hull', { faction: 'coalition' }));
+  check('different opts give different instances', a !== registry.get('hull', { faction: 'concord' }));
+  check('instanced flag gives its own instance',
+    a !== registry.get('hull', { faction: 'coalition', instanced: true }));
+  check('instanced materials do NOT set vertexColors (would render black)',
+    registry.get('debris', { faction: 'player', instanced: true }).vertexColors === false);
+  check('textures are shared between materials that share maps',
+    registry.get('hull', { faction: 'coalition' }).map
+      === registry.get('hull', { faction: 'coalition', tier: 1 }).map);
+
+  let threw = false;
+  try { registry.get('nonsense'); } catch { threw = true; }
+  check('unknown key throws', threw);
+  threw = false;
+  try { registry.get('hull', { faction: 'borg' }); } catch { threw = true; }
+  check('unknown faction throws', threw);
+
+  const audit = registry.audit();
+  check('audit() has the contracted shape',
+    typeof audit.materials === 'number' && typeof audit.textures === 'number' && !!audit.byKey);
+
+  const dmg = registry.damageable('hull', { faction: 'coalition' });
+  check('damageable() is uncached', dmg !== registry.damageable('hull', { faction: 'coalition' }));
+  check('damageable() exposes applyScorch', typeof dmg.userData.applyScorch === 'function');
+  check('damageable() has its own canvases',
+    dmg.userData.maps.albedoCanvas !== registry.get('hull', { faction: 'coalition' }).userData.maps.albedoCanvas);
+
+  // Determinism: two factories built from the same seed must produce byte-identical
+  // output, and must not care what order things were asked for. Checked on a cheap
+  // generator so the probe does not pay for a second full bake.
+  {
+    const f1 = new TextureFactory({ rng: new RNG('determinism') });
+    const f2 = new TextureFactory({ rng: new RNG('determinism') });
+    f2.get('glow', { faction: 'derelict' });            // different call order on purpose
+    const a1 = f1.get('scorch', { faction: 'coalition', severity: 0.75 }).canvas;
+    const a2 = f2.get('scorch', { faction: 'coalition', severity: 0.75 }).canvas;
+    const d1 = a1.getContext('2d').getImageData(0, 0, a1.width, 4).data;
+    const d2 = a2.getContext('2d').getImageData(0, 0, a2.width, 4).data;
+    let same = d1.length === d2.length;
+    for (let i = 0; same && i < d1.length; i++) if (d1[i] !== d2[i]) same = false;
+    check('same seed + different call order gives identical textures', same);
+    f1.dispose(); f2.dispose();
+  }
+
+  const pal = registry.paletteAudit();
+  check(`no off-palette colours (saw ${pal.foreign.length})`, pal.foreign.length === 0);
+  const offenders = registry.auditScene(scene);
+  check(`no materials built outside the registry (saw ${offenders.length})`, offenders.length === 0);
+
+  console.log('[probe:materials] audit', JSON.stringify(audit));
+  if (fails.length) {
+    console.error('[probe:materials] CONTRACT FAILURES:\n  ' + fails.join('\n  '));
+  } else {
+    console.log('[probe:materials] contract self-test passed (14 checks)');
+  }
+  return audit;
 }

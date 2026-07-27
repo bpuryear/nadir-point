@@ -184,7 +184,7 @@ export const lerp = (a, b, t) => a + (b - a) * t;
  * sprite with a 2-3 px flat core does not. That is the entire reason this takes a
  * parameter.
  */
-export function softPointTexture({ size = 64, core = 0.10, falloff = 2.6, name = 'soft-point' } = {}) {
+export function softPointTexture({ size = 64, core = 0.10, falloff = 2.6, mipmaps = false, name = 'soft-point' } = {}) {
   const canvas = makeCanvas(size);
   const ctx = ctx2d(canvas);
   const img = ctx.createImageData(size, size);
@@ -207,9 +207,16 @@ export function softPointTexture({ size = 64, core = 0.10, falloff = 2.6, name =
   t.name = name;
   t.colorSpace = THREE.NoColorSpace;
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  t.minFilter = THREE.LinearMipmapLinearFilter;
+  // MIPMAPS OFF BY DEFAULT, AND THIS MATTERS.
+  // A star is a 2-3 pixel point sprite. With mipmaps, a 2 px quad selects the
+  // bottom of the chain, which is the AVERAGE of the whole sprite — about 0.15
+  // alpha for a soft profile. Every faint star in the sky then loses 85 % of its
+  // brightness and the field collapses to "a few dozen dots". Without mipmaps the
+  // sprite is sampled near its centre where the alpha is 1, which is correct, and
+  // the flat core keeps it from aliasing.
+  t.minFilter = mipmaps ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
   t.magFilter = THREE.LinearFilter;
-  t.generateMipmaps = true;
+  t.generateMipmaps = mipmaps;
   t.needsUpdate = true;
   return t;
 }
@@ -318,7 +325,9 @@ export function finishQuads(b, name = 'quads') {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(b.position, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(b.uv, 2));
-  g.setAttribute('color', new THREE.Float32BufferAttribute(b.color, 3));
+  // NOT named `color`: three declares `attribute vec3 color` itself under
+  // USE_COLOR, and a duplicate declaration is a shader compile error.
+  g.setAttribute('aTint', new THREE.Float32BufferAttribute(b.color, 3));
   g.setIndex(b.index);
   g.computeBoundingSphere();
   g.name = name;

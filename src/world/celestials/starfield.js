@@ -99,7 +99,7 @@ export function buildStarfield({
     color[i * 3] = c.r; color[i * 3 + 1] = c.g; color[i * 3 + 2] = c.b;
 
     // --- screen size: sqrt of flux, floored so nothing is sub-pixel ---------
-    size[i] = 1.9 + 9.4 * Math.pow(fn, 0.62) + (fn > 0.55 ? 3.2 * (fn - 0.55) : 0);
+    size[i] = 2.4 + 9.6 * Math.pow(fn, 0.62) + (fn > 0.55 ? 3.4 * (fn - 0.55) : 0);
   }
 
   const geo = new THREE.BufferGeometry();
@@ -143,7 +143,7 @@ export function buildStarfield({
         float a = texture2D(uSprite, gl_PointCoord).a;
         // faint stars stay inside the dither's reach; the top few percent are
         // pushed past the 1.05 bloom threshold so the sky has real anchors.
-        float amp = mix(0.10, 2.35, pow(vFlux, 0.85));
+        float amp = mix(0.30, 2.80, pow(vFlux, 0.85));
         gl_FragColor = vec4(vColor * amp * uGain * a, 1.0);
       }
     `,

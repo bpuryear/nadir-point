@@ -39,8 +39,11 @@ export function makeScorchStamp(rng, opts = {}) {
   const pal = getFactionPalette(o.faction);
   const c = size * 0.5;
 
-  const core = lerp(0.16, 0.34, sev) * size;   // opaque carbon
-  const soot = lerp(0.30, 0.48, sev) * size;   // feathered halo
+  // The dense carbon core is SMALL and the feathered halo is wide. Get this ratio
+  // wrong the other way and a damaged hull reads as polka dots rather than as
+  // something that has been shot.
+  const core = lerp(0.13, 0.26, sev) * size;   // opaque carbon
+  const soot = lerp(0.34, 0.56, sev) * size;   // feathered halo
   const bloom = core * lerp(1.10, 1.30, sev);
 
   // ---------- albedo ----------
@@ -48,11 +51,14 @@ export function makeScorchStamp(rng, opts = {}) {
   const a = ctx2d(albedo);
   a.clearRect(0, 0, size, size);
 
-  // spatter tendrils first, so the core covers their roots
-  const spokes = 9 + Math.round(sev * 13);
+  // Spatter tendrils first, so the core covers their roots. Lengths are drawn from
+  // a wide distribution on purpose: evenly spaced spokes of equal length give the
+  // blast a polygonal silhouette and it stops reading as an explosion.
+  const spokes = 16 + Math.round(sev * 18);
   for (let i = 0; i < spokes; i++) {
-    const ang = (i / spokes) * Math.PI * 2 + rng.next() * 0.4;
-    const len = soot * (0.75 + rng.next() * 1.05);
+    const ang = (i / spokes) * Math.PI * 2 + rng.signed() * 0.9;
+    const t = rng.next();
+    const len = soot * (0.45 + t * t * 1.7);
     const wid = (0.05 + rng.next() * 0.09) * size * (0.5 + sev * 0.8);
     const ca = Math.cos(ang), sa = Math.sin(ang);
     const g = a.createLinearGradient(c, c, c + ca * len, c + sa * len);
@@ -74,27 +80,31 @@ export function makeScorchStamp(rng, opts = {}) {
     a.fill();
   }
 
-  // oxidised bloom ring
-  const ring = a.createRadialGradient(c, c, core * 0.85, c, c, bloom * 1.25);
-  ring.addColorStop(0, css(pal.bare, 0));
-  ring.addColorStop(0.35, css(NEUTRAL.scorchRim, 0.55 * sev + 0.15));
-  ring.addColorStop(0.7, css(pal.wear.oxide, 0.30 * sev));
+  // Oxidised bloom: a thin band of scorched bare metal just outside the carbon.
+  // Kept restrained - overdo this and the hit reads as a copper washer stuck on
+  // the hull rather than as somewhere a shell went off.
+  const ring = a.createRadialGradient(c, c, core * 0.80, c, c, bloom * 1.35);
+  ring.addColorStop(0, css(NEUTRAL.scorchRim, 0));
+  ring.addColorStop(0.30, css(NEUTRAL.scorchRim, 0.16 * sev + 0.03));
+  ring.addColorStop(0.62, css(pal.wear.oxide, 0.12 * sev));
   ring.addColorStop(1, css(pal.wear.oxide, 0));
   a.fillStyle = ring;
-  a.beginPath(); a.arc(c, c, bloom * 1.25, 0, Math.PI * 2); a.fill();
+  a.beginPath(); a.arc(c, c, bloom * 1.35, 0, Math.PI * 2); a.fill();
 
   // soot halo
-  const halo = a.createRadialGradient(c, c, core * 0.5, c, c, soot);
-  halo.addColorStop(0, css(pal.burn, 0.9 * sev + 0.05));
-  halo.addColorStop(0.5, css(pal.burn, 0.42 * sev));
+  const halo = a.createRadialGradient(c, c, core * 0.4, c, c, soot);
+  halo.addColorStop(0, css(pal.burn, 0.78 * sev + 0.10));
+  halo.addColorStop(0.35, css(pal.burn, 0.50 * sev));
+  halo.addColorStop(0.72, css(pal.burn, 0.20 * sev));
   halo.addColorStop(1, css(pal.burn, 0));
   a.fillStyle = halo;
   a.beginPath(); a.arc(c, c, soot, 0, Math.PI * 2); a.fill();
 
-  // carbon core
+  // carbon core - dense, and it stays dense almost to its edge
   const cg = a.createRadialGradient(c, c, 0, c, c, core);
-  cg.addColorStop(0, css(NEUTRAL.scorchCore, 0.55 + 0.44 * sev));
-  cg.addColorStop(0.62, css(NEUTRAL.scorchCore, 0.45 + 0.4 * sev));
+  cg.addColorStop(0, css(NEUTRAL.scorchCore, 0.62 + 0.30 * sev));
+  cg.addColorStop(0.50, css(NEUTRAL.scorchCore, 0.50 + 0.30 * sev));
+  cg.addColorStop(0.82, css(NEUTRAL.scorchCore, 0.22 + 0.26 * sev));
   cg.addColorStop(1, css(NEUTRAL.scorchCore, 0));
   a.fillStyle = cg;
   a.beginPath(); a.arc(c, c, core, 0, Math.PI * 2); a.fill();

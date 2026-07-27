@@ -115,9 +115,15 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
       o.wear = quantize(Math.min(1, Math.max(0, o.wear ?? 0.45)), 0.125);
       o.tier = Math.min(3, Math.max(1, Math.round(o.tier ?? 1)));
       o.scale = quantize(Math.max(0.25, o.scale ?? 1), 0.25);
+      // A tiling texture on a 1400 m hull repeats ~80 times and the eye finds the
+      // repeat. `seed` buys a genuinely different plate layout at the same faction,
+      // tier and wear, so a big hull can be built from 2-3 tiles that read as one
+      // material. Each distinct seed is a real extra bake - use 2 or 3, not 20.
+      o.seed = Math.max(0, Math.round(o.seed ?? 0));
       if (key === 'derelictHull') o.faction = 'derelict';
     }
     if (key === 'damaged') {
+      o.seed = Math.max(0, Math.round(o.seed ?? 0));
       o.severity = quantize(Math.min(1, Math.max(0, o.severity ?? 0.5)), 0.25);
       o.tier = Math.min(3, Math.max(1, Math.round(o.tier ?? 1)));
       o.scale = quantize(Math.max(0.25, o.scale ?? 1), 0.25);
@@ -163,7 +169,8 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
   function hullMapsFor(o, variant, cached = true) {
     const args = {
       faction: o.faction, variant, wear: o.wear, tier: o.tier,
-      size: o.size, scale: o.scale, markings: o.markings !== false,
+      size: o.size, scale: o.scale, seed: o.seed ?? 0,
+      markings: o.markings !== false,
     };
     return cached ? textures.get('hull', args) : textures.build('hull', args);
   }
@@ -308,18 +315,21 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
       const maps = textures.build('hull', {
         faction: o.faction, variant: 'hull',
         wear: Math.min(1, 0.55 + o.severity * 0.45),
-        tier: o.tier, size: o.size, scale: o.scale, markings: true,
+        tier: o.tier, size: o.size, scale: o.scale, seed: o.seed ?? 0, markings: true,
       });
       const m = standardFromMaps(maps, HULL_VARIANTS.hull, o);
       // Forked, never drawn from the root stream: material build order must not
       // leak into what the damage looks like.
       const dr = rng.fork(`damaged:${o.faction}:${o.severity}:${o.tier}`);
       attachDamage(m, maps, o.faction, dr);
-      const blasts = 2 + Math.round(o.severity * 5);
+      // Few, and small. This is a TILING texture: every blast baked in here repeats
+      // across the whole hull. For real per-hit damage use registry.damageable(),
+      // which owns its canvases and takes hits where they actually landed.
+      const blasts = 1 + Math.round(o.severity * 3);
       for (let i = 0; i < blasts; i++) {
         m.userData.applyScorch({
           u: dr.next(), v: dr.next(),
-          radius: 0.06 + dr.next() * 0.13 * (0.4 + o.severity),
+          radius: 0.11 + dr.next() * 0.22 * (0.4 + o.severity),
           severity: Math.min(1, o.severity * (0.6 + dr.next() * 0.7)),
         });
       }
