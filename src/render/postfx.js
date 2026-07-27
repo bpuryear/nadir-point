@@ -217,7 +217,33 @@ export class PostChain {
     this._keyLight = null;
     this._lightWorld = new THREE.Vector3();
     this._lightProjected = new THREE.Vector3();
+
+    /**
+     * Exposure is split in two so unrelated systems can drive it without fighting.
+     * `baseExposure` is the POI's grade - each point of interest is a lighting setup
+     * and owns its own stop. `exposureScale` is transient and multiplicative, used by
+     * the tactical overlay to dim the live 3D scene as the strategic view fades in.
+     */
+    this.baseExposure = 1.0;
+    this.exposureScale = 1.0;
+
     this.setQuality(quality);
+  }
+
+  /** Per-POI grade exposure. */
+  setExposure(v) {
+    this.baseExposure = v;
+    this._applyExposure();
+  }
+
+  /** Transient multiplier, 0..1. The tactical overlay drives this to 0.22. */
+  setExposureScale(v) {
+    this.exposureScale = v;
+    this._applyExposure();
+  }
+
+  _applyExposure() {
+    this.rw.renderer.toneMappingExposure = this.baseExposure * this.exposureScale;
   }
 
   /** Point the volumetrics at whatever object stands in for this POI's key light. */

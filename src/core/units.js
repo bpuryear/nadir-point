@@ -72,5 +72,21 @@ export const SIM = {
   maxSubsteps: 6,
 };
 
-/** Time control multipliers, in order. Index 0 is pause. */
-export const TIME_SCALES = [0, 1, 2, 4];
+/**
+ * Time control multipliers, in order. Index 0 is pause.
+ *
+ * Two bands. COMBAT is what the player has in an engagement, and it stops at 4x
+ * deliberately: past that you cannot read an arc closing or react to a breach warning,
+ * so a faster setting would only be a way to lose a ship you were not watching.
+ *
+ * TRANSIT adds a compression tail that is available ONLY while under transit burn with
+ * nothing resolved on sensors. A 300 km leg is 157 seconds of sim time; at 16x it is
+ * ten seconds, which is a journey rather than a chore. The instant a contact resolves,
+ * the band collapses back to COMBAT and the current scale is clamped into it - you do
+ * not get to fast-forward through an ambush.
+ */
+export const TIME_SCALES_COMBAT = [0, 1, 2, 4];
+export const TIME_SCALES_TRANSIT = [0, 1, 2, 4, 8, 16, 32, 64];
+
+/** The active table. The engine swaps this via setScaleTable(); do not mutate it. */
+export const TIME_SCALES = TIME_SCALES_COMBAT;

@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { EV } from '../core/events.js';
-import { TIME_SCALES } from '../core/units.js';
 import { ORBIT } from '../camera/constants.js';
 import { scratch } from '../core/world.js';
 
@@ -305,7 +304,9 @@ export class Controls {
   };
 
   _setScale(i) {
-    const clamped = Math.max(0, Math.min(TIME_SCALES.length - 1, i));
+    // Clamp against the engine's ACTIVE table, not the combat one - transit widens it
+    // to 64x and ] must be able to reach that tail.
+    const clamped = Math.max(0, Math.min(this.engine.scaleTable.length - 1, i));
     this.engine.setTimeScaleIndex(clamped);
     if (clamped > 0) this._resumeScaleIndex = clamped;
   }
