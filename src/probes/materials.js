@@ -6,16 +6,19 @@
  * on flat quads so the panel layout, the wear, the scorch and the decals can be
  * inspected directly rather than guessed at from a sphere.
  *
- *   node tools/probe.mjs materials --out docs/probes/materials.png --width 1600 --height 1000
+ *   node tools/probe.mjs materials --out docs/probes/materials.png --width 1800 --height 950
  *
  * Rows are factions. Columns are material keys. Two keys use the row axis for a
  * second parameter because they are faction-independent:
- *   derelictHull  rows are wear 0.15 / 0.4 / 0.65 / 0.95
+ *   derelictHull  rows are wear 0.15 / 0.42 / 0.69 / 0.96
  *   asteroid      rows are ore content 0.05 / 0.15 / 0.25 / 0.35
  *
- * Labels are drawn with the generated 5x7 block glyph set from
- * art/textures/decals.js. No DOM text, no fonts, nothing that can be missing on
- * someone else's machine.
+ * Every emissive object is deliberately SMALL. Bloom responds to area at least as
+ * much as to intensity, and a 30 m glowing sphere floods the frame and destroys
+ * exactly the near-black the rest of the chart is being judged against.
+ *
+ * Labels use the generated 5x7 block glyph set from art/textures/decals.js. No DOM
+ * text, no fonts, nothing that can be missing on someone else's machine.
  */
 
 import * as THREE from 'three';
@@ -42,13 +45,14 @@ const COLUMNS = [
   { key: 'runningLights', label: 'LIGHTS' },
 ];
 
-const CELL = 108;
+const CELL = 96;
 const COL_X = (c) => (c - (COLUMNS.length - 1) / 2) * CELL;
-const ROW_Y = (r) => 250 - r * CELL;
+const ROW_Y = (r) => 215 - r * CELL;
+const SPHERE_R = 26;
 
 // ---------------------------------------------------------------------------
-// UV helpers. The registry's whole contract is "one UV unit is one metre", so the
-// probe has to honour it or every plate will be the wrong size.
+// UV helpers. The registry's contract is "one UV unit is one metre", so the probe
+// has to honour it or every plate renders at the wrong physical size.
 // ---------------------------------------------------------------------------
 
 /** Box/triplanar projection in metres, from the dominant vertex normal. */
@@ -84,7 +88,7 @@ function metreUVSphere(geometry, radius) {
 
 export default {
   name: 'Materials — registry, factions, generated maps',
-  camera: { distance: 1180, pitch: 0.10, yaw: 0.085, target: new THREE.Vector3(0, 60, 0) },
+  camera: { distance: 920, pitch: 0.085, yaw: 0.075, target: new THREE.Vector3(0, 25, 0) },
 
   async setup(ctx) {
     const { scene, far, world, renderer } = ctx;
@@ -98,55 +102,58 @@ export default {
 
     const poi = getPOIPalette('station');
 
-    // --- backdrop: near-black, not black. Pure 0 kills the dither's job. -----
+    // --- backdrop: near-black, not black. Pure 0 gives the dither nothing to do.
     far.background = new THREE.Color().setHex(NEUTRAL.spaceBlack, THREE.SRGBColorSpace);
     scene.background = null;
 
-    // --- one hard key, one whisper of fill, one procedural environment ------
+    // --- one hard key, one cold rim, one procedural environment --------------
     const key = new THREE.DirectionalLight(
-      new THREE.Color().setHex(poi.key.color, THREE.SRGBColorSpace), 3.6,
+      new THREE.Color().setHex(poi.key.color, THREE.SRGBColorSpace), 3.5,
     );
     key.position.set(-0.55, 0.62, 0.86).normalize().multiplyScalar(4000);
     scene.add(key);
     scene.add(key.target);
 
-    const fill = new THREE.DirectionalLight(
-      new THREE.Color().setHex(poi.fill.color, THREE.SRGBColorSpace), 0.55,
+    const rim = new THREE.DirectionalLight(
+      new THREE.Color().setHex(poi.fill.color, THREE.SRGBColorSpace), 0.75,
     );
-    fill.position.set(0.75, -0.25, -0.5).normalize().multiplyScalar(4000);
-    scene.add(fill);
+    rim.position.set(0.8, -0.30, -0.5).normalize().multiplyScalar(4000);
+    scene.add(rim);
 
     scene.add(new THREE.AmbientLight(
-      new THREE.Color().setHex(poi.shadow, THREE.SRGBColorSpace), 1.2,
+      new THREE.Color().setHex(poi.shadow, THREE.SRGBColorSpace), 1.4,
     ));
 
-    registry.applyEnvironment(scene, 'station', 0.55);
+    registry.applyEnvironment(scene, 'station', 1.0);
 
     // Volumetrics aimed at nothing would radially smear the chart from the frame
     // centre; a material read has to be clean.
     renderer.post.godrays.enabled = false;
-    renderer.post.gtao.updateGtaoMaterial({ radius: 9.0, thickness: 4.0, distanceExponent: 1.4, samples: 12 });
-    renderer.renderer.toneMappingExposure = 1.06;
+    renderer.post.gtao.updateGtaoMaterial({ radius: 8.0, thickness: 4.0, distanceExponent: 1.4, samples: 12 });
+    renderer.renderer.toneMappingExposure = 1.08;
 
     // --- shared geometry ----------------------------------------------------
-    const R = 30;
+    const R = SPHERE_R;
     const sphereGeo = metreUVSphere(new THREE.SphereGeometry(R, 40, 28), R);
     const plainSphereGeo = new THREE.SphereGeometry(R, 40, 28);
-    const slabGeo = metreUV(new THREE.BoxGeometry(76, 20, 46));
-    // Running lights: U in metres along the strip (so the 6 m spacing is real),
+    const slabGeo = metreUV(new THREE.BoxGeometry(70, 18, 40));
+    const backGeo = metreUV(new THREE.BoxGeometry(74, 60, 12));
+    const bellGeo = metreUV(new THREE.CylinderGeometry(13, 26, 40, 22, 1, true));
+    const shardGeo = metreUV(new THREE.IcosahedronGeometry(15, 0));
+    const lampGeo = new THREE.SphereGeometry(9, 20, 14);
+    const barGeo = new THREE.BoxGeometry(46, 4.5, 4.5);
+
+    // Running lights: U in metres along the strip (so 6 m spacing is real),
     // V left at 0..1 across the strip's width.
-    const stripGeo = new THREE.PlaneGeometry(84, 11);
+    const stripGeo = new THREE.PlaneGeometry(78, 10);
     {
       const uv = stripGeo.attributes.uv;
-      for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * 84);
+      for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * 78);
       uv.needsUpdate = true;
     }
-    const bellGeo = metreUV(new THREE.CylinderGeometry(14, 30, 44, 20, 1, true));
-    const shardGeo = metreUV(new THREE.IcosahedronGeometry(11, 0));
 
     const grid = new THREE.Group();
     scene.add(grid);
-
     const put = (obj, x, y, z = 0) => { obj.position.set(x, y, z); grid.add(obj); return obj; };
 
     for (let r = 0; r < FACTION_ROWS.length; r++) {
@@ -158,22 +165,23 @@ export default {
         const x = COL_X(c);
         const wear = 0.18 + r * 0.24;
 
+        // --- debris: one InstancedMesh, one draw call, mixed faction colours ---
         if (mkey === 'debris') {
-          // Proves the contract that matters most for this key: one InstancedMesh,
-          // one draw call, four factions' worth of wreckage.
           const mat = registry.get('debris', { faction, wear: 0.7, instanced: true });
-          const inst = new THREE.InstancedMesh(shardGeo, mat, 7);
+          const inst = new THREE.InstancedMesh(shardGeo, mat, 5);
           const m = new THREE.Matrix4();
           const q = new THREE.Quaternion();
+          const e = new THREE.Euler();
           const s = new THREE.Vector3();
           const p = new THREE.Vector3();
           const rr = world.rng.fork(`debris:${r}`);
           const col = new THREE.Color();
-          for (let i = 0; i < 7; i++) {
-            p.set(rr.signed() * 30, rr.signed() * 26, rr.signed() * 22);
-            q.setFromEuler(new THREE.Euler(rr.next() * 6.28, rr.next() * 6.28, rr.next() * 6.28));
-            const k = 0.5 + rr.next() * 0.9;
-            s.set(k, k * (0.35 + rr.next() * 0.5), k * (0.7 + rr.next() * 0.6));
+          for (let i = 0; i < 5; i++) {
+            p.set(rr.signed() * 24, rr.signed() * 22, rr.signed() * 16);
+            e.set(rr.next() * 6.28, rr.next() * 6.28, rr.next() * 6.28);
+            q.setFromEuler(e);
+            const k = 0.55 + rr.next() * 0.7;
+            s.set(k, k * (0.35 + rr.next() * 0.45), k * (0.75 + rr.next() * 0.5));
             m.compose(p, q, s);
             inst.setMatrixAt(i, m);
             const f = getFactionPalette(FACTION_ROWS[(r + i) % FACTION_ROWS.length]);
@@ -186,6 +194,36 @@ export default {
           continue;
         }
 
+        // --- engine bell -----------------------------------------------------
+        if (mkey === 'engineGlow') {
+          const bell = new THREE.Mesh(bellGeo, registry.get('hullDark', { faction, wear: 0.5 }));
+          bell.rotation.x = Math.PI * 0.5;
+          put(bell, x, y - 2, -6);
+          const glow = new THREE.Mesh(new THREE.SphereGeometry(12, 20, 14),
+            registry.get('engineGlow', { faction }));
+          put(glow, x, y - 2, 12);
+          continue;
+        }
+
+        // --- running lights on a hull strip -----------------------------------
+        if (mkey === 'runningLights') {
+          const back = new THREE.Mesh(backGeo, registry.get('hull', { faction, wear: 0.4 }));
+          put(back, x, y - 4, -12);
+          const strip = new THREE.Mesh(stripGeo, registry.get('runningLights', { faction }));
+          put(strip, x, y + 6, 2);
+          continue;
+        }
+
+        // --- emissive: a lamp and a light bar, at plausible physical size ------
+        if (mkey === 'emissive') {
+          const back = new THREE.Mesh(backGeo, registry.get('hullDark', { faction, wear: 0.5 }));
+          put(back, x, y - 4, -12);
+          const mat = registry.get('emissive', { faction });
+          put(new THREE.Mesh(lampGeo, mat), x, y + 14, 2);
+          put(new THREE.Mesh(barGeo, mat), x, y - 14, 0);
+          continue;
+        }
+
         let material;
         let useMetreUV = true;
         switch (mkey) {
@@ -193,35 +231,21 @@ export default {
           case 'derelictHull': material = registry.get('derelictHull', { wear: 0.15 + r * 0.27, tier: 1 + (r % 3) }); break;
           case 'asteroid': material = registry.get('asteroid', { ore: 0.05 + r * 0.10 }); break;
           case 'glass': material = registry.get('glass', { faction }); useMetreUV = false; break;
-          case 'emissive': material = registry.get('emissive', { faction }); useMetreUV = false; break;
-          case 'engineGlow': material = registry.get('engineGlow', { faction }); useMetreUV = false; break;
-          case 'runningLights': material = registry.get('runningLights', { faction }); useMetreUV = false; break;
           default: material = registry.get(mkey, { faction, wear, tier: 1 + (r % 3) }); break;
         }
 
-        if (mkey === 'engineGlow') {
-          const bell = new THREE.Mesh(bellGeo, registry.get('hullDark', { faction, wear: 0.5 }));
-          bell.rotation.x = Math.PI * 0.5;
-          put(bell, x, y - 4, 0);
-          const glow = new THREE.Mesh(new THREE.SphereGeometry(20, 20, 14), material);
-          put(glow, x, y - 4, 20);
-          continue;
-        }
-
-        if (mkey === 'runningLights') {
-          const back = new THREE.Mesh(slabGeo, registry.get('hull', { faction, wear: 0.4 }));
-          put(back, x, y - 6, -14);
-          const strip = new THREE.Mesh(stripGeo, material);
-          put(strip, x, y + 16, 10);
-          continue;
+        if (mkey === 'glass') {
+          // A canopy is only legible against the hull it is set into.
+          const back = new THREE.Mesh(backGeo, registry.get('hull', { faction, wear: 0.35 }));
+          put(back, x, y - 4, -18);
         }
 
         const sphere = new THREE.Mesh(useMetreUV ? sphereGeo : plainSphereGeo, material);
-        put(sphere, x, y + 12, 26);
+        put(sphere, x, y + 14, 24);
         const slab = new THREE.Mesh(slabGeo, material);
         slab.rotation.y = -0.34;
-        slab.rotation.x = 0.12;
-        put(slab, x, y - 28, -16);
+        slab.rotation.x = 0.14;
+        put(slab, x, y - 26, -14);
       }
     }
 
@@ -229,13 +253,14 @@ export default {
     // Raw generated maps, flat and unlit, so they can be read as images.
     // -----------------------------------------------------------------------
     const tex = registry.textures;
-    const coalitionHull = tex.get('hull', { faction: 'coalition', variant: 'hull', wear: 0.5, tier: 2, size: 512, scale: 1, markings: true });
-    const concordHull = tex.get('hull', { faction: 'concord', variant: 'hull', wear: 0.25, tier: 2, size: 512, scale: 1, markings: true });
-    const derelictHullMaps = tex.get('hull', { faction: 'derelict', variant: 'hull', wear: 0.85, tier: 2, size: 512, scale: 1, markings: true });
+    const hullArgs = (faction, w) => ({ faction, variant: 'hull', wear: w, tier: 2, size: 512, scale: 1, markings: true });
+    const coalitionHull = tex.get('hull', hullArgs('coalition', 0.5));
+    const concordHull = tex.get('hull', hullArgs('concord', 0.25));
+    const derelictMaps = tex.get('hull', hullArgs('derelict', 0.875));
     const greeb = tex.get('greeble', { size: 512, density: 1.3 });
     const wearMask = tex.get('wear', {
       size: 512, amount: 0.85, panel: coalitionHull.panel,
-      edge: 0.8, streak: 0.75, grime: 0.6, pit: 0.2,
+      edge: 0.8, streak: 0.8, grime: 0.55, pit: 0.25,
     });
     const scorchTex = tex.get('scorch', { faction: 'coalition', severity: 0.85, size: 256 });
     const decalSheet = tex.get('decals', { faction: 'coalition', size: 512 });
@@ -244,9 +269,9 @@ export default {
     const STRIP = [
       [coalitionHull.map, 'CLN ALBEDO'],
       [coalitionHull.normalMap, 'NORMAL'],
-      [coalitionHull.ormMap, 'AO/ROUGH/METAL'],
+      [coalitionHull.ormMap, 'AO ROUGH METAL'],
       [concordHull.map, 'CNC ALBEDO'],
-      [derelictHullMaps.map, 'DERELICT'],
+      [derelictMaps.map, 'DERELICT'],
       [greeb.normal, 'GREEBLE'],
       [wearMask.texture, 'WEAR RGB'],
       [scorchTex.texture, 'SCORCH'],
@@ -255,8 +280,8 @@ export default {
     ];
 
     const quad = new THREE.PlaneGeometry(1, 1);
-    const stripY = ROW_Y(FACTION_ROWS.length - 1) - 132;
-    const stripW = 118;
+    const stripY = ROW_Y(FACTION_ROWS.length - 1) - 118;
+    const stripW = 116;
     for (let i = 0; i < STRIP.length; i++) {
       const [src, label] = STRIP[i];
       const t = src.clone();
@@ -265,41 +290,40 @@ export default {
       t.offset.set(0, 0);
       t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
       // Display exactly what was authored: decode as sRGB so the output transform
-      // is an identity rather than a gamma lift.
+      // becomes an identity rather than a gamma lift on the data maps.
       t.colorSpace = THREE.SRGBColorSpace;
       const m = new THREE.MeshBasicMaterial({ map: t, toneMapped: false });
       m.userData.__paletteKey = 'probe:chrome';
       const mesh = new THREE.Mesh(quad, m);
       const aspect = (src.image?.width ?? 1) / (src.image?.height ?? 1);
-      const w = stripW;
-      const h = aspect > 2 ? w / aspect : w;
-      mesh.scale.set(w, h, 1);
+      const h = aspect > 2 ? stripW / aspect : stripW;
+      mesh.scale.set(stripW, h, 1);
       const x = (i - (STRIP.length - 1) / 2) * (stripW + 12);
       mesh.position.set(x, stripY, 0);
       scene.add(mesh);
-      addLabel(scene, label, x, stripY - (h * 0.5) - 13, 96, NEUTRAL.select);
+      addLabel(scene, label, x, stripY - h * 0.5 - 13, 100, NEUTRAL.select);
     }
 
     // -----------------------------------------------------------------------
-    // Labels: generated block glyphs on emissive quads.
+    // Labels: generated block glyphs on unlit quads.
     // -----------------------------------------------------------------------
     for (let c = 0; c < COLUMNS.length; c++) {
-      addLabel(scene, COLUMNS[c].label, COL_X(c), ROW_Y(0) + 74, 92, poi.accent);
+      addLabel(scene, COLUMNS[c].label, COL_X(c), ROW_Y(0) + 64, 86, poi.accent);
     }
     for (let r = 0; r < FACTION_ROWS.length; r++) {
       const pal = getFactionPalette(FACTION_ROWS[r]);
-      addLabel(scene, FACTION_ROWS[r], COL_X(0) - 108, ROW_Y(r), 128, pal.emissive, 1.35);
+      addLabel(scene, FACTION_ROWS[r], COL_X(0) - 66, ROW_Y(r) - 2, 112, pal.emissive, 1.2);
     }
-    addLabel(scene, 'NADIR POINT / MATERIAL REGISTRY', 0, ROW_Y(0) + 132, 420, NEUTRAL.select, 1.1);
-    addLabel(scene, `RUNNING LIGHT SPACING ${SCALE.runningLightSpacingM}M / UV UNIT = 1M`,
-      0, stripY - 108, 380, poi.accent, 0.9);
+    addLabel(scene, 'NADIR POINT / MATERIAL REGISTRY', 0, ROW_Y(0) + 120, 360, NEUTRAL.select, 1.05);
+    addLabel(scene, `UV UNIT = 1 METRE / RUNNING LIGHT SPACING = ${SCALE.runningLightSpacingM} M`,
+      0, stripY - 96, 400, poi.accent, 0.85);
 
     // -----------------------------------------------------------------------
     const audit = registry.audit();
     const offenders = registry.auditScene(scene);
-    console.log('[probe:materials] registry audit', audit);
-    console.log('[probe:materials] palette audit', registry.paletteAudit().foreign);
-    console.log('[probe:materials] materials outside registry:', offenders.length, offenders.slice(0, 5));
+    console.log('[probe:materials] registry audit', JSON.stringify(audit));
+    console.log('[probe:materials] off-palette colours:', registry.paletteAudit().foreign.length);
+    console.log('[probe:materials] materials outside registry:', offenders.length);
     ctx.audit = audit;
   },
 };

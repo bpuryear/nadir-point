@@ -252,7 +252,10 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
         color: new THREE.Color().setHex(o.tint, THREE.SRGBColorSpace),
         metalness: 1.0,
         roughness: 0.055,
-        envMapIntensity: 2.0,
+        // Canopy glass is nothing but reflection. With a dark environment the only
+        // things it shows are the sun and whatever is nearby, so the env has to be
+        // pushed hard or the canopy is a black hole in the hull.
+        envMapIntensity: 3.4,
         flatShading: o.flatShading,
         side: THREE.FrontSide,
       });

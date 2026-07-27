@@ -272,10 +272,13 @@ export function rockMaps(opts = {}) {
   const n = size * size;
   const repeat = 1 / tileM;
 
-  // Lumpy at two scales plus craters: enough to catch a rim light, nothing more.
-  const lump = fbmField(rng.fork('rock-lump'), size, { baseCells: 3, octaves: 5, gain: 0.55 });
-  const fine = fbmField(rng.fork('rock-fine'), size, { baseCells: 12, octaves: 4, gain: 0.5 });
-  const crater = cellularField(rng.fork('rock-crater'), size, { cells: 7, jitter: 1, invert: false });
+  // Lumpy at two scales plus craters at two scales. Regularly spaced craters of
+  // one size read as a golf ball, which is the failure mode every procedural
+  // asteroid falls into; two scales with different jitter breaks it.
+  const lump = fbmField(rng.fork('rock-lump'), size, { baseCells: 3, octaves: 5, gain: 0.58 });
+  const fine = fbmField(rng.fork('rock-fine'), size, { baseCells: 14, octaves: 4, gain: 0.5 });
+  const craterBig = cellularField(rng.fork('rock-crater-a'), size, { cells: 4, jitter: 1, invert: false });
+  const craterSmall = cellularField(rng.fork('rock-crater-b'), size, { cells: 11, jitter: 1, invert: false });
   const veins = fbmField(rng.fork('rock-vein'), size, { baseCells: 5, octaves: 4, gain: 0.6, ridged: true });
 
   const h = new Float32Array(n);
@@ -286,18 +289,21 @@ export function rockMaps(opts = {}) {
   const [er, eg, eb] = hexBytes(ore);
 
   for (let i = 0; i < n; i++) {
-    const cr = smoothstep(0.0, 0.45, crater[i]);
-    h[i] = lump[i] * 0.62 + fine[i] * 0.20 + cr * 0.30;
-    const shade = saturate01(0.35 + h[i] * 0.75);
-    const v = saturate01(veins[i] * veins[i] * 1.6) * oreAmount;
+    const cb = smoothstep(0.0, 0.52, craterBig[i]);
+    const cs = smoothstep(0.10, 0.60, craterSmall[i]);
+    h[i] = lump[i] * 0.55 + fine[i] * 0.22 + cb * 0.34 + cs * 0.14;
+    // Albedo variation in rock comes from composition, not from the shape. Baking
+    // a lighting term into the albedo is what makes procedural rock look like clay.
+    const shade = saturate01(0.30 + lump[i] * 0.55 + fine[i] * 0.30);
+    const v = saturate01(veins[i] * veins[i] * 1.8) * oreAmount;
     const o4 = i * 4;
     bytes[o4] = lerp(lerp(dr2, tr, shade), er, v);
     bytes[o4 + 1] = lerp(lerp(dg2, tg, shade), eg, v);
     bytes[o4 + 2] = lerp(lerp(db2, tb, shade), eb, v);
     bytes[o4 + 3] = 255;
-    orm[o4] = saturate01(0.45 + h[i] * 0.6) * 255;
-    orm[o4 + 1] = saturate01(0.92 - v * 0.35 - fine[i] * 0.08) * 255;
-    orm[o4 + 2] = saturate01(v * 0.55) * 255;
+    orm[o4] = saturate01(0.30 + h[i] * 0.7) * 255;
+    orm[o4 + 1] = saturate01(0.96 - v * 0.42 - fine[i] * 0.10) * 255;
+    orm[o4 + 2] = saturate01(v * 0.70) * 255;
     orm[o4 + 3] = 255;
   }
 
