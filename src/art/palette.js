@@ -74,12 +74,18 @@ export const FACTION_PALETTES = {
     warn: 0xff3a18,
 
     // --- surface behaviour ---
+    // A painted warship hull is a DIELECTRIC. Coating over steel is metalness ~0.2,
+    // not 0.8. Getting this wrong is why so much sci-fi art reads as dark grey
+    // sludge: at high metalness there is no diffuse term, so the faction's albedo
+    // stops contributing and every hull collapses to the colour of the sky.
+    // Bare metal appears where the coating has worn off - the wear layer raises
+    // metalness locally, which is what makes edge wear read as metal and not paint.
     surface: {
-      hull: { metalness: 0.80, roughness: 0.54, variance: 0.34 },
-      hullDark: { metalness: 0.74, roughness: 0.70, variance: 0.24 },
-      plating: { metalness: 0.86, roughness: 0.46, variance: 0.30 },
-      greeble: { metalness: 0.94, roughness: 0.36, variance: 0.20 },
-      trim: { metalness: 0.30, roughness: 0.46, variance: 0.14 },
+      hull: { metalness: 0.22, roughness: 0.62, variance: 0.30 },
+      hullDark: { metalness: 0.44, roughness: 0.74, variance: 0.22 },
+      plating: { metalness: 0.30, roughness: 0.52, variance: 0.28 },
+      greeble: { metalness: 0.86, roughness: 0.42, variance: 0.20 },
+      trim: { metalness: 0.10, roughness: 0.54, variance: 0.14 },
     },
 
     // --- plating layout ---
@@ -122,12 +128,15 @@ export const FACTION_PALETTES = {
     engine: 0x49c6ff,
     warn: 0xff5a4a,
 
+    // Ceramic over metal: almost pure dielectric with a tight, low roughness. The
+    // structural members underneath (hullDark) are exposed alloy and read metallic,
+    // which is the contrast the whole faction identity rests on.
     surface: {
-      hull: { metalness: 0.34, roughness: 0.30, variance: 0.14 },
-      hullDark: { metalness: 0.62, roughness: 0.44, variance: 0.14 },
-      plating: { metalness: 0.26, roughness: 0.22, variance: 0.11 },
-      greeble: { metalness: 0.92, roughness: 0.28, variance: 0.15 },
-      trim: { metalness: 0.44, roughness: 0.26, variance: 0.09 },
+      hull: { metalness: 0.07, roughness: 0.30, variance: 0.12 },
+      hullDark: { metalness: 0.68, roughness: 0.38, variance: 0.14 },
+      plating: { metalness: 0.05, roughness: 0.21, variance: 0.09 },
+      greeble: { metalness: 0.90, roughness: 0.28, variance: 0.15 },
+      trim: { metalness: 0.16, roughness: 0.26, variance: 0.09 },
     },
 
     panel: {
@@ -167,12 +176,15 @@ export const FACTION_PALETTES = {
     engine: 0x86b02a,
     warn: 0xc4d24a,
 
+    // Bronze that has been oxidising for a very long time: partly metal, partly
+    // its own corrosion product, and rougher than anything a shipyard would sign
+    // off on. The wide variance is doing real work - no two plates agree.
     surface: {
-      hull: { metalness: 0.72, roughness: 0.74, variance: 0.40 },
-      hullDark: { metalness: 0.60, roughness: 0.86, variance: 0.30 },
-      plating: { metalness: 0.78, roughness: 0.66, variance: 0.36 },
-      greeble: { metalness: 0.84, roughness: 0.58, variance: 0.28 },
-      trim: { metalness: 0.56, roughness: 0.60, variance: 0.22 },
+      hull: { metalness: 0.46, roughness: 0.76, variance: 0.38 },
+      hullDark: { metalness: 0.34, roughness: 0.88, variance: 0.30 },
+      plating: { metalness: 0.54, roughness: 0.68, variance: 0.34 },
+      greeble: { metalness: 0.74, roughness: 0.60, variance: 0.28 },
+      trim: { metalness: 0.34, roughness: 0.62, variance: 0.22 },
     },
 
     panel: {
@@ -212,12 +224,14 @@ export const FACTION_PALETTES = {
     engine: 0xa9d4ee,
     warn: 0xff4a2a,
 
+    // Half-stripped gunmetal: more bare metal showing than either faction, because
+    // this hull is repaired in the field with whatever is to hand.
     surface: {
-      hull: { metalness: 0.82, roughness: 0.48, variance: 0.26 },
-      hullDark: { metalness: 0.76, roughness: 0.62, variance: 0.20 },
-      plating: { metalness: 0.88, roughness: 0.40, variance: 0.24 },
-      greeble: { metalness: 0.94, roughness: 0.32, variance: 0.18 },
-      trim: { metalness: 0.40, roughness: 0.42, variance: 0.12 },
+      hull: { metalness: 0.40, roughness: 0.52, variance: 0.24 },
+      hullDark: { metalness: 0.58, roughness: 0.66, variance: 0.20 },
+      plating: { metalness: 0.52, roughness: 0.44, variance: 0.22 },
+      greeble: { metalness: 0.90, roughness: 0.34, variance: 0.18 },
+      trim: { metalness: 0.12, roughness: 0.50, variance: 0.12 },
     },
 
     panel: {

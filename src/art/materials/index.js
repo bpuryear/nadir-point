@@ -64,13 +64,13 @@ const quantize = (v, step) => Math.round(v / step) * step;
 
 /** Hull-ish keys share one normalisation and one build path. */
 const HULL_VARIANTS = {
-  hull: { variant: 'hull', normalScale: 1.0, envMapIntensity: 1.0 },
-  hullDark: { variant: 'hullDark', normalScale: 0.9, envMapIntensity: 0.75 },
-  plating: { variant: 'plating', normalScale: 1.0, envMapIntensity: 1.1 },
-  greeble: { variant: 'greeble', normalScale: 1.15, envMapIntensity: 1.2 },
-  trim: { variant: 'trim', normalScale: 0.7, envMapIntensity: 0.85 },
-  derelictHull: { variant: 'derelictHull', normalScale: 1.25, envMapIntensity: 0.8 },
-  debris: { variant: 'debris', normalScale: 1.0, envMapIntensity: 0.9 },
+  hull: { variant: 'hull', normalScale: 1.0, envMapIntensity: 1.15 },
+  hullDark: { variant: 'hullDark', normalScale: 0.9, envMapIntensity: 0.8 },
+  plating: { variant: 'plating', normalScale: 1.0, envMapIntensity: 1.2 },
+  greeble: { variant: 'greeble', normalScale: 1.15, envMapIntensity: 1.35 },
+  trim: { variant: 'trim', normalScale: 0.7, envMapIntensity: 0.9 },
+  derelictHull: { variant: 'derelictHull', normalScale: 1.3, envMapIntensity: 0.85 },
+  debris: { variant: 'debris', normalScale: 1.0, envMapIntensity: 1.0 },
 };
 
 /**
@@ -126,7 +126,10 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
       const pal = getFactionPalette(o.faction);
       o.color = o.color ?? (key === 'engineGlow' ? pal.engine : pal.emissive);
       assertPaletteColor(o.color, `materials.get('${key}')`);
-      const dflt = key === 'engineGlow' ? 3.4 : key === 'runningLights' ? 2.6 : 2.2;
+      // Bloom threshold in postfx.js is 1.05 on luminance. These defaults sit just
+      // above it so a light glows, and well below the point where a large emissive
+      // face floods the frame - area matters more than intensity for bloom.
+      const dflt = key === 'engineGlow' ? 2.6 : key === 'runningLights' ? 2.0 : 1.9;
       o.intensity = quantize(Math.max(0, o.intensity ?? dflt), 0.05);
     }
     if (key === 'glass') {

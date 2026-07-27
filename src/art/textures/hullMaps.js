@@ -177,13 +177,17 @@ export function hullMaps(opts = {}) {
       + pt * 0.34
       - ew * 0.22
       + (greeb.height[i] - 0.5) * -0.10;
+    // Metalness is a material identity, not a dial: it should only move where the
+    // material genuinely changes. It goes UP hard where the coating has worn off
+    // (that is bare metal) and where unpainted hardware sits, and down where the
+    // surface is covered in something that is not the surface.
     let metal = S.metalness
-      - seam * 0.14
-      - gr * 0.32
-      - st * 0.18
-      - pt * 0.30
-      + ew * 0.20
-      + gm * 0.06;
+      - seam * 0.08
+      - gr * 0.18
+      - st * 0.12
+      - pt * 0.16
+      + ew * (0.92 - S.metalness) * 0.85
+      + gm * 0.20;
 
     const o4 = i * 4;
     ormBytes[o4] = ao * 255;
