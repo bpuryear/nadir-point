@@ -203,13 +203,16 @@ export function hullMaps(opts = {}) {
   }
   const normalCanvas = bytesToCanvas(heightToNormalBytes(h, size, o.normalStrength), size);
 
-  const tileM = pal.panel.tileM;
+  // UV units are metres, so the repeat is 1 / (plate tile in metres). This is what
+  // keeps a plate the same physical size on an 18 m fighter and a 1400 m cruiser.
+  const tileM = pal.panel.tileM * o.scale;
+  const repeat = 1 / tileM;
   return {
-    size, tileM, panel, surface: S,
+    size, tileM, panel, surface: S, repeat,
     albedoCanvas, ormCanvas, normalCanvas,
-    map: canvasTexture(albedoCanvas, { srgb: true, name: `${o.faction}:${o.variant}:albedo` }),
-    ormMap: canvasTexture(ormCanvas, { name: `${o.faction}:${o.variant}:orm` }),
-    normalMap: canvasTexture(normalCanvas, { name: `${o.faction}:${o.variant}:normal` }),
+    map: canvasTexture(albedoCanvas, { srgb: true, repeat, name: `${o.faction}:${o.variant}:albedo` }),
+    ormMap: canvasTexture(ormCanvas, { repeat, name: `${o.faction}:${o.variant}:orm` }),
+    normalMap: canvasTexture(normalCanvas, { repeat, name: `${o.faction}:${o.variant}:normal` }),
   };
 }
 
@@ -257,9 +260,13 @@ function stampMarkings(ctx, size, panel, pal, faction, rng, tier) {
 
 /** Neutral rock maps for asteroids: no plating, no markings, no metal. */
 export function rockMaps(opts = {}) {
-  const { rng, size = 512, tint = NEUTRAL.rock, dark = NEUTRAL.rockDark, ore = NEUTRAL.rockOre, oreAmount = 0.18 } = opts;
+  const {
+    rng, size = 512, tint = NEUTRAL.rock, dark = NEUTRAL.rockDark,
+    ore = NEUTRAL.rockOre, oreAmount = 0.18, tileM = 40,
+  } = opts;
   if (!rng) throw new Error('[rockMaps] needs an rng');
   const n = size * size;
+  const repeat = 1 / tileM;
 
   // Lumpy at two scales plus craters: enough to catch a rim light, nothing more.
   const lump = fbmField(rng.fork('rock-lump'), size, { baseCells: 3, octaves: 5, gain: 0.55 });
@@ -291,9 +298,9 @@ export function rockMaps(opts = {}) {
   }
 
   return {
-    size,
-    map: canvasTexture(bytesToCanvas(bytes, size), { srgb: true, name: 'rock:albedo' }),
-    ormMap: canvasTexture(bytesToCanvas(orm, size), { name: 'rock:orm' }),
-    normalMap: canvasTexture(bytesToCanvas(heightToNormalBytes(h, size, 1.5), size), { name: 'rock:normal' }),
+    size, tileM, repeat,
+    map: canvasTexture(bytesToCanvas(bytes, size), { srgb: true, repeat, name: 'rock:albedo' }),
+    ormMap: canvasTexture(bytesToCanvas(orm, size), { repeat, name: 'rock:orm' }),
+    normalMap: canvasTexture(bytesToCanvas(heightToNormalBytes(h, size, 1.5), size), { repeat, name: 'rock:normal' }),
   };
 }

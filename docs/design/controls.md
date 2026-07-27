@@ -880,9 +880,9 @@ quarter. The propulsion numbers and the power numbers are the same numbers.
 `Enter` on a committed course does this, visibly, in the 3D world:
 
 1. Cruiser turns to the leg heading at its normal (slow) turn rate. You watch it come about.
-2. Transit spool: 90 s, main drive plume grows to 4× length, hull frame audio.
-3. Cruise: engines lit, `TIME_SCALES` remains available *plus* a transit-only compression band.
-4. Deceleration burn, automatic, computed to arrive at combat speed at the POI boundary.
+2. Transit spool: 25 s, main drive plume grows to 4× length, hull frame audio.
+3. Burn: 30 m/s² to a 3600 m/s ceiling (216 km of runway; short legs never reach the ceiling).
+4. Deceleration burn, automatic, symmetric, computed to arrive at combat speed at the POI boundary.
 
 **Transit compression.** While in transit *and* with no contact inside sensor range, the time
 control offers extra scales: 8×, 16×, 32×, 64×, accessible with `]` past 4×. These scales are
@@ -890,24 +890,38 @@ control offers extra scales: 8×, 16×, 32×, 64×, accessible with `]` past 4×
 existing `TIME_SCALES` mechanism (integration owns extending that array; noted in §8), not as a
 parallel time system.
 
-**Travel times.** POI spacing is authored at 120–600 km.
+**Travel times.** POI spacing is authored at 120–600 km. All figures include the 25 s spool.
 
-| Leg | Sim time | At 16× | At 64× |
-|---|---|---|---|
-| 120 km | 117 s | 7 s | 1.8 s |
-| 300 km | 157 s | 10 s | 2.5 s |
-| 600 km | 224 s | 14 s | 3.5 s |
+| Leg | Sim time | At 16× | At 32× | At 64× | Propellant | Risk rolls |
+|---|---|---|---|---|---|---|
+| 120 km | 151 s | 9.5 s | 4.7 s | 2.4 s | 96 | 2 |
+| 300 km | 225 s | 14.1 s | 7.0 s | 3.5 s | 240 | 3 |
+| 600 km | 312 s | 19.5 s | 9.7 s | 4.9 s | 480 | 5 |
 
 Long enough to be a journey. Short enough that you never resent it. Compare Elite's multi-minute
-supercruise approaches, which are the explicit anti-target.
+supercruise approaches, which are the explicit anti-target. Under SILENT the same legs take 217 /
+330 / 497 s — roughly **1.5× the time**, which is the price of the risk reduction below.
 
-**Risk.** Every 60 s of transit sim time, roll an interception check per leg segment:
+**Risk.** Every 60 s of transit sim time, roll an interception check for the segment you are on:
 
 ```js
-P_intercept = clamp(heat * HEAT_K * signatureMul * (1 - stealthMitigation), 0, 0.45)
-// HEAT_K = 0.22, signatureMul = 6.0 in transit
-// heat 0.5, no mitigation → 0.5 * 0.22 * 6.0 = 0.66 → clamped to 0.45 per minute. Hot space is hot.
+P_intercept = clamp(heat * HEAT_K * signatureMul, 0, HEAT_CAP)
+// HEAT_K = 0.05, HEAT_CAP = 0.35
+// signatureMul = 6.0 in transit, 1.5 under SILENT
 ```
+
+Total odds of being intercepted at least once, normal / SILENT:
+
+| Leg | heat 0.1 | heat 0.3 | heat 0.5 | heat 0.7 | heat 0.9 |
+|---|---|---|---|---|---|
+| 120 km | 6 % / 2 % | 17 % / 7 % | 28 % / 11 % | 38 % / 15 % | 47 % / 19 % |
+| 300 km | 9 % / 4 % | 25 % / 11 % | 39 % / 17 % | 51 % / 24 % | 61 % / 29 % |
+| 600 km | 14 % / 6 % | 38 % / 17 % | 56 % / 26 % | 69 % / 35 % | 79 % / 43 % |
+
+Read the shape: quiet space is effectively free, contested space is a coin flip, long legs through
+hot space are close to a certainty, and SILENT cuts the risk to roughly a third for half again the
+travel time. Every cell of that table is a decision the player can see on the course plot before
+committing, because the percentage is drawn on the leg.
 
 The roll comes from `world.rng.fork('transit-intercept')` — deterministic, reproducible from seed.
 
@@ -917,10 +931,11 @@ there. Your weapons come back online over 12 s (the spin-down), which is the cos
 fast. This is Freelancer's cruise disruptor, and it is why cruise mode there is a decision rather
 than a formality.
 
-**Mitigation.** The `SILENT` power stance (Shift+D) caps transit speed at 2200 m/s and cuts the
-signature multiplier from 6.0 to 1.5, which drops the example above from 0.45/min to 0.165/min at
-double the travel time. That is a real, legible, one-keypress decision made with the same widget you
-use in combat, which is the whole reason power routing exists as a layer.
+**Mitigation.** The `SILENT` power stance (Shift+D) halves both transit acceleration and ceiling and
+cuts the signature multiplier from 6.0 to 1.5. It also costs less propellant (0.5/km rather than
+0.8/km), because you are running the drive gently. One keypress, made with the same widget you use
+in combat, altering travel time, fuel and risk together — which is the whole reason power routing
+exists as a layer rather than as a combat gimmick.
 
 #### 5.5.4 Wait — a transit drive on a scavenger?
 
@@ -1035,11 +1050,20 @@ export const CRUISER_FEEL = {
   turnExp:         1.35,
   turnRateFloorK:  0.22,    // never below 22% of at-rest rate
 
-  // transit
-  transitMaxSpeed: 4500.0,
-  transitAccel:    22.0,
-  transitSpool:    90.0,    // s
-  transitTurnMul:  0.30,
+  // transit (see §5.5.3)
+  transitMaxSpeed:   3600.0,  // m/s
+  transitAccel:      30.0,    // m/s^2
+  transitSpool:      25.0,    // s
+  transitTurnMul:    0.30,
+  transitSignature:  6.0,
+  silentMaxSpeed:    1800.0,
+  silentAccel:       13.0,
+  silentSignature:   1.5,
+  propellantPerKm:      0.8,
+  propellantPerKmSilent:0.5,
+  heatK:             0.05,
+  heatCap:           0.35,
+  riskRollPeriod:    60.0,    // s of sim time
 
   // visual
   bankMax:         0.12,    // rad
@@ -1097,7 +1121,7 @@ function turnRateAt(speed, F = CRUISER_FEEL) {
 | Speed | ω (rad/s) | 90° takes | Turn radius `v/ω` | In hull lengths |
 |---|---|---|---|---|
 | 0 (at rest) | 0.0850 | 18.5 s | — | — |
-| 45 m/s (25 %) | 0.0745 | 21.1 s | 604 m | 0.43 L |
+| 45 m/s (25 %) | 0.0756 | 20.8 s | 595 m | 0.43 L |
 | 90 m/s (50 %) | 0.0611 | 25.7 s | 1473 m | 1.05 L |
 | 135 m/s (75 %) | 0.0435 | 36.1 s | 3103 m | 2.22 L |
 | 180 m/s (100 %) | 0.0238 | 66.0 s | 7563 m | 5.40 L |
@@ -1175,7 +1199,10 @@ these is cheap:
 | Order feedback latency | Synthetic click → marker present in the scene graph before the next `render()` returns |
 | Orders survive pause | Issue every order type at `TIME_SCALES[0]`; assert `ship.order` is set and no `EV.WEAPON_FIRED` fired |
 | Determinism | Same seed + same recorded input timeline → identical `world` state hash, at 1× and at 4× |
-| Turn-rate curve | `turnRateAt(180) / turnRateAt(0)` = 0.28 ± 0.005 |
+| Turn-rate curve | `turnRateAt(180) / turnRateAt(0)` = 0.28 ± 0.005; monotonically decreasing over [0, 180] |
+| Transit timing | 300 km leg = 225 ± 2 s sim time; SILENT = 330 ± 2 s |
+| Interception odds | 300 km at heat 0.5 → 0.39 ± 0.01 cumulative, normal; 0.17 ± 0.01, SILENT |
+| Transit compression is gated | Enter transit, spawn a contact inside sensor range, assert the time scale is clamped to ≤ 4× on that same tick |
 | Snap cancels | Start a `Home` snap, inject orbit input at 200 ms; assert camera state stops changing on that frame |
 
 ---
