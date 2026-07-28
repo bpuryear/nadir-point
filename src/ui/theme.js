@@ -561,6 +561,29 @@ export class Painter {
 
 const EMPTY_DASH = [];
 
+/**
+ * Total angle covered by a set of {centre, width} arcs, unioned, in radians.
+ *
+ * Summing widths is wrong and the error is not small: the dorsal bed alone is 306
+ * degrees and the ventral utility mount is declared full-circle, so a naive sum
+ * reports "100% of circle" on a hull with a hole in its starboard quarter you could
+ * fly a frigate through. Sampled rather than swept because arcs wrap.
+ */
+export function arcUnion(arcs, samples = 360) {
+  if (!arcs || !arcs.length) return 0;
+  let hit = 0;
+  for (let i = 0; i < samples; i++) {
+    const a = (i / samples) * Math.PI * 2;
+    for (const arc of arcs) {
+      let d = (a - arc.centre) % (Math.PI * 2);
+      if (d > Math.PI) d -= Math.PI * 2;
+      if (d <= -Math.PI) d += Math.PI * 2;
+      if (Math.abs(d) <= arc.width * 0.5) { hit++; break; }
+    }
+  }
+  return (hit / samples) * Math.PI * 2;
+}
+
 /** Frame-rate independent damping, the same form the camera stream uses. */
 export const damp = (cur, target, tau, dt) =>
   (tau <= 0 ? target : cur + (target - cur) * (1 - Math.exp(-dt / tau)));

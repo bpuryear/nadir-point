@@ -81,9 +81,9 @@ const HOLD = [
 ];
 
 const SCREENS = {
-  combat: { poi: 'graveyard', pose: { distance: 4300, pitch: 0.40, yaw: 0.86 } },
-  hit: { poi: 'graveyard', pose: { distance: 3400, pitch: 0.36, yaw: 0.86 } },
-  locked: { poi: 'graveyard', pose: { distance: 4300, pitch: 0.40, yaw: 0.86 } },
+  combat: { poi: 'graveyard', pose: { distance: 3750, pitch: 0.33, yaw: 0.86 } },
+  hit: { poi: 'graveyard', pose: { distance: 2400, pitch: 0.30, yaw: 0.86 } },
+  locked: { poi: 'graveyard', pose: { distance: 3750, pitch: 0.33, yaw: 0.86 } },
   refit: { poi: 'yard', pose: { distance: 2050, pitch: 0.21, yaw: 0.92 } },
 };
 
@@ -228,7 +228,8 @@ export default {
     }
 
     // ---- a wreck to salvage ----------------------------------------------
-    const wreck = makeWreck(world, registry, salvage);
+    // Inside tractor reach, so the cut ordered after the settle actually holds.
+    const wreck = makeWreck(world, registry, salvage, new THREE.Vector3(-1180, COMBAT_PLANE_Y, 900));
 
     // ---- settle the simulation -------------------------------------------
     // Real weapon world-positions, real traverse, real shield and power state come
@@ -242,6 +243,12 @@ export default {
       for (let i = 0; i < 4; i++) engine.stepOnce();
       player.body.desiredHeading = player.heading;
     }
+    // Under way, not parked. A velocity readout of zero says nothing about a hull
+    // whose whole character is that it takes forty-five seconds to stop.
+    player.body.velocity.set(Math.sin(player.heading), 0, Math.cos(player.heading)).multiplyScalar(88);
+
+    // The cut has to be ordered after the stepping - see beginCut.
+    beginCut(salvage, wreck);
 
     // ---- power: caught mid-swing -----------------------------------------
     // The gap between requested and delivered IS the mechanic, so the frame is taken
@@ -250,6 +257,14 @@ export default {
       player.power.applyPreset('assault');
       for (let i = 0; i < 18; i++) engine.stepOnce();   // ~0.3 s of a ~0.75 s swing
     }
+
+    // ---- framing ----------------------------------------------------------
+    // Solved from where the two hulls actually ended up rather than authored, so the
+    // plate stays composed if the heading search or the roster changes. The camera
+    // looks square across the engagement axis: player left, target right, which is
+    // also the side the target panel is on.
+    Object.assign(pose, S.pose);
+    framePair(pose, player, target, screenName);
 
     // ---- the UI itself ----------------------------------------------------
     const ui = installUI(world);
@@ -267,7 +282,7 @@ export default {
       for (let i = 0; i < 12; i++) ui.refit._prewarmStep();
       ui.notify('SALVAGE HOLD 4/8', { important: false });
     } else {
-      seedMarkers(ui, world, player, target, wreck);
+      seedMarkers(ui, world, player, target, pose);
       ui.notify('CONTACT RESOLVED — CONCORD PICKET', { important: true });
       ui.notify('CUTTING BEAM ENGAGED', { important: false });
     }
@@ -277,14 +292,6 @@ export default {
       ui.damage.at = 0.35;
       ui.damage.amount = 340;
       ui.orderBar.say('HULL BREACH — PORT QUARTER', 'error');
-    }
-
-    Object.assign(pose, S.pose);
-    if (screenName === 'hit' && target) {
-      // Frame the enemy, not the cruiser.
-      pose.target.copy(target.position);
-    } else {
-      pose.target.set(0, 40, 0);
     }
 
     ctx.ui = ui;
@@ -318,7 +325,11 @@ export default {
 function makeHold(ui, screenName) {
   const seeded = [];
   ui.markers.forEach((m) => {
-    if (m.active) seeded.push({ m, stage: m.stage, dStage: 0.055, dT0: m.kind === 'salvage' ? 0.5 : 0.08 });
+    if (!m.active) return;
+    // Salvage is held SETTLED (its scale-in finished long ago); the other three are
+    // held at the instant each stage reads most clearly.
+    const settled = m.kind === 'salvage';
+    seeded.push({ m, stage: m.stage, dStage: settled ? 0.9 : 0.055, dT0: settled ? 1.2 : 0.08 });
   });
   return () => {
     const t = ui.time;
@@ -365,8 +376,8 @@ function spawnEnemies(world, registry, screenName) {
   const out = [];
   const rng = world.rng.fork('ui-enemies');
   const roster = [
-    { id: 'concord_destroyer', angle: -0.62, dist: 4300 },
-    { id: 'concord_corvette', angle: -1.35, dist: 3100 },
+    { id: 'concord_destroyer', angle: -0.62, dist: 2450 },
+    { id: 'concord_corvette', angle: -1.45, dist: 3400 },
     { id: 'coalition_frigate', angle: 2.25, dist: 5600 },
   ];
   for (const r of roster) {
@@ -448,25 +459,39 @@ function tuneHeadingForMixedBearing(player, target, combat) {
 }
 
 /** A hulk with cut sections, so the salvage marker and the hold have provenance. */
-function makeWreck(world, registry, salvage) {
+function makeWreck(world, registry, salvage, position) {
   const def = getShipClass('coalition_frigate');
   if (!def) return null;
   const rng = world.rng.fork('ui-wreck');
   const victim = new Ship({
     classDef: def, world, faction: 'coalition',
     root: def.build?.({ rng: rng.fork('hulk'), materials: registry, palette: registry.palette, faction: 'coalition', lod: 0 }),
-    position: new THREE.Vector3(-1650, COMBAT_PLANE_Y, 1450),
+    position: position.clone(),
     heading: 1.9,
   });
   world.addShip(victim);
   victim.salvageIntegrity = 0.86;
   const wreck = salvage._spawnWreck(victim);
-  if (wreck) {
-    wreck.update(0);
-    const s = wreck.sections.find((x) => x.cuttable);
-    if (s) { s.cutProgress = 0.42; salvage.orderCut(wreck, s); }
-  }
+  if (wreck) wreck.update(0);
   return wreck;
+}
+
+/**
+ * Order the cut AFTER the settle. `SalvageSystem._updateCut` cancels a cut whose
+ * section has drifted out of tractor reach, so issuing it before stepping the engine
+ * would leave the frame with a cutting beam that had already been called off.
+ */
+function beginCut(salvage, wreck) {
+  if (!wreck) return null;
+  const near = salvage.findNearestSection();
+  const pick = near ?? (() => {
+    const s = wreck.sections.find((x) => x.cuttable);
+    return s ? { wreck, section: s } : null;
+  })();
+  if (!pick) return null;
+  pick.section.cutProgress = 0.42;
+  salvage.orderCut(pick.wreck, pick.section);
+  return salvage.cutting;
 }
 
 /**
@@ -477,15 +502,20 @@ function makeWreck(world, registry, salvage) {
  * into the three states. Every one of them is a real marker on the real pool,
  * created through the same entry point the input stream calls.
  */
-function seedMarkers(ui, world, player, target, wreck) {
+function seedMarkers(ui, world, player, target, pose) {
   const t = ui.time;
-  const p = player?.position ?? new THREE.Vector3();
+  // Place the two plane markers relative to the SOLVED camera basis, so they land in
+  // the clear middle of the frame whatever heading the arc search picked.
+  const y = pose.yaw;
+  const rx = Math.cos(y), rz = -Math.sin(y);          // screen right, on the plane
+  const fx = -Math.sin(y), fz = -Math.cos(y);         // toward the camera, on the plane
+  const at = (r, f) => new THREE.Vector3(
+    pose.target.x + rx * r + fx * f, 0, pose.target.z + rz * r + fz * f,
+  );
 
   // 1. REJECTED first — the dissolve, with a specific reason on it. Spawned before
   //    the legal move order, exactly as it would happen at the desk.
-  const bad = ui.spawnOrderMarker('move', {
-    point: new THREE.Vector3(p.x - 2100, 0, p.z + 2600),
-  });
+  const bad = ui.spawnOrderMarker('move', { point: at(-1450, 700) });
   if (bad) {
     bad.stage = 'rejected';
     bad.stageAt = t - 0.055;

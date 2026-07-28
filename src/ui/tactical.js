@@ -28,7 +28,7 @@ import * as THREE from 'three';
 import { RANGE } from '../core/units.js';
 import { angleDelta, yawOf } from '../sim/physics.js';
 import {
-  C, F, TRACK, screenPointRing, fmtRange, fmtPct, smoothstep,
+  C, F, TRACK, screenPointRing, fmtRange, fmtPct, smoothstep, arcUnion,
 } from './theme.js';
 
 const ARC_SEGS = 40;
@@ -66,6 +66,7 @@ export class TacticalOverlay {
     }
     this._dash = [4, 5];
     this._rings = [];
+    this._cov = [];
   }
 
   draw(P) {
@@ -87,10 +88,30 @@ export class TacticalOverlay {
   // Firing arcs, on the plane, in metres
   // =========================================================================
 
+  /**
+   * TWO RADII PER ARC, and the split is the whole reason this reads.
+   *
+   * A rail battery reaches 9.5 km. At any tactical framing that circle is off the
+   * frame, so drawing the wedge at true range gives you nothing but two enormous
+   * straight lines crossing the picture from corner to corner - which is noise, not
+   * information, and it buries the one wedge that is actually on target.
+   *
+   * So each mount is drawn twice:
+   *   - a NEAR ROSE, filled, out to a radius set by the camera distance. This is the
+   *     angular information, which is what facing is about, and it nests all six
+   *     mounts into one readable figure around the hull.
+   *   - the TRUE RANGE arc, one hairline, no radial edges, wherever it lands. Often
+   *     off-frame, which is itself the correct statement: this mount outranges what
+   *     you are looking at. The dashed range rings and the wedge label carry the
+   *     metres.
+   */
   _drawArcs(P, player, combat) {
     const proj = this.ui.projector;
     const arcs = combat.describeArcs(player);
     if (!arcs.length) return;
+
+    const camDist = proj.camera ? proj.camera.position.distanceTo(player.position) : 4000;
+    const roseR = THREE.MathUtils.clamp(camDist * 0.36, 900, 7000);
 
     // Bearing wedges last, so a live firing solution is never drawn under a wedge
     // that cannot reach the target.
@@ -103,46 +124,54 @@ export class TacticalOverlay {
       const bearing = a.bearing && a.online;
       const stroke = !a.online ? C.inkGhost : bearing ? C.hostile : C.inkFaint;
 
-      // A 2*PI "arc" is a utility mount (the salvage cradle is declared full-circle
-      // by hardpoints.js), not a firing arc. Drawn as a filled disc it would swallow
-      // every real wedge in the frame, so it gets a bare range circle instead.
+      // A 2*PI "arc" is a utility mount - the salvage cradle is declared full-circle
+      // by hardpoints.js - not a firing arc. It gets a bare range circle.
       if (a.width >= Math.PI * 1.98) {
         this._planeRing(P, ox, oz, range, C.salvageGhost, 1, this._dash);
         continue;
       }
 
-      const fillA = !a.online ? 0 : bearing ? 0.10 : 0.035;
-
-      let allOk = proj.point(ox, 0, oz, this._arc[0]);
+      const near = Math.min(range, roseR);
+      const fillA = !a.online ? 0 : bearing ? 0.115 : 0.040;
       const n = ARC_SEGS;
+      const count = n + 2;
+
+      // --- near rose --------------------------------------------------------
+      let allOk = proj.point(ox, 0, oz, this._arc[0]);
       for (let i = 0; i <= n; i++) {
         const ang = a.centre - a.width * 0.5 + a.width * (i / n);
-        const ok = proj.point(ox + Math.sin(ang) * range, 0, oz + Math.cos(ang) * range, this._arc[i + 1]);
+        const ok = proj.point(ox + Math.sin(ang) * near, 0, oz + Math.cos(ang) * near, this._arc[i + 1]);
         allOk = allOk && ok;
       }
-
-      const count = n + 2;
       if (allOk && fillA > 0) {
         P.polyline(this._arc, count, { stroke: null, close: true, fill: wedgeFill(bearing, fillA) });
       }
-      // Outer arc bright, radial edges thin: the eye should read the RANGE limit and
-      // the two arc edges, not a filled shape.
       P.polyline(this._arc, count, {
-        stroke, weight: bearing ? 1.5 : 1, close: false,
-        dash: a.online ? null : this._dash,
+        stroke, weight: bearing ? 1.6 : 1, close: false, dash: a.online ? null : this._dash,
       });
       if (this._arc[0].ok) {
         const first = this._arc[1], last = this._arc[n + 1];
-        if (first.ok) P.leader(this._arc[0].x, this._arc[0].y, first.x, first.y, stroke, 1);
-        if (last.ok) P.leader(this._arc[0].x, this._arc[0].y, last.x, last.y, stroke, 1);
+        if (first.ok) P.leader(this._arc[0].x, this._arc[0].y, first.x, first.y, stroke, bearing ? 1.2 : 1);
+        if (last.ok) P.leader(this._arc[0].x, this._arc[0].y, last.x, last.y, stroke, bearing ? 1.2 : 1);
       }
 
-      // One label per wedge, at the arc's centre bearing, out at range.
+      // --- true range arc ---------------------------------------------------
+      if (range > near * 1.02) {
+        for (let i = 0; i <= n; i++) {
+          const ang = a.centre - a.width * 0.5 + a.width * (i / n);
+          proj.point(ox + Math.sin(ang) * range, 0, oz + Math.cos(ang) * range, this._arc[i]);
+        }
+        P.polyline(this._arc, n + 1, {
+          stroke: bearing ? C.hostileDim : C.inkGhost, weight: 1, close: false, dash: this._dash,
+        });
+      }
+
+      // Label sits on the near rose, where the eye already is.
       const mid = a.centre;
-      if (proj.point(ox + Math.sin(mid) * range * 0.94, 0, oz + Math.cos(mid) * range * 0.94, this._pt)
-        && this._pt.x > -160 && this._pt.x < P.w + 160 && this._pt.y > -60 && this._pt.y < P.h + 60) {
+      if (proj.point(ox + Math.sin(mid) * near * 0.9, 0, oz + Math.cos(mid) * near * 0.9, this._pt)
+        && this._pt.x > 8 && this._pt.x < P.w - 8 && this._pt.y > 20 && this._pt.y < P.h - 20) {
         P.text(`${a.type.toUpperCase()} ${fmtRange(a.range)}`, this._pt.x, this._pt.y, {
-          font: F.micro, color: bearing ? C.hostile : C.inkGhost,
+          font: F.micro, color: bearing ? C.hostile : C.inkFaint,
           align: 'center', track: TRACK.label,
         });
       }
@@ -385,11 +414,13 @@ export class TacticalOverlay {
     c.stroke();
 
     const mounts = player.weapons ?? [];
-    let covered = 0;
+    this._cov.length = 0;
     for (const m of mounts) {
       if (!m.online || m.def.type === 'pd') continue;
       const w = Math.min(m.yawWidth, Math.PI * 2);
-      covered += w;
+      // Utility mounts are declared full-circle and would report 100 % coverage on a
+      // hull with a hole in it. They are not weapons; they do not count.
+      if (w < Math.PI * 1.98) this._cov.push({ centre: m.yawCentre, width: w });
       // Screen angle: bow (+Z, yaw 0) is up, and yaw increases clockwise on screen
       // so the rose matches the arcs drawn on the plane under a top-down camera.
       const a0 = -Math.PI * 0.5 + m.yawCentre - w * 0.5;
@@ -425,9 +456,10 @@ export class TacticalOverlay {
         { fill: bears ? C.friendly : C.warn });
     }
 
-    const pct = mounts.length ? Math.min(1, covered / (Math.PI * 2)) : 0;
-    P.text(`${Math.round(pct * 100)}% OF CIRCLE`, cx, cy + R + 15,
-      { font: F.micro, color: C.inkFaint, align: 'center', track: TRACK.label });
+    const pct = arcUnion(this._cov) / (Math.PI * 2);
+    P.text(`${Math.round(pct * 100)}% OF CIRCLE`, cx, cy + R + 15, {
+      font: F.micro, color: pct > 0.92 ? C.inkFaint : C.warnDim, align: 'center', track: TRACK.label,
+    });
   }
 }
 

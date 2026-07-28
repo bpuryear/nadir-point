@@ -41,7 +41,7 @@ import * as THREE from 'three';
 import { HARDPOINTS, getModule } from '../core/contracts.js';
 import { POWER_CHANNELS } from '../core/contracts.js';
 import {
-  C, F, TRACK, factionInk, fmtMass, fmtPct, fmtRange, smootherstep,
+  C, F, TRACK, factionInk, fmtMass, fmtPct, fmtRange, smootherstep, arcUnion,
 } from './theme.js';
 import { InventoryPanel } from './inventory.js';
 
@@ -420,7 +420,9 @@ export class RefitScreen {
       out.salvageRate += g.salvageRate ?? 0;
     }
 
-    out.coverage = arcUnion(out.arcs);
+    // Utility mounts declare a full circle and are not weapons; counting them would
+    // report total coverage on a hull that cannot answer its own starboard quarter.
+    out.coverage = arcUnion(out.arcs.filter((a) => a.width < Math.PI * 1.98));
     out.power = (player.power?.baseOutput ?? 100) + out.powerBonus;
     out.accel = (player.classDef?.accel ?? 6) * out.thrustMul;
     out.turnRate = (player.classDef?.turnRate ?? 0.085) * out.turnMul;
@@ -914,22 +916,6 @@ export class RefitScreen {
 }
 
 // ---------------------------------------------------------------------------
-
-/** Total angle covered by a set of arcs, unioned. Wrapping handled by sampling. */
-function arcUnion(arcs, samples = 360) {
-  if (!arcs.length) return 0;
-  let hit = 0;
-  for (let i = 0; i < samples; i++) {
-    const a = (i / samples) * Math.PI * 2;
-    for (const arc of arcs) {
-      let d = (a - arc.centre) % (Math.PI * 2);
-      if (d > Math.PI) d -= Math.PI * 2;
-      if (d <= -Math.PI) d += Math.PI * 2;
-      if (Math.abs(d) <= arc.width * 0.5) { hit++; break; }
-    }
-  }
-  return (hit / samples) * Math.PI * 2;
-}
 
 function clip(P, str, font, maxW) {
   if (P.measure(str, font, TRACK.value) <= maxW) return str;

@@ -42,8 +42,8 @@ export class PowerPanel {
   constructor(ui) {
     this.ui = ui;
     this.world = ui.world;
-    this.width = 344;
-    this.rowH = 22;
+    this.width = 356;
+    this.rowH = 30;
   }
 
   get height() { return 46 + POWER_CHANNELS.length * this.rowH + 26; }
@@ -147,16 +147,17 @@ export class PowerPanel {
     cy += 6;
     P.hline(x, cy - 8, w, C.ruleDim);
     const active = this._activePreset(plant);
+    const list = this._presets(plant);
+    const tw = Math.floor((w - (list.length - 1) * 6) / list.length);
     let px = x;
-    for (const [name, key] of this._presets(plant)) {
+    for (const [name, key] of list) {
       const on = name === active;
-      const tw = 60;
-      if (on) P.fill(px, cy, tw, 13, unlocked ? C.ink : C.inkGhost);
-      else P.frame(px, cy, tw, 13, C.ruleDim);
-      P.text(name.toUpperCase(), px + 5, cy + 9, {
-        font: F.micro, color: on ? C.void : dim, track: TRACK.label,
+      if (on) P.fill(px, cy, tw, 14, unlocked ? C.ink : C.inkGhost);
+      else P.frame(px, cy, tw, 14, C.ruleDim);
+      P.text(name.toUpperCase(), px + 5, cy + 10, {
+        font: F.micro, color: on ? C.void : dim, track: TRACK.none,
       });
-      P.text(key, px + tw - 5, cy + 9, {
+      P.text(key, px + tw - 5, cy + 10, {
         font: F.micro, color: on ? C.void : C.inkGhost, align: 'right',
       });
       px += tw + 6;

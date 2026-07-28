@@ -35,7 +35,11 @@ await fs.mkdir(outDir, { recursive: true });
 let server, browser;
 const manifest = [];
 try {
-  server = await startServer({ port });
+  // Preview mode, for the same reason as the smoke test: the dev server's HMR
+  // full-reloads the page whenever anything writes to the tree, which destroys the
+  // execution context mid-settle and aborts the shot. Serving a built bundle is
+  // immune, and it means review frames come from the artefact that actually ships.
+  server = await startServer({ port, mode: 'preview' });
   browser = await launchBrowser();
 
   for (const shot of shots) {
