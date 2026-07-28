@@ -38,7 +38,7 @@ import { HARDPOINTS } from '../core/contracts.js';
 import { TIME_SCALES_COMBAT } from '../core/units.js';
 import {
   C, F, TRACK, Painter, screenPointRing, fmtRange, fmtPct,
-  factionInk, smootherstep, smoothstep,
+  factionInk, smootherstep, smoothstep, projectedSalvageState, projectedYieldsModule,
 } from './theme.js';
 
 const RING_SEGS = 44;
@@ -469,42 +469,44 @@ export class HUD {
         const tw = P.measure((s.def.label ?? s.def.id).toUpperCase(), F.small, TRACK.value);
         P.rule(x, cy - 4, tw, P.hair, C.inkFaint);
       }
-      P.label(s.def.kind, x + 112, cy, { color: dead ? C.inkGhost : C.inkFaint });
+      P.label(s.def.kind, x + 108, cy, { color: dead ? C.inkGhost : C.inkFaint });
 
       const frac = s.maxHP > 0 ? s.hp / s.maxHP : 0;
-      P.bar(x + w - 132, cy - 7, 50, 5, frac, {
+      P.bar(x + 156, cy - 7, 44, 5, frac, {
         color: dead ? C.inkGhost : bears ? C.hostile : C.inkFaint,
         track: C.inkGhost,
       });
-      P.text(dead ? 'DEST' : fmtPct(frac), x + w - 76, cy,
+      P.text(dead ? 'DEST' : fmtPct(frac), x + 236, cy,
         { font: F.small, color: dead ? C.inkFaint : col, align: 'right' });
 
       const row = projection ? findSection(projection, s.def.id) : null;
       if (row) {
-        const ink = row.state === 'INTACT' ? C.salvage : row.state === 'DAMAGED' ? C.salvageDim : C.warn;
-        P.text(row.state, x + w, cy, { font: F.microBold, color: ink, align: 'right', track: TRACK.label });
+        const state = projectedSalvageState(row.condition, dead);
+        const ink = state === 'INTACT' ? C.salvage : state === 'DAMAGED' ? C.salvageDim : C.warn;
+        P.text(state, x + w, cy, { font: F.microBold, color: ink, align: 'right', track: TRACK.label });
         // A part only comes out of a section that is a module-bearing kind AND has not
         // been shot past scrap. The dot is the difference between "materials" and "the
         // thing you came for", and it disappears while the player watches.
-        if (row.moduleLikely) P.fill(x + w - 70, cy - 5, 4, 4, C.salvage);
+        if (projectedYieldsModule(row, dead)) P.fill(x + 244, cy - 5, 4, 4, C.salvage);
       }
       cy += 14;
     }
 
-    // Hull plating rows: three runs of structure that are not subsystems and never
-    // appeared in this panel, yet carry a third of what a wreck is worth.
+    // Hull plating: three runs of structure that are not subsystems and never appeared
+    // in this panel, yet carry a real share of what a hulk is worth.
     if (projection) {
       P.hline(x, cy - 6, w, C.ruleDim);
       cy += 8;
-      let plateX = x;
       P.label('PLATING', x, cy, { color: C.inkGhost });
-      plateX = x + 56;
+      let plateX = x + 52;
       for (const row of projection) {
         if (row.kind !== 'hull') continue;
-        const ink = row.state === 'INTACT' ? C.salvage : row.state === 'DAMAGED' ? C.salvageDim : C.warn;
-        P.text(`${String(row.label).replace(' PLATING', '')} ${row.state}`, plateX, cy,
-          { font: F.micro, color: ink, track: TRACK.label });
-        plateX += 92;
+        const state = projectedSalvageState(row.condition, false);
+        const ink = state === 'INTACT' ? C.salvage : state === 'DAMAGED' ? C.salvageDim : C.warn;
+        const short = String(row.label).replace(' PLATING', '').slice(0, 4);
+        P.text(short, plateX, cy, { font: F.micro, color: C.inkFaint, track: TRACK.label });
+        P.text(state, plateX + 34, cy, { font: F.micro, color: ink, track: TRACK.label });
+        plateX += 90;
       }
       cy += 12;
     }
@@ -575,19 +577,23 @@ export class HUD {
 
     // Four pools now, not three: `electronics` landed with the material chain and was
     // never printed anywhere, which meant every cost quoted in it read as unpayable.
+    // Two rows of two, on a fixed grid — a variable-width count followed by the next
+    // label on the same line is the collision this panel had before.
     const mats = [['ALLOY', m.alloy], ['COMP', m.composite], ['ELEC', m.electronics], ['EXOTIC', m.exotic]];
-    let mx = x - 152;
-    for (const [k, v] of mats) {
-      P.label(k, mx, y + 6, { color: C.inkGhost });
-      P.text(String(Math.round(v ?? 0)), mx + 36, y + 6, {
+    for (let i = 0; i < mats.length; i++) {
+      const [k, v] = mats[i];
+      const col = i % 2;
+      const mx = x - 152 + col * 78;
+      const my = y + 6 + Math.floor(i / 2) * 13;
+      P.label(k, mx, my, { color: C.inkGhost });
+      P.text(String(Math.round(v ?? 0)), mx + 68, my, {
         font: F.small, color: (v ?? 0) > 0 ? C.inkDim : C.inkGhost, align: 'right',
       });
-      mx += 40;
-      if (mx > x - 40) { mx = x - 152; y += 12; }
     }
+    y += 26;
 
     if (world.unlocked?.powerRouting === false) {
-      P.label('PWR SEALED', x, y + 20, { color: C.inkGhost, align: 'right' });
+      P.label('PWR SEALED', x, y + 6, { color: C.inkGhost, align: 'right' });
     }
   }
 

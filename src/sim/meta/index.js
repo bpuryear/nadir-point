@@ -8,10 +8,16 @@ import { CodexSystem } from './codex.js';
 import { PatternSystem, patternCost } from './patterns.js';
 import { PerkSystem, PERK_DEFS } from './perks.js';
 import { ObjectiveSystem, ARRIVAL_TIERS } from './objectives.js';
+import { SortieSystem } from './sortie.js';
+import { RefitGateSystem, REFIT_GATE } from './refitGate.js';
+import { DerelictSystem, DERELICT } from './derelict.js';
+import { PersistenceSystem, SAVE_VERSION } from '../../core/persistence.js';
 
 export {
   EconomySystem, CargoHold, ItemSystem, CodexSystem, PatternSystem, PerkSystem, ObjectiveSystem,
+  SortieSystem, RefitGateSystem, DerelictSystem, PersistenceSystem,
   MEV, MATERIAL_DEFS, SCRAP_GRADES, REFINED_POOLS, REFINE_YIELD, PERK_DEFS, ARRIVAL_TIERS,
+  REFIT_GATE, DERELICT, SAVE_VERSION,
   moduleVolume, volumeClassOf, patternCost, gradeForSection, gradeForKind,
 };
 
@@ -47,6 +53,15 @@ export function installProgression(world, deps = {}) {
   const perks = new PerkSystem(world);
   const objectives = new ObjectiveSystem(world);
 
+  // THE SORTIE LOOP. Four systems, all of which read state that already existed and
+  // none of which invent a resource: the sortie ledger and its debrief, the refit
+  // commitment gate, the crippling handler, and the save. See each file's header for
+  // the four-question test it passes.
+  const sortie = new SortieSystem(world);
+  const refitGate = new RefitGateSystem(world);
+  const derelict = new DerelictSystem(world);
+  const persistence = new PersistenceSystem(world, deps.persistence);
+
   world.register('cargo', cargo);
   world.register('economy', economy);
   world.register('codex', codex);
@@ -54,10 +69,20 @@ export function installProgression(world, deps = {}) {
   world.register('items', items);
   world.register('perks', perks);
   world.register('objectives', objectives);
+  world.register('sortie', sortie);
+  world.register('refitGate', refitGate);
+  world.register('derelict', derelict);
+  world.register('persistence', persistence);
 
   world.engine?.add(objectives);
   world.engine?.add(items);
   world.engine?.add(economy);
+  world.engine?.add(derelict);
+  world.engine?.add(sortie);
+  world.engine?.add(refitGate);
+  // `refit.js` is usually already up by now; if it is not, the gate claims it on its
+  // first step instead. Either way nothing else has to know about the ordering.
+  refitGate.enforce();
 
   // The hold's slot ceiling is a hold, not a warehouse. Volume is the real constraint;
   // this only stops a pathological "forty sensor masts" fit.
@@ -70,6 +95,7 @@ export function installProgression(world, deps = {}) {
 
   const api = {
     cargo, economy, codex, patterns, items, perks, objectives,
+    sortie, refitGate, derelict, persistence,
 
     /**
      * THE ONE READ CALL A UI NEEDS. Everything below is also available per-system.
@@ -84,6 +110,12 @@ export function installProgression(world, deps = {}) {
         perks: perks.describe(),
         objectives: objectives.describe(),
         codex: codex.progress(),
+        sortie: sortie.live(),
+        refit: refitGate.status(),
+        derelict: derelict.status(),
+        sites: derelict.sites(),
+        ledger: world.systems.factionWar?.ledgerStatus?.() ?? null,
+        berth: world.systems.travel?.status?.() ?? null,
       };
     },
 
@@ -94,12 +126,16 @@ export function installProgression(world, deps = {}) {
       items.dispose?.();
       perks.dispose?.();
       objectives.dispose?.();
-      for (const s of [objectives, items, economy]) {
+      sortie.dispose?.();
+      refitGate.dispose?.();
+      derelict.dispose?.();
+      for (const s of [objectives, items, economy, derelict, sortie, refitGate]) {
         const list = world.engine?.systems;
         const i = list?.indexOf(s) ?? -1;
         if (i >= 0) list.splice(i, 1);
       }
-      for (const k of ['cargo', 'economy', 'codex', 'patterns', 'items', 'perks', 'objectives', 'progression']) {
+      for (const k of ['cargo', 'economy', 'codex', 'patterns', 'items', 'perks', 'objectives',
+        'sortie', 'refitGate', 'derelict', 'persistence', 'progression']) {
         delete world.systems[k];
       }
     },

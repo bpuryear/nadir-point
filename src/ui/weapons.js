@@ -37,15 +37,16 @@ import { CONDITION } from '../sim/condition.js';
 import { C, F, TRACK, factionInk, fmtPct } from './theme.js';
 import { Panel, PAD, TITLE_H } from './panels.js';
 
-const CELL_W = 66;
-const CELL_H = 96;
-const THERM_W = 118;
-const HOTBAR_H = 30;
-const BODY_H = CELL_H + 8 + HOTBAR_H + 6 + 10;
+const CELL_W = 84;
+const CELL_H = 116;
+const THERM_W = 130;
+const HOTBAR_H = 32;
+const BODY_H = CELL_H + 16 + 12 + HOTBAR_H + 6;
 
+/** Abbreviated to fit an 80 px cell beside the weapon archetype. */
 const MOUNT_LABEL = {
-  bow: 'BOW', dorsal: 'DORSAL', ventral: 'VENTRAL',
-  port: 'PORT', starboard: 'STBD', engine: 'ENGINE',
+  bow: 'BOW', dorsal: 'DORSAL', ventral: 'VENT',
+  port: 'PORT', starboard: 'STBD', engine: 'ENG',
 };
 
 /** Sub-part kind → the single letter drawn inside its square, and the legend text. */
@@ -129,10 +130,11 @@ export class ArmamentPanel extends Panel {
 
     // The sub-part legend. Five letters carrying five different failure modes is a
     // vocabulary, and an unexplained vocabulary is just noise.
-    P.label(PART_LEGEND, x, y + CELL_H + 10, { color: C.inkGhost });
+    P.label(PART_LEGEND, x + THERM_W + 6, y + CELL_H + 12, { color: C.inkGhost });
+    P.label('SUB-PARTS', x, y + CELL_H + 12, { color: C.inkFaint });
 
-    P.hline(x, y + CELL_H + 15, w, C.ruleDim);
-    this._drawHotbar(P, x, y + CELL_H + 22, w, HOTBAR_H, hit);
+    P.hline(x, y + CELL_H + 18, w, C.ruleDim);
+    this._drawHotbar(P, x, y + CELL_H + 32, w, HOTBAR_H, hit);
     void h;
   }
 
@@ -141,9 +143,8 @@ export class ArmamentPanel extends Panel {
   // =========================================================================
 
   _drawThermal(P, x, y, w, h, therm, stores) {
-    P.label('THERMAL', x, y + 7, { color: C.inkFaint });
-
     if (!therm) {
+      P.label('THERMAL', x, y + 7, { color: C.inkFaint });
       P.text('NO DATA', x, y + 22, { font: F.small, color: C.inkGhost, track: TRACK.label });
       return;
     }
@@ -152,66 +153,78 @@ export class ArmamentPanel extends Panel {
     const elevated = therm.state === 'ELEVATED';
     const stateCol = over ? C.warn : elevated ? C.ink : C.inkDim;
 
-    // STATUS <WORD>. The word is the readout; the bar only says how far along it is.
-    P.label('STATUS', x, y + 22, { color: C.inkGhost });
-    if (over) {
-      // A trip is the one state in this panel that is allowed to pulse. It costs the
-      // player a mount and structural HP on the hardpoint, and it is recoverable —
-      // which makes it exactly the case a static readout under-sells.
-      const pulse = 0.75 + 0.25 * Math.sin(P.t * 6.0);
-      P.ctx.globalAlpha = pulse;
-      P.chip(therm.state, x + 34, y + 12, { fill: C.warn, color: C.void, h: 13 });
-      P.ctx.globalAlpha = 1;
-    } else {
-      P.text(therm.state, x + 34, y + 22, { font: F.bodyBold, color: stateCol, track: TRACK.label });
-    }
-
-    // EXT, over its ceiling. The reference prints both halves and so do we: a figure
-    // with no ceiling beside it is not a measurement.
-    P.label('EXT', x, y + 36, { color: C.inkGhost });
-    P.text(`${therm.ext.toFixed(1)} / ${therm.extMax.toFixed(1)}`, x + 34, y + 36, {
-      font: F.small, color: over ? C.warn : C.ink,
-    });
-
-    // The large vertical bar, with the soft cap marked. Above the soft cap dispersion
-    // widens — the player has to have SEEN that line before it costs them a shot.
-    const barX = x + w - 22;
+    // The large vertical bar sits on the LEFT edge of the column, hard against the
+    // panel border, with everything else set beside it. That is the reference's own
+    // composition and it is the reason the figures have room: a bar tucked into the
+    // right margin leaves every value fighting it for the last thirty pixels.
     const barY = y + 4;
-    const barH = h - 22;
-    P.vbar(barX, barY, 16, barH, therm.peak, {
+    const barH = h - 20;
+    P.vbar(x, barY, 18, barH, therm.peak, {
       color: over ? C.warn : elevated ? C.ink : C.inkDim,
       track: C.inkGhost,
       segments: 8,
       threshold: THERMAL.softCap,
       thresholdColor: C.warnDim,
     });
-    P.frame(barX, barY, 16, barH, C.ruleDim);
-    P.label('PEAK', barX + 8, y + h - 4, { color: C.inkGhost, align: 'center' });
+    P.frame(x, barY, 18, barH, C.ruleDim);
+    P.label('PEAK', x + 9, y + h - 6, { color: C.inkGhost, align: 'center' });
+
+    const tx = x + 26;
+    const vx = x + 62;
+    const right = x + w;
+    P.label('THERMAL', tx, y + 7, { color: C.inkFaint });
+
+    // STATUS <WORD>, on its own line at full column width. The word is the readout;
+    // the bar only says how far along it is.
+    P.label('STATUS', tx, y + 20, { color: C.inkGhost });
+    if (over) {
+      // A trip is the one state in this panel allowed to pulse. It costs the player a
+      // mount and structural HP on the hardpoint, and it is recoverable — which makes
+      // it exactly the case a static readout under-sells.
+      const pulse = 0.75 + 0.25 * Math.sin(P.t * 6.0);
+      P.ctx.globalAlpha = pulse;
+      P.chip(therm.state, tx, y + 24, { fill: C.warn, color: C.void, h: 14, minW: right - tx });
+      P.ctx.globalAlpha = 1;
+    } else {
+      P.text(therm.state, tx, y + 35, { font: F.bodyBold, color: stateCol, track: TRACK.label });
+    }
+
+    // EXT, over its ceiling. The reference prints both halves and so do we: a figure
+    // with no ceiling beside it is not a measurement.
+    P.label('EXT', tx, y + 50, { color: C.inkGhost });
+    P.text(`${therm.ext.toFixed(1)} / ${therm.extMax.toFixed(1)}`, vx, y + 50, {
+      font: F.small, color: over ? C.warn : C.ink,
+    });
 
     // Signed rate. `0.12/s` in the reference; ours is a percentage of capacity per
-    // second, which is the number that tells you whether you are winning the race.
+    // second, which is the number that says whether you are winning the race.
     const rate = therm.rate * 100;
     const rising = rate > 0.05;
-    P.label('RATE', x, y + 50, { color: C.inkGhost });
-    P.text(`${rising ? '+' : rate < -0.05 ? '−' : ' '}${Math.abs(rate).toFixed(1)}%/s`, x + 34, y + 50, {
+    P.label('RATE', tx, y + 62, { color: C.inkGhost });
+    P.text(`${rising ? '+' : rate < -0.05 ? '−' : ' '}${Math.abs(rate).toFixed(1)}%/s`, vx, y + 62, {
       font: F.small, color: rising ? C.warn : C.inkDim,
     });
 
-    P.label('LOAD', x, y + 62, { color: C.inkGhost });
-    P.bar(x + 34, y + 56, 40, 5, therm.load, { color: C.inkDim, track: C.inkGhost, segments: 4 });
-    P.label('RAD', x, y + 74, { color: C.inkGhost });
-    P.bar(x + 34, y + 68, 40, 5, therm.radiate, { color: C.inkDim, track: C.inkGhost, segments: 4 });
+    // Load is what the reactor is dumping into the hull; radiate is what is left over
+    // to shed it. The two bars ARE the power interlock — route to weapons and the top
+    // bar grows while the bottom one shrinks.
+    P.label('LOAD', tx, y + 74, { color: C.inkGhost });
+    P.bar(vx, y + 68, right - vx, 5, therm.load, { color: C.inkDim, track: C.inkGhost, segments: 4 });
+    P.label('RAD', tx, y + 86, { color: C.inkGhost });
+    P.bar(vx, y + 80, right - vx, 5, therm.radiate, { color: C.inkDim, track: C.inkGhost, segments: 4 });
 
     // Coolant purges. Small, finite, and the thing you press when the bar is climbing.
     const coolant = stores ? stores.coolant : therm.coolant;
     const coolantMax = Math.max(1, stores ? stores.coolantMax : therm.coolantMax);
-    P.label('PURGE', x, y + 88, { color: C.inkGhost });
-    P.pips(x + 34, y + 82, coolantMax, coolant, {
-      size: 6, gap: 3, color: coolant > 0 ? C.ink : C.inkGhost, empty: C.inkGhost,
+    P.label('PURGE', tx, y + 100, { color: C.inkGhost });
+    P.pips(vx, y + 94, coolantMax, coolant, {
+      size: 7, gap: 3, color: coolant > 0 ? C.ink : C.inkGhost, empty: C.inkGhost,
     });
     if (therm.tripped > 0) {
-      P.text(`${therm.tripped} TRIPPED`, x + w, y + 88, {
-        font: F.microBold, color: C.warn, align: 'right', track: TRACK.label,
+      // Its own line. Right-aligning it against the purge pips put a five-word figure
+      // through a three-pip row, which is how a warning becomes unreadable.
+      P.text(`${therm.tripped} MOUNT${therm.tripped > 1 ? 'S' : ''} TRIPPED`, tx, y + 112, {
+        font: F.microBold, color: C.warn, track: TRACK.label,
       });
     }
   }
@@ -275,40 +288,40 @@ export class ArmamentPanel extends Panel {
     // thing the game is about: where the part came from.
     if (module) {
       const fi = factionInk(module.faction);
-      P.fill(x + 3, y + 12, 2, 9, hp?.breached ? C.warnDim : fi.stripe);
-      P.text(P.clip((module.name ?? '').toUpperCase(), F.micro, w - 12), x + 8, y + 20,
+      P.fill(x + 3, y + 13, 2, 9, hp?.breached ? C.warnDim : fi.stripe);
+      P.text(P.clip((module.name ?? '').toUpperCase(), F.micro, w - 12), x + 8, y + 21,
         { font: F.micro, color: hp?.breached ? C.warnDim : C.inkDim, track: TRACK.value });
     } else {
-      P.text('— NO MODULE —', x + 3, y + 20, { font: F.micro, color: C.inkGhost, track: TRACK.label });
+      P.text('— NO MODULE —', x + 3, y + 21, { font: F.micro, color: C.inkGhost, track: TRACK.label });
     }
 
     // --- the state chip ----------------------------------------------------
-    const chipY = y + 24;
+    const chipY = y + 26;
     if (spec.tone === 'alarm') {
       let label = state;
       if (state === 'COOKED' && mount?.thermal?.tripRemaining > 0) {
         label = `COOKED ${mount.thermal.tripRemaining.toFixed(1)}`;
       }
-      P.chip(label, x + 3, chipY, { fill: C.warn, color: C.void, h: 13, minW: w - 6 });
+      P.chip(label, x + 3, chipY, { fill: C.warn, color: C.void, h: 14, minW: w - 6 });
     } else if (spec.tone === 'warn') {
-      P.frame(x + 3, chipY, w - 6, 13, C.warnDim);
+      P.frame(x + 3, chipY, w - 6, 14, C.warnDim);
       if (state === 'RELOAD' && mount) {
         // The reload clock drawn as a fill INSIDE the chip: the chip is the progress
         // bar, so a feeding mount reads as a thing that is coming back.
         const total = mount.def.reload ?? AMMO_SPEC[mount.ammoClass]?.reload ?? 6;
         const k = 1 - THREE.MathUtils.clamp(mount.reloading / Math.max(0.001, total), 0, 1);
-        P.fill(x + 4, chipY + 1, (w - 8) * k, 11, C.warnGhost);
+        P.fill(x + 4, chipY + 1, (w - 8) * k, 12, C.warnGhost);
       }
-      P.text(state, x + w * 0.5, chipY + 10, {
+      P.text(state, x + w * 0.5, chipY + 11, {
         font: F.microBold, color: C.warn, align: 'center', track: TRACK.label,
       });
     } else if (spec.tone === 'ok') {
-      P.text('READY', x + w * 0.5, chipY + 10, {
+      P.text('READY', x + w * 0.5, chipY + 11, {
         font: F.microBold, color: C.inkDim, align: 'center', track: TRACK.label,
       });
     } else {
-      P.hatch(x + 3, chipY, w - 6, 13, C.inkGhost, { spacing: 5, weight: 1 });
-      P.text(state, x + w * 0.5, chipY + 10, {
+      P.hatch(x + 3, chipY, w - 6, 14, C.inkGhost, { spacing: 5, weight: 1 });
+      P.text(state, x + w * 0.5, chipY + 11, {
         font: F.micro, color: C.inkFaint, align: 'center', track: TRACK.label,
       });
     }
@@ -318,22 +331,23 @@ export class ArmamentPanel extends Panel {
       // grants — `condition.grantMul` scales power output, shields, thrust and cargo.
       if (module && hp) {
         const cond = hp.module?.condition ?? 1;
-        P.label('C', x + 3, y + 53, { color: C.inkGhost });
-        P.bar(x + 12, y + 47, w - 18, 5, cond, {
+        P.label('C', x + 3, y + 57, { color: C.inkGhost });
+        P.bar(x + 14, y + 51, w - 20, 6, cond, {
           color: cond < CONDITION.worn ? C.warn : C.inkDim, track: C.inkGhost,
         });
-        P.text(fmtPct(cond), x + w - 3, y + 64, { font: F.micro, color: C.inkFaint, align: 'right' });
+        P.text(fmtPct(cond), x + w - 3, y + 72, { font: F.micro, color: C.inkFaint, align: 'right' });
+        P.label('GRANTS ONLY', x + 3, y + 72, { color: C.inkGhost });
       }
       return;
     }
 
     // --- heat and condition -------------------------------------------------
     const th = mount.thermal;
-    const barX = x + 12;
-    const barW = w - 18;
+    const barX = x + 14;
+    const barW = w - 20;
     const heat = th ? th.heat : 0;
-    P.label('H', x + 3, y + 46, { color: C.inkGhost });
-    P.bar(barX, y + 40, barW, 6, heat, {
+    P.label('H', x + 3, y + 51, { color: C.inkGhost });
+    P.bar(barX, y + 45, barW, 7, heat, {
       color: heat > THERMAL.softCap ? C.warn : C.inkDim,
       track: C.inkGhost,
       threshold: THERMAL.softCap,
@@ -341,8 +355,8 @@ export class ArmamentPanel extends Panel {
     });
 
     const cond = mount.condition ?? 1;
-    P.label('C', x + 3, y + 55, { color: C.inkGhost });
-    P.bar(barX, y + 50, barW, 5, cond, {
+    P.label('C', x + 3, y + 62, { color: C.inkGhost });
+    P.bar(barX, y + 56, barW, 6, cond, {
       color: cond < CONDITION.worn ? C.warn : C.inkDim, track: C.inkGhost,
     });
 
@@ -353,16 +367,16 @@ export class ArmamentPanel extends Panel {
     if (cls) {
       const mag = player.stores ? player.stores.rounds(cls) : 0;
       const dry = mag <= 0 && mount.ready <= 0;
-      P.text(`${mount.ready}/${mount.readyMax}`, x + 3, y + 66, {
+      P.text(`${mount.ready}/${mount.readyMax}`, x + 3, y + 76, {
         font: F.micro, color: dry ? C.warn : C.inkDim,
       });
-      P.text(String(mag), x + w - 3, y + 66, {
+      P.text(`MAG ${mag}`, x + w - 3, y + 76, {
         font: F.micro, color: dry ? C.warn : C.inkGhost, align: 'right',
       });
     } else {
       const chg = stores ? stores.charge / Math.max(1, stores.chargeMax) : 0;
-      P.label('CHG', x + 3, y + 66, { color: C.inkGhost });
-      P.bar(barX + 10, y + 61, barW - 10, 5, chg, {
+      P.label('CHG', x + 3, y + 76, { color: C.inkGhost });
+      P.bar(x + 28, y + 70, w - 34, 6, chg, {
         color: chg < 0.15 ? C.warn : C.inkDim, track: C.inkGhost,
       });
     }
@@ -373,13 +387,13 @@ export class ArmamentPanel extends Panel {
     // may not be hidden by a transient RELOAD.
     let sx = x + 3;
     if (mount.parts?.traverseFrozen) {
-      sx = P.chipOutline('FROZEN', sx, y + 70, { color: C.warn, h: 11, padX: 3 }) + 2;
+      sx = P.chipOutline('FROZEN', sx, y + 81, { color: C.warn, h: 12, padX: 3 }) + 2;
     }
     if (cond < CONDITION.worn && cond >= CONDITION.inert) {
-      sx = P.chipOutline('WORN', sx, y + 70, { color: C.inkFaint, h: 11, padX: 3 }) + 2;
+      sx = P.chipOutline('WORN', sx, y + 81, { color: C.inkFaint, h: 12, padX: 3 }) + 2;
     }
-    if (th && th.trips > 0 && sx < x + w - 16) {
-      P.chipOutline(`×${th.trips}`, sx, y + 70, { color: C.warnDim, h: 11, padX: 3 });
+    if (th && th.trips > 0 && sx < x + w - 18) {
+      P.chipOutline(`×${th.trips}`, sx, y + 81, { color: C.warnDim, h: 12, padX: 3 });
     }
 
     // --- sub-parts ----------------------------------------------------------
@@ -389,22 +403,26 @@ export class ArmamentPanel extends Panel {
     const parts = mount.parts?.list ?? [];
     const n = parts.length;
     if (n > 0) {
-      const sq = Math.min(12, Math.floor((w - 6) / n) - 2);
+      const sq = Math.min(15, Math.floor((w - 6) / n) - 2);
       let px = x + 3;
       for (const part of parts) {
-        const py = y + h - sq - 3;
+        const py = y + h - sq - 4;
+        // The square fills from the bottom with the part's remaining health, so a
+        // half-shot feed reads as half a square. A healthy part is a SOLID block —
+        // the previous near-black fill made every live part look like an empty slot.
         P.fill(px, py, sq, sq, C.inkGhost);
         if (!part.destroyed && part.health > 0) {
           P.fill(px, py + sq * (1 - part.health), sq, sq * part.health,
-            part.health < 0.5 ? C.warnGhost : C.scrimSoft);
+            part.health < 0.5 ? C.warn : C.inkDim);
         }
         P.frame(px, py, sq, sq, part.destroyed ? C.warn : C.ruleDim);
-        P.text(PART_LETTER[part.kind] ?? '?', px + sq * 0.5, py + sq - 2.5, {
-          font: F.micro, color: part.destroyed ? C.warn : part.health < 0.5 ? C.ink : C.inkFaint,
+        P.text(PART_LETTER[part.kind] ?? '?', px + sq * 0.5, py + sq - 3.5, {
+          font: F.microBold,
+          color: part.destroyed ? C.warn : part.health > 0.35 ? C.void : C.ink,
           align: 'center', track: TRACK.none,
         });
         if (part.destroyed) {
-          P.leader(px + 1, py + 1, px + sq - 1, py + sq - 1, C.warn, 1);
+          P.hatch(px + 1, py + 1, sq - 2, sq - 2, C.warn, { spacing: 4, weight: 1 });
         }
         if (hit) {
           hit.push({
@@ -457,14 +475,15 @@ export class ArmamentPanel extends Panel {
   }
 
   _drawHotbar(P, x, y, w, h, hit) {
-    P.label('DEVICES', x, y - 2, { color: C.inkFaint });
+    P.label('DEVICES', x, y + 8, { color: C.inkFaint });
+    P.label('PRESS 4-8', x, y + 22, { color: C.inkGhost });
     const rows = this._devicesFor(this.ui.time);
     if (!rows.length) {
-      P.text('NONE REGISTERED', x + 60, y - 2, { font: F.micro, color: C.inkGhost, track: TRACK.label });
+      P.text('NONE REGISTERED', x + 62, y + 8, { font: F.micro, color: C.inkGhost, track: TRACK.label });
       return;
     }
-    const slotW = Math.floor((w - 58) / rows.length);
-    let sx = x + 58;
+    const slotW = Math.floor((w - 62) / rows.length);
+    let sx = x + 62;
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       const usable = r.ready;
@@ -484,13 +503,13 @@ export class ArmamentPanel extends Panel {
         fill: usable ? C.ink : C.inkGhost, color: C.void, h: 10, padX: 3, font: F.micro,
       });
 
-      // Short name. Devices have long names and a 90 px slot; the codex carries the
-      // full one and the tooltip line below carries the reason it cannot fire.
-      P.text(P.clip(shortName(r.name), F.micro, slotW - 30), sx + 18, sy + 10, {
+      // Short name. Devices have long names and a narrow slot; the codex carries the
+      // full one and the line below carries the reason it cannot fire.
+      P.text(P.clip(shortName(r.name), F.micro, slotW - 52), sx + 18, sy + 10, {
         font: F.micro, color: usable ? C.ink : C.inkFaint, track: TRACK.label,
       });
 
-      P.text(`×${r.count}`, sx + slotW - 6, sy + 10, {
+      P.text(`×${r.count}`, sx + slotW - 9, sy + 10, {
         font: F.microBold, color: r.count > 0 ? C.ink : C.warn, align: 'right',
       });
 

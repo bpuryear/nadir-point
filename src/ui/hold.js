@@ -263,8 +263,11 @@ export class MaterialsPanel extends Panel {
       title: 'MATERIALS',
       hint: 'K',
       w: 486,
-      h: 372,
-      place: (P) => ({ x: P.w - 486 - 30, y: 118 }),
+      h: 430,
+      // Left of frame. HOLD opens on the right and the two are read together — what is
+      // aboard, and what it can be turned into — so they must not default to the same
+      // rectangle and hide one another.
+      place: (P) => ({ x: 30, y: Math.max(40, Math.min(118, P.h - 470)) }),
     });
     this.ui = ui;
     this.world = ui.world;
@@ -419,15 +422,25 @@ export class MaterialsPanel extends Panel {
 
     // --- competing claims ---------------------------------------------------
     cy += 6;
+    let affordable = 0;
+    for (const dm of this._demands) if (dm.ok) affordable++;
     P.label('CLAIMS ON THE SAME POOLS', x, cy, { color: C.inkFaint });
-    P.label('AMBER = SHORT', x + w, cy, { color: C.warnDim, align: 'right' });
+    // The tally, up here, because the list is sorted affordable-first and is longer
+    // than the window: without it a player who does not scroll concludes they can
+    // afford everything, which is the opposite of what this panel is for.
+    P.chip(`${affordable} AFFORDABLE`, x + w - 108, cy - 9, {
+      fill: C.inkGhost, color: C.inkDim, h: 12,
+    });
+    P.chip(`${this._demands.length - affordable} SHORT`, x + w, cy - 9, {
+      fill: C.warn, color: C.void, h: 12, align: 'right',
+    });
     P.hline(x, cy + 4, w, C.rule);
     cy += 15;
     cy = tableHead(P, x, cy, w, [['', 0], ['ITEM', 62], ['COST', 250], ['', w, 'right']]) + 12;
 
     for (const dm of this._demands) {
-      if (cy > clip.clipBottom + ROW_H) { cy += ROW_H; continue; }
-      if (cy < clip.clipTop - ROW_H) { cy += ROW_H; continue; }
+      if (cy > clip.clipBottom + ROW_H) { cy += ROW_H + 11; continue; }
+      if (cy < clip.clipTop - ROW_H) { cy += ROW_H + 11; continue; }
       const col = dm.ok ? C.ink : C.inkFaint;
       P.label(dm.group, x, cy, { color: dm.ok ? C.inkDim : C.inkGhost });
       P.text(P.clip(dm.name.toUpperCase(), F.small, 180), x + 62, cy, { font: F.small, color: col });
@@ -441,9 +454,9 @@ export class MaterialsPanel extends Panel {
       } else {
         P.chipOutline('LOCKED', x + w, cy - 9, { color: C.warnDim, align: 'right', h: 12 });
       }
-      P.text(P.clip((dm.note ?? '').toUpperCase(), F.micro, w - 6), x + 62, cy + 9,
+      P.text(P.clip((dm.note ?? '').toUpperCase(), F.micro, w - 68), x + 62, cy + 10,
         { font: F.micro, color: C.inkGhost, track: TRACK.label });
-      cy += ROW_H + 9;
+      cy += ROW_H + 11;
     }
 
     this.scrollMax = Math.max(0, (cy + 8) - y - (this.bodyH - PAD * 2));

@@ -337,7 +337,11 @@ export class SortieSystem {
     // that will end this sortie.
     out.rangeFraction = tank.max > 0 ? spendable / tank.max : 0;
     out.holdFraction = hold ? Math.min(1, hold.usedM3() / Math.max(1, hold.capacityM3)) : 0;
-    out.rangeKm = spendable / 0.8 / 1;      // travel.js's own 0.8 units/km, in km
+    // At the rate the travel layer is currently charging - SILENT is 0.5/km rather than
+    // 0.8, so the range readout has to follow the mode or it lies by 60%.
+    const perKm = this.world.systems.travel?.propellantPerKm ?? 0.8;
+    out.perKm = perKm;
+    out.rangeKm = spendable / perKm;
     out.debt = this.debt;
     out.limiter = (1 - out.rangeFraction) > out.holdFraction ? 'PROPELLANT' : 'HOLD';
     return out;

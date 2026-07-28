@@ -8,6 +8,7 @@ import { clamp01, degrade, traverseMul, salvageState, conditionLabel } from './c
 import { MountThermal, ShipThermal } from './heat.js';
 import { ShipStores, ammoClassOf, AMMO_SPEC, storesScaleFor, STORES } from './stores.js';
 import { ModuleParts, partsFor, PART_EFFECT } from './subparts.js';
+import { MEV } from './meta/events.js';
 
 /**
  * A weapon mount: one weapon definition, bolted to a specific place on a specific
@@ -203,6 +204,13 @@ export class Ship {
     this.hullHP = classDef.hullHP;
     this.dead = false;
     this.disabled = false;
+    /**
+     * CRIPPLED, NOT DEAD. The player's hull does not produce a corpse - see `_cripple`
+     * below and `sim/meta/derelict.js` for what happens next. Always false on an NPC.
+     */
+    this.crippled = false;
+    /** Reactor scrammed: no thrust, no steering authority, nothing on the bus. */
+    this.scrammed = false;
 
     /** @type {Map<string, {def:Object, hp:number, maxHP:number, destroyed:boolean, worldPosition:THREE.Vector3}>} */
     this.subsystems = new Map();
@@ -747,8 +755,67 @@ export class Ship {
     this._rebuildWeaponMounts?.();
   }
 
+  /**
+   * CRIPPLING, NOT DEATH.
+   *
+   * `closest-comparables.md` §5.2, Product 4, verified against the code: every
+   * `SHIP_DESTROYED` listener handled the NPC case and not one handled the player, so
+   * the player became `dead: true` and the game ran on around a corpse. The answer that
+   * fits our fiction - and the one recorded as binding in
+   * `docs/design/look-target.md` §3 - is not a game-over and not a respawn:
+   *
+   *   reactor scram, drive dead, weapons dark, DRIFTING
+   *   breached hardpoints eject their modules INTACT, at the place you fell
+   *   the cargo hold survives - what you cut on this sortie comes home
+   *   recovery to the nearest anchorage costs a bill and time
+   *
+   * This method is only the mechanism: it stops the ship. Everything that makes it a
+   * story - which mounts breach, where the modules land, who tows you and what they
+   * charge - is `sim/meta/derelict.js`, because it needs the map and this file must not.
+   *
+   * It is deliberately not reachable twice. A crippled hull that keeps being shot at
+   * stays crippled; there is no second, worse state to fall into.
+   */
+  _cripple(opts) {
+    if (this.crippled) return;
+    this.crippled = true;
+    this.disabled = true;
+    this.scrammed = true;
+    this.hullHP = Math.max(1, this.maxHullHP * 0.02);
+
+    this.move?.cancel?.();
+    this.body.throttle = 0;
+    this.order = { type: 'hold', point: null, target: null, subsystem: null };
+    this.target = null;
+
+    for (const m of this.weapons) {
+      m.online = false;
+      m.offlineReason = 'scram';
+      m.burstRemaining = 0;
+    }
+    this.shields.current = 0;
+    this.shields.max = 0;
+    this.power.bonusOutput = 0;
+    this.power.setHealthFactor?.(0);
+    this._refreshEfficiency();
+
+    this.bus?.emit(EV.SHIP_DISABLED, { ship: this, reason: 'crippled' });
+    this.bus?.emit(MEV.PLAYER_CRIPPLED, {
+      ship: this,
+      source: opts?.source ?? null,
+      catastrophic: !!opts?.catastrophic,
+      position: { x: this.position.x, y: this.position.y, z: this.position.z },
+    });
+  }
+
   _destroy(opts) {
     if (this.dead) return;
+    // The player is crippled instead. `derelict.enabled === false` puts the old
+    // behaviour back for a test that wants a corpse.
+    if (this.isPlayer && this.world?.systems?.derelict?.enabled !== false) {
+      this._cripple(opts);
+      return;
+    }
     this.dead = true;
     this.disabled = true;
     if (opts?.catastrophic) this.salvageIntegrity = Math.min(this.salvageIntegrity, 0.15);
@@ -762,6 +829,14 @@ export class Ship {
 
   /** Recompute how well the hull performs given damage, power routing and stores. */
   _refreshEfficiency() {
+    // A scrammed reactor is not a degraded reactor. No floor applies: the hull coasts
+    // on whatever momentum it had, which is what "drifting" has to mean or the word is
+    // decoration.
+    if (this.scrammed) {
+      this.body.engineEfficiency = 0;
+      this.body.steeringEfficiency = 0;
+      return;
+    }
     const engineHealth = this.kindHealth('engine');
     const enginePower = this.power.unlocked ? 0.55 + 0.9 * this.power.factor('engines') * 0.5 : 1;
     // Down to the propellant reserve you can still limp home - the travel spec's floor

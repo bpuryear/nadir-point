@@ -143,12 +143,12 @@ export class CodexPanel extends Panel {
     }
 
     // The discovery ladder, explained once, here, rather than in five tooltips.
-    P.label('DISCOVERY', x + w - 250, y + 27, { color: C.inkGhost });
-    let lx = x + w - 192;
+    P.label('DISCOVERY', x + w - 248, y + 27, { color: C.inkGhost });
+    let lx = x + w - 175;
     for (let i = 0; i < DISCOVERY_STATES.length; i++) {
       P.fill(lx, y + 20, 7, 7, i === 0 ? C.inkGhost : C.inkFaint);
       P.label(DISCOVERY_STATES[i].slice(0, 3), lx + 3.5, y + 36, { color: C.inkGhost, align: 'center' });
-      lx += 38;
+      lx += 35;
     }
 
     P.hline(x, y + 44, w, C.rule);
@@ -166,11 +166,11 @@ export class CodexPanel extends Panel {
 
       if (e.faction) P.fill(x, cy - 10, 2, ROW_H - 4, factionInk(e.faction).stripe);
 
-      P.text(P.clip(String(e.name).toUpperCase(), sel ? F.bodyBold : F.small, LIST_W - 78), x + 7, cy, {
+      P.text(P.clip(String(e.name).toUpperCase(), sel ? F.bodyBold : F.small, LIST_W - 92), x + 7, cy, {
         font: sel ? F.bodyBold : F.small,
         color: unknown ? C.inkGhost : sel ? C.inkStrong : C.ink,
       });
-      this._ladder(P, x + LIST_W - 66, cy - 8, e.state);
+      this._ladder(P, x + LIST_W - 82, cy - 8, e.state);
       P.label(e.state.slice(0, 3), x + LIST_W - 14, cy, {
         color: unknown ? C.inkGhost : C.inkFaint, align: 'right',
       });
@@ -240,8 +240,11 @@ export class CodexPanel extends Panel {
       if (cy > clip.clipBottom - 6) break;
       const masked = f.value === '--' || f.value === undefined || f.value === null;
       P.label(f.label, x, cy, { color: C.inkGhost });
+      // A masked row prints `--` at a legible value, not at ghost: the point of keeping
+      // the row is that the player can SEE which slot they have not earned yet, and a
+      // dash they cannot read is the hidden row this discipline exists to avoid.
       P.text(P.clip(String(masked ? '--' : f.value).toUpperCase(), F.small, w - 112), x + 108, cy, {
-        font: F.small, color: masked ? C.inkGhost : C.ink, track: TRACK.value,
+        font: F.small, color: masked ? C.inkFaint : C.ink, track: TRACK.value,
       });
       P.hline(x, cy + 3, w, C.ruleDim);
       cy += 14;

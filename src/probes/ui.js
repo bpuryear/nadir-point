@@ -46,6 +46,7 @@ import { buildCruiser, CRUISER_SUBSYSTEMS } from '../art/geometry/cruiser.js';
 import * as hardpointMod from '../art/geometry/hardpoints.js';
 import { buildCelestials } from '../world/celestials/index.js';
 import { buildPOILighting } from '../world/lighting/poi.js';
+import { installWorldSim } from '../world/index.js';
 import '../art/geometry/modules/index.js';
 import '../art/geometry/ships/index.js';
 
@@ -85,6 +86,24 @@ const SCREENS = {
   hit: { poi: 'graveyard', pose: { distance: 2400, pitch: 0.30, yaw: 0.86 } },
   locked: { poi: 'graveyard', pose: { distance: 3750, pitch: 0.33, yaw: 0.86 } },
   refit: { poi: 'yard', pose: { distance: 2050, pitch: 0.21, yaw: 0.92 } },
+
+  /**
+   * The systems plates. Same scenario, same real simulation — the only difference is
+   * which windows are open and how hard the meta layer has been exercised first.
+   *
+   *   armament   the strip under load: one mount cooked, one dry, one frozen by a dead
+   *              traverse ring, one worn, one empty. Every state the panel can show,
+   *              on one hull, at once.
+   *   parts      close in on the target with a weapon subsystem aimed, so the
+   *              second-tier sub-part ring is in frame beside the first tier.
+   *   codex / hold / materials / progress   one window each, over the live scene.
+   */
+  armament: { poi: 'graveyard', pose: { distance: 3750, pitch: 0.33, yaw: 0.86 }, panels: ['armament'] },
+  parts: { poi: 'graveyard', pose: { distance: 1500, pitch: 0.30, yaw: 0.86 }, panels: [], aimWeapon: true, frameOn: 'target' },
+  codex: { poi: 'graveyard', pose: { distance: 3750, pitch: 0.33, yaw: 0.86 }, panels: ['codex'] },
+  hold: { poi: 'graveyard', pose: { distance: 3750, pitch: 0.33, yaw: 0.86 }, panels: ['armament', 'hold', 'materials'] },
+  materials: { poi: 'graveyard', pose: { distance: 3750, pitch: 0.33, yaw: 0.86 }, panels: ['materials'] },
+  progress: { poi: 'graveyard', pose: { distance: 3750, pitch: 0.33, yaw: 0.86 }, panels: ['objectives', 'perks'], war: true },
 };
 
 export default {
@@ -293,16 +312,49 @@ export default {
       for (let i = 0; i < 18; i++) engine.stepOnce();   // ~0.3 s of a ~0.75 s swing
     }
 
+    // ---- the systems layer, exercised for real ----------------------------
+    // Everything below goes through the same entry points the game uses: the thermal
+    // system's own fire site, the stores magazine, `ModuleParts.damagePart`, the cargo
+    // hold's `addItem`, the refinery's `addScrap`/`enqueue`, `PatternSystem.learn` and
+    // `PerkSystem.buy`. Nothing is a mock and nothing writes a display field.
+    if (!locked) {
+      dressArmament(player);
+      dressMetaLayer(world);
+      // `ShipThermal.state`, `ext` and the smoothed rates are only recomputed inside
+      // `update()`, so the ship has to take a few steps after being dressed or the
+      // readout prints NOMINAL over two cooked mounts. Six steps is a tenth of a
+      // second — far too little to cool anything, and enough to make the summary true.
+      for (let i = 0; i < 6; i++) engine.stepOnce();
+    }
+    if (S.war) {
+      await breathe();
+      dressWar(world);
+    }
+    if (S.aimWeapon && target) {
+      const gun = [...target.subsystems.values()].find((s) => !s.destroyed && s.def.kind === 'weapon');
+      const mount = gun ? target.weapons.find((m) => m.subsystemId === gun.def.id) : null;
+      if (gun) {
+        // Aim at a sub-part specifically, which is what the second tier exists for:
+        // the traverse ring, so the plate shows the ARC FROZEN consequence in place.
+        const ring = mount?.parts?.list.find((p) => p.kind === 'traverse')
+          ?? mount?.parts?.list[0] ?? null;
+        player.orderAttack(target, gun.def.id, ring?.id ?? null);
+        // And chew one of its parts, so the ring is not four identical full segments.
+        const feed = mount?.parts?.list.find((p) => p.kind === 'feed');
+        if (feed) mount.parts.damagePart(feed, feed.maxHP * 0.62);
+      }
+    }
+
     // ---- framing ----------------------------------------------------------
     // Solved from where the two hulls actually ended up rather than authored, so the
     // plate stays composed if the heading search or the roster changes. The camera
     // looks square across the engagement axis: player left, target right, which is
     // also the side the target panel is on.
     Object.assign(pose, S.pose);
-    framePair(pose, player, target, screenName);
+    framePair(pose, player, target, S.frameOn === 'target' ? 'hit' : screenName);
 
     // ---- the UI itself ----------------------------------------------------
-    const ui = installUI(world);
+    const ui = installUI(world, S.panels ? { panels: S.panels } : {});
     ui.orderBar.say('SUBSYSTEM LOCK — REACTOR DRUM · 92% ACCURACY', 'info');
 
     if (screenName === 'refit') {
@@ -519,6 +571,158 @@ function tuneHeadingForMixedBearing(player, target, combat) {
   return best;
 }
 
+/**
+ * PUT EVERY MOUNT STATE ON ONE HULL AT ONCE.
+ *
+ * The armament strip's contract is that a mount which is frozen, starved, cooking or
+ * worn is distinguishable at a glance, and the only honest way to photograph that claim
+ * is to produce all four states simultaneously and look at them side by side. Each one
+ * is produced by the mechanism that produces it in play:
+ *
+ *   HOT      `ShipThermal.onShot`, the same call `combat.js` makes at the fire site
+ *   COOKED   `ShipThermal.trip`, which is what `onShot` calls when heat reaches 1.0
+ *   DRY      an empty magazine and an empty ready feed, which is what firing does
+ *   FROZEN   `ModuleParts.damagePart` on the traverse ring — a real subsystem kill
+ *   WORN     a low `condition`, which is the number a part carries out of a wreck
+ */
+function dressArmament(player) {
+  const byType = (type) => player.weapons.find((m) => m.def.type === type);
+  const thermal = player.thermal;
+
+  // A lance running hot but still firing: over the soft cap, dispersion widening, and
+  // deliberately stopped short of the trip so the plate carries HOT and COOKED at once.
+  const lance = byType('lance') ?? byType('beam') ?? player.weapons[0];
+  if (lance && thermal) {
+    let guard = 0;
+    const step = lance.thermal.perShot * 1.24;
+    while (lance.thermal.heat + step < 0.86 && guard++ < 400) thermal.onShot(lance, 1.4);
+  }
+
+  // A rail battery cooked outright. This also damages the hardpoint under it and
+  // costs the mount condition, which is exactly what the panel needs to show.
+  const rail = byType('rail');
+  if (rail && thermal) thermal.trip(rail);
+
+  // A cannon bank that has fired itself dry, on worn barrels.
+  const cannon = byType('cannon');
+  if (cannon) {
+    cannon.condition = 0.42;
+    cannon.ready = 0;
+    if (cannon.ammoClass) player.stores.ammo[cannon.ammoClass] = 0;
+    cannon.reloading = 0;
+  }
+
+  // A tractor/mining rig whose gimbal has been shot away: the arc is frozen and from
+  // here on the only way to aim it is to turn the ship.
+  const util = byType('mining') ?? byType('beam');
+  if (util?.parts) {
+    const ring = util.parts.list.find((p) => p.kind === 'traverse');
+    if (ring) util.parts.damagePart(ring, ring.maxHP * 2);
+    const rad = util.parts.list.find((p) => p.kind === 'cooling');
+    if (rad) util.parts.damagePart(rad, rad.maxHP * 0.55);
+  }
+
+  // Partial wear on one more sub-part, so the squares are not all binary.
+  const anyFeed = player.weapons.find((m) => m.parts?.list.some((p) => p.kind === 'feed'));
+  const feed = anyFeed?.parts.list.find((p) => p.kind === 'feed');
+  if (feed) anyFeed.parts.damagePart(feed, feed.maxHP * 0.45);
+
+  // Two purges left of three: a resource that is visibly finite.
+  if (player.stores) player.stores.coolant = Math.max(0, player.stores.coolantMax - 1);
+}
+
+/**
+ * Stock the meta layer through its own APIs.
+ *
+ * The amounts are chosen so the MATERIALS panel shows BOTH sides of scarcity: some
+ * claims affordable, some short by a specific quantity, and one perk locked behind
+ * knowledge rather than money. A screenshot in which everything is affordable proves
+ * nothing about the panel whose job is to show what you cannot have.
+ */
+function dressMetaLayer(world) {
+  const { cargo, economy, patterns, perks, codex, items } = world.systems;
+  if (!cargo || !economy) return;
+
+  // ORDER MATTERS AND IT IS THE SAME ORDER A PLAYER WOULD PRODUCE.
+  //
+  // Refined stock and the two ranks of hull work come first, because `hold_bracing`
+  // RAISES capacity and scrap fills whatever is free at the moment it is taken aboard.
+  // Doing it the other way round fills the hold to the old ceiling, and then every
+  // later `addItem` fails with "hold full" — which is exactly what happened on the
+  // first plate of this panel and is why the ordering is spelled out here.
+  // The four salvaged capital modules already in the hold come to well over the bare
+  // cruiser's 2400 m3 bay, which is exactly the pressure `cargo.js` was built to
+  // create — so the hull has been braced for it, three ranks, the way a player who
+  // wanted to carry a hangar deck home would have to.
+  economy.credit({ alloy: 520, composite: 300, electronics: 70, exotic: 1 }, 'probe');
+  perks?.buy('hold_bracing');
+  perks?.buy('hold_bracing');
+  perks?.buy('hold_bracing');
+  perks?.buy('reinforced_mounts');
+
+  // What is in the hold has been physically held. `storeSection` marks exactly this.
+  for (const it of world.inventory) codex?.markModule(it.moduleId, 'salvaged');
+
+  // Devices, into the hold, at their real volumes, while there is still room.
+  cargo.addItem('coolant_purge', 2);
+  cargo.addItem('decoy', 3);
+  cargo.addItem('jury_rig', 1);
+
+  // A real survey pulse: fabricate one out of the pools and fire it. Everything in
+  // sensor range resolves to its subsystems and lands in the codex as `scanned`, and
+  // the patrol heat it costs is charged by the war system, not faked here.
+  if (items) {
+    const built = items.build('scan_pulse');
+    if (built.ok) items.use('scan_pulse');
+  }
+
+  // Two patterns recovered, which is what cutting intact sections eventually gives.
+  patterns?.learn('port_cannon_bank', 'probe');
+  patterns?.learn('dorsal_shield_pylons', 'probe');
+
+  // Scrap LAST, and sized as a FRACTION of what is left rather than to a fixed
+  // reserve. The four salvaged capital modules already fill most of a braced hold, so
+  // a fixed 260 m3 reserve produced a budget of zero and an empty material chain — the
+  // panel drew three rows of `0` and told the truth about a scenario nobody wanted.
+  const budget = cargo.freeM3() * 0.72;
+  economy.addScrap('plate', Math.floor(budget * 0.55 / 0.40));
+  economy.addScrap('machine', Math.floor(budget * 0.30 / 0.34));
+  economy.addScrap('core', Math.floor(budget * 0.15 / 0.26));
+  economy.enqueue('machine', 40);
+}
+
+/**
+ * Bring the faction war online so the objectives panel has a war to read.
+ *
+ * `ObjectiveSystem` is a READING of `world.systems.factionWar` and generates nothing
+ * without one, so the honest way to photograph it is to run the real war forward rather
+ * than to hand the panel a fabricated list. The world sim is installed with
+ * `enterStart: false` so it builds no POI content into this scene, and its engine
+ * systems never step because the simulation is held immediately afterwards — the war is
+ * advanced through its own `advance()` helper instead.
+ */
+function dressWar(world) {
+  let sim = world.systems.worldSim;
+  if (!sim) {
+    try {
+      sim = installWorldSim(world, { enterStart: false, autoAdopt: false });
+    } catch (err) {
+      console.warn('[probe:ui] could not install the world sim for objectives', err);
+      return;
+    }
+  }
+  try {
+    sim.advance(1400);
+  } catch (err) {
+    console.warn('[probe:ui] war advance failed', err);
+  }
+  const objectives = world.systems.objectives;
+  if (!objectives) return;
+  // Twelve sim seconds per generation pass; sixty passes is long enough for the
+  // per-kind caps to fill and for an intercept to be sitting on its clock.
+  for (let i = 0; i < 60; i++) objectives.fixedUpdate(1);
+}
+
 /** A hulk with cut sections, so the salvage marker and the hold have provenance. */
 function makeWreck(world, registry, salvage, position) {
   const def = getShipClass('coalition_frigate');
@@ -688,7 +892,70 @@ function report({ world, ui, combat, player, target, registry, screenName, rende
       + `T${d?.tier ?? '?'}  cond ${((it.condition ?? 1) * 100).toFixed(0)}%`);
   }
   console.log(`materials     : ${world.materials.alloy} alloy, ${world.materials.composite} composite, `
-    + `${world.materials.exotic} exotic`);
+    + `${world.materials.electronics ?? 0} electronics, ${world.materials.exotic} exotic`);
+
+  // --- the systems this stream surfaced ------------------------------------
+  // The picture is the judgement; this is what stops a later change quietly breaking
+  // something the picture happens not to show.
+  const therm = world.player?.thermal;
+  if (therm) {
+    console.log('');
+    console.log(`thermal       : ${therm.state}  ext ${therm.ext.toFixed(1)}/${94.4}  `
+      + `peak ${(therm.peak * 100).toFixed(0)}%  load ${(therm.load * 100).toFixed(0)}%  `
+      + `radiate ${(therm.radiate * 100).toFixed(0)}%  tripped ${therm.trippedCount ?? 0}`);
+    console.log('armament strip');
+    for (const m of player.weapons) {
+      const parts = m.parts?.list.map((p) => `${p.id}${p.destroyed ? '✕' : `${Math.round(p.health * 100)}%`}`).join(' ');
+      console.log(`  ${pad(m.hardpoint ?? '?', 10)} ${pad(m.def.type, 8)} `
+        + `heat ${(m.thermal.heat * 100).toFixed(0).padStart(3)}%${m.thermal.tripped ? ' TRIPPED' : '        '} `
+        + `cond ${(m.condition * 100).toFixed(0).padStart(3)}%  `
+        + `ammo ${m.ammoClass ? `${m.ready}/${m.readyMax} mag ${player.stores.rounds(m.ammoClass)}` : 'energy'}  `
+        + `${m.parts?.traverseFrozen ? 'FROZEN ' : ''}${parts ?? ''}`);
+    }
+  }
+
+  const cargo = world.systems.cargo;
+  if (cargo) {
+    const d = cargo.describe();
+    console.log('');
+    console.log(`hold volume   : ${d.usedM3} / ${d.capacityM3} m3  (${d.freeM3} free)  `
+      + `modules ${d.breakdown.modulesM3} · materials ${d.breakdown.materialsM3} · devices ${d.breakdown.itemsM3}`);
+  }
+  const econ = world.systems.economy;
+  if (econ) {
+    const e = econ.describe();
+    console.log(`materials tier: scrap ${e.scrap.plate}/${e.scrap.machine}/${e.scrap.core} `
+      + `queued ${e.queuedUnits} at ${e.rate.toFixed(1)}/s  volume ${e.volumeM3.toFixed(1)} m3`);
+  }
+  const codex = world.systems.codex;
+  if (codex) {
+    const pr = codex.progress();
+    console.log(`codex         : knowledge ${pr.knowledge}  `
+      + Object.keys(pr).filter((k) => k !== 'knowledge')
+        .map((k) => `${k} ${pr[k].seen}/${pr[k].total}`).join('  '));
+  }
+  const perks = world.systems.perks;
+  if (perks) {
+    const held = perks.describe().filter((p) => p.rank > 0).map((p) => `${p.id} ${p.rank}`);
+    const locked = perks.describe().filter((p) => p.gate && !p.gate.met).length;
+    console.log(`perks         : ${held.join(', ') || 'none'}  (${locked} knowledge-locked)`);
+  }
+  const objectives = world.systems.objectives;
+  if (objectives) {
+    console.log(`objectives    : ${objectives.active.length} open`);
+    for (const o of objectives.describe()) {
+      console.log(`  ${pad(o.kind, 10)} ${pad(o.poiName, 18)} ${o.progress}/${o.target}  `
+        + `window ${o.secondsLeft}s  arrival ${o.arrival.tier} ×${o.arrival.multiplier}`);
+    }
+  }
+  if (target?.salvageProjection) {
+    const proj = target.salvageProjection();
+    const tally = proj.reduce((a, r) => { a[r.state] = (a[r.state] ?? 0) + 1; return a; }, {});
+    console.log('');
+    console.log(`salvage proj  : ${Object.entries(tally).map(([k, v]) => `${v} ${k}`).join(' · ')}  `
+      + `(overall ${(target.salvageIntegrity * 100).toFixed(0)}%)`);
+  }
+  console.log(`windows open  : ${ui.panels.panels.filter((p) => p.open).map((p) => p.id).join(', ') || 'none'}`);
 
   console.log('');
   console.log('order markers (three stages, all live on the pool)');

@@ -31,6 +31,7 @@
 
 import * as THREE from 'three';
 import { NEUTRAL, getFactionPalette, mix, shade } from '../art/palette.js';
+import { salvageState, CONDITION } from '../sim/condition.js';
 
 // ---------------------------------------------------------------------------
 // Colour
@@ -163,6 +164,36 @@ export const fmtSigned = (v, unit = '%') => `${v >= 0 ? '+' : '−'}${Math.abs(v
 export function fmtMass(tonnes) {
   if (tonnes >= 1000) return `${(tonnes / 1000).toFixed(1)} KT`;
   return `${Math.round(tonnes)} T`;
+}
+
+// ---------------------------------------------------------------------------
+// Salvage projection
+// ---------------------------------------------------------------------------
+
+/**
+ * `Wreck._buildSections` floors a DESTROYED subsystem's section to this, whatever
+ * condition the section had accumulated: "a destroyed subsystem is scrap".
+ *
+ * The live projection has to apply the same floor or it lies. A player who watches a
+ * weapon battery read `84% INTACT` right up until they kill it, and then finds SCRAP in
+ * the hulk, has been told two different things by two parts of the same interface — and
+ * the whole reason the projection exists is so the outcome is not a surprise.
+ */
+export const DESTROYED_SECTION_CONDITION = 0.18;
+
+/** The condition this section will actually come off the wreck at. */
+export function projectedCondition(condition, destroyed) {
+  return destroyed ? Math.min(condition ?? 0, DESTROYED_SECTION_CONDITION) : (condition ?? 0);
+}
+
+/** INTACT | DAMAGED | SCRAP, honouring the destroyed floor. */
+export function projectedSalvageState(condition, destroyed) {
+  return salvageState(projectedCondition(condition, destroyed));
+}
+
+/** Will a whole installable part still come out of this section? */
+export function projectedYieldsModule(row, destroyed) {
+  return !!row?.moduleLikely && projectedCondition(row.condition, destroyed) >= CONDITION.scrap;
 }
 
 // ---------------------------------------------------------------------------

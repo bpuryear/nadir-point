@@ -110,9 +110,16 @@ const RESOLVE = {
  * right answer, which is the test a decision has to pass.
  */
 const PROBE = {
-  speed: 900,
-  life: 300,
-  reach: 90 * KM,
+  /**
+   * Speed and life are sized against the authored map: 166-546 km between nearest
+   * neighbours (`system.js`). 1800 m/s for 360 s is 648 km of travel plus a 110 km
+   * reach, so ONE probe covers roughly ONE neighbouring POI and no more. That is the
+   * granularity that makes it a decision - you are choosing a direction, not buying
+   * omniscience - and it is why the item stacks to six rather than to one.
+   */
+  speed: 1800,
+  life: 360,
+  reach: 110 * KM,
   /** A probe's sensor is fixed: it does not benefit from your reactor routing. */
   pips: 3,
   activeGain: 1.0,
@@ -302,6 +309,13 @@ export class DiscoverySystem {
       id: 'open', name: 'OPEN SPACE', poiId: null, weight: 0,
       signature: 1, sensor: 1, clutter: 0,
     };
+    /** Terrain scratch for probe sampling. Allocated here so the pass never allocates. */
+    this._probeTerrain = {
+      id: 'open', name: 'OPEN SPACE', poiId: null, weight: 0,
+      signature: 1, sensor: 1, clutter: 0,
+    };
+    /** Set while seeding, so the opening state does not arrive as a wall of toasts. */
+    this._quiet = false;
 
     this._contactRows = [];
     this._shipRows = [];
@@ -444,8 +458,16 @@ export class DiscoverySystem {
    * sweeping, where you are sitting, and whether you have let a probe watch you.
    */
   get signatureMultiplier() {
+    return this.emissionMultiplier * this.terrain.signature;
+  }
+
+  /**
+   * The part of the signature that travels WITH the ship - sweeping and being watched -
+   * with terrain factored out. The travel plotter needs this separately because it
+   * samples terrain nine times along a leg and cannot use a figure taken at the origin.
+   */
+  get emissionMultiplier() {
     let m = this.survey.active ? SURVEY.signatureMul : 1;
-    m *= this.terrain.signature;
     if (this.watched) m *= PROBE.watchedSignature;
     return m;
   }
@@ -531,7 +553,7 @@ export class DiscoverySystem {
     // Probes resolve from where THEY are, with their own terrain and their own clarity.
     for (const probe of this.probes) {
       if (probe.dead || probe.owner !== 'player') continue;
-      const pt = this.system.terrainAt(probe.x, probe.z, this._probeTerrain());
+      const pt = this.system.terrainAt(probe.x, probe.z, this._probeTerrain);
       const pClarity = Math.max(RESOLVE.clarityFloor, 1 - pt.clutter);
       const pReach = probe.reach * pt.sensor;
       const modeGain = probe.mode === 'active' ? PROBE.activeGain : PROBE.passiveGain;
@@ -550,16 +572,6 @@ export class DiscoverySystem {
         this._gain(c, gain, 'probe');
       }
     }
-  }
-
-  /** One scratch object for probe terrain sampling. Never handed out. */
-  _probeTerrain() {
-    if (!this._probeTerrainScratch) {
-      this._probeTerrainScratch = {
-        id: 'open', name: 'OPEN SPACE', poiId: null, weight: 0, signature: 1, sensor: 1, clutter: 0,
-      };
-    }
-    return this._probeTerrainScratch;
   }
 
   /**
@@ -728,7 +740,7 @@ export class DiscoverySystem {
     if (!probe || probe.dead) return { ok: false, reason: 'no such probe' };
 
     if (probe.owner === 'player') {
-      probe.dead = true;
+      this._retire(probe);
       return { ok: true, own: true };
     }
 
@@ -742,7 +754,7 @@ export class DiscoverySystem {
       };
     }
 
-    probe.dead = true;
+    this._retire(probe);
 
     // The intel: it had been recording. Everything it had eyes on sharpens.
     let sharpened = 0;
@@ -767,6 +779,17 @@ export class DiscoverySystem {
       important: true,
     });
     return { ok: true, own: false, sharpened };
+  }
+
+  /**
+   * Take a probe out of the world NOW rather than at the next step. Every read API and
+   * the one-hostile-probe-at-a-time rule count `this.probes`, so a dead probe left in
+   * the list would block its own replacement and show on an overlay.
+   */
+  _retire(probe) {
+    probe.dead = true;
+    const i = this.probes.indexOf(probe);
+    if (i >= 0) this.probes.splice(i, 1);
   }
 
   _updateProbes(dt) {
@@ -797,7 +820,6 @@ export class DiscoverySystem {
           if (probe.pulseIn <= 0) {
             probe.pulseIn = PROBE.pulsePeriod;
             for (const node of this.system.nodes) {
-              if (node.position.distanceTo2 === undefined) { /* POINode is a Vector3 holder */ }
               const dx = node.position.x - probe.x;
               const dz = node.position.z - probe.z;
               if (Math.hypot(dx, dz) > probe.reach * 1.5) continue;
@@ -835,7 +857,7 @@ export class DiscoverySystem {
   _maybeSpawnEnemyProbe() {
     const player = this.world.player;
     if (!player || player.dead || !this.war) return null;
-    for (const p of this.probes) if (p.owner === 'hostile') return null;
+    for (const p of this.probes) if (p.owner === 'hostile' && !p.dead) return null;
 
     const heat = this.war.heatAtPoint(player.position.x, player.position.z);
     if (heat < PROBE.enemyHeatFloor) return null;
@@ -894,12 +916,14 @@ export class DiscoverySystem {
 
     if (crossedContact) {
       c.firstSeen = this._clock;
-      this.bus.emit(EV.NOTIFY, {
-        text: `MASS SIGNATURE — ~${c.massEstimate} t ±${c.massError} — brg ${((c.bearing + 360) % 360) | 0}`,
-        important: false,
-      });
+      if (!this._quiet) {
+        this.bus.emit(EV.NOTIFY, {
+          text: `MASS SIGNATURE — ~${c.massEstimate} t ±${c.massError} — brg ${((c.bearing + 360) % 360) | 0}`,
+          important: false,
+        });
+      }
     }
-    if (crossedResolved) {
+    if (crossedResolved && !this._quiet) {
       this.bus.emit(EV.NOTIFY, {
         text: c.source === 'intel'
           ? `INTEL — ${c.node.name} located`
@@ -989,6 +1013,15 @@ export class DiscoverySystem {
   }
 
   _seed(startId, blipCount) {
+    this._quiet = true;
+    try {
+      this._seedInner(startId, blipCount);
+    } finally {
+      this._quiet = false;
+    }
+  }
+
+  _seedInner(startId, blipCount) {
     const start = this.system.get(startId);
     this.reveal(startId, 'sensors');
     if (!start) return;

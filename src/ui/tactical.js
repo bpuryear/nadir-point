@@ -30,6 +30,7 @@ import { angleDelta, yawOf } from '../sim/physics.js';
 import { PART_CONSEQUENCE } from '../sim/subparts.js';
 import {
   C, F, TRACK, screenPointRing, fmtRange, fmtPct, smoothstep, arcUnion,
+  projectedSalvageState, projectedYieldsModule,
 } from './theme.js';
 
 const ARC_SEGS = 40;
@@ -400,6 +401,10 @@ export class TacticalOverlay {
       e.angle = Math.hypot(dx, dy) > 5 ? Math.atan2(dy, dx) : (n / Math.max(1, target.subsystems.size)) * Math.PI * 2;
       e.bears = !s.destroyed && !!combat && combat.canAnyWeaponBear(player, s);
       e.salvage = projection ? findRow(projection, s.def.id) : null;
+      // The wreck builder floors a destroyed subsystem's section to 0.18 whatever it
+      // had accumulated, so the live projection applies the same floor. Anything else
+      // is the interface promising a part it is not going to hand over.
+      e.salvageState = e.salvage ? projectedSalvageState(e.salvage.condition, s.destroyed) : null;
       n++;
     }
 
@@ -448,9 +453,9 @@ export class TacticalOverlay {
         c.lineWidth = 3;
         c.beginPath();
         c.arc(cx, cy, ringR + 8, a0, a1);
-        c.strokeStyle = SALVAGE_INK[e.salvage.state] ?? C.inkGhost;
+        c.strokeStyle = SALVAGE_INK[e.salvageState] ?? C.inkGhost;
         c.stroke();
-        if (e.salvage.state === 'SCRAP') {
+        if (e.salvageState === 'SCRAP') {
           // A section that has fallen past scrap is struck out: it is not coming back,
           // and nothing about the remaining HP bar says so.
           c.lineWidth = 1;
@@ -481,6 +486,7 @@ export class TacticalOverlay {
     // Nine subsystems on one ring will always collide if each label is drawn at its
     // own angle. Split by side, sort down the screen and push apart to a minimum
     // pitch, keeping a leader back to the segment so the association survives.
+    let labelBottom = cy + ringR;
     for (const side of [-1, 1]) {
       const list = [];
       for (let i = 0; i < n; i++) {
@@ -501,6 +507,7 @@ export class TacticalOverlay {
       }
 
       for (const it of list) {
+        if (it.ly + 10 > labelBottom) labelBottom = it.ly + 10;
         const e = it.e;
         const s = e.sub;
         const dead = s.destroyed;
@@ -522,11 +529,10 @@ export class TacticalOverlay {
         // Two figures per entry, and they say opposite things: what is left to shoot,
         // and what is left to keep. Printing only the first is what made salvage a
         // die roll the player discovered afterwards.
-        const salv = e.salvage;
         const hpText = dead ? 'DESTROYED' : fmtPct(frac);
-        P.text(salv ? `${hpText}  ${salv.state}` : hpText, tx, it.ly + 10, {
+        P.text(e.salvageState ? `${hpText}  ${e.salvageState}` : hpText, tx, it.ly + 10, {
           font: F.micro,
-          color: salv ? (SALVAGE_INK[salv.state] ?? C.inkGhost)
+          color: e.salvageState ? (SALVAGE_INK[e.salvageState] ?? C.inkGhost)
             : dead ? C.inkGhost : e.bears ? C.hostileDim : C.inkGhost,
           align,
         });
@@ -536,13 +542,68 @@ export class TacticalOverlay {
     // --- second tier: the sub-part ring -------------------------------------
     this._drawPartRing(P, player, target, combat, aimed);
 
-    // --- the sentence -------------------------------------------------------
+    // --- the caption block --------------------------------------------------
+    // TWO HEADLINES, ONE PLATE. "How many guns bear" and "how much of this is still
+    // worth cutting" are the two questions the player is holding at once, and the
+    // whole design is that they pull against each other — so they are set in the same
+    // weight, in the same place, one above the other.
+    //
+    // They sit on a near-opaque plate for the reason `reference-ui-language.md` §3
+    // gives: the subsystem labels fan out on both sides of the ring at whatever angle
+    // the geometry produces, and a centred caption underneath will eventually run
+    // under one of them. The plate is what makes the collision survivable.
     if (combat) {
       const rep = combat.bearingReport(player, target);
       const advice = this.ui.bearingAdvice(player, target, rep);
-      const y = cy + ringR + 34;
-      const txt = `${rep.bearing}/${rep.total} MOUNTS BEAR`;
-      P.text(txt, cx, y, {
+      // Below the ring AND below whatever the label stack grew to. The plate is opaque
+      // by design, so a caption that merely overlaps a label does not become unreadable
+      // - it DELETES the label. Clearing the stack is the only honest placement.
+      let y = Math.max(cy + ringR + 34, labelBottom + 20);
+
+      const t = this._tally;
+      t.INTACT = 0; t.DAMAGED = 0; t.SCRAP = 0; t.modules = 0;
+      if (projection) {
+        for (let i = 0; i < n; i++) {
+          const e = subs[i];
+          if (!e.salvageState) continue;
+          t[e.salvageState]++;
+          if (projectedYieldsModule(e.salvage, e.sub.destroyed)) t.modules++;
+        }
+        for (const row of projection) {
+          if (row.kind !== 'hull') continue;
+          const st = projectedSalvageState(row.condition, false);
+          if (t[st] !== undefined) t[st]++;
+        }
+      }
+
+      const bearTxt = `${rep.bearing}/${rep.total} MOUNTS BEAR`;
+      const salvTxt = `SALVAGE  ${t.INTACT} INTACT · ${t.DAMAGED} DAMAGED · ${t.SCRAP} SCRAP`;
+      const partTxt = `${t.modules} SECTIONS STILL YIELD A PART · ${fmtPct(target.salvageIntegrity ?? 1)} OVERALL`;
+      const plateW = Math.max(
+        P.measure(bearTxt, F.microBold, TRACK.head),
+        P.measure(advice, F.micro, TRACK.label),
+        projection ? P.measure(salvTxt, F.microBold, TRACK.label) : 0,
+        projection ? P.measure(partTxt, F.micro, TRACK.label) : 0,
+      ) + 26;
+      const plateH = projection ? 58 : 32;
+
+      // The plate is opaque and the open windows are opaque, and whichever is drawn
+      // last simply erases the other. `Painter.claim` already holds every open panel's
+      // rectangle (see `UILayer._reserveFrame`), so the block asks for its space below
+      // the ring first and moves ABOVE the ring when that space is taken. Only if both
+      // are occupied does it draw anyway — being partly covered beats being missing,
+      // and the target panel carries the same figures as a fallback.
+      let plateY = y - 13;
+      if (!P.claim(cx - plateW * 0.5, plateY, plateW, plateH, 2)) {
+        const above = cy - ringR - 58 - plateH;
+        if (P.claim(cx - plateW * 0.5, above, plateW, plateH, 2)) plateY = above;
+      }
+      y = plateY + 13;
+
+      P.fill(cx - plateW * 0.5, plateY, plateW, plateH, C.panel);
+      P.frame(cx - plateW * 0.5, plateY, plateW, plateH, C.ruleDim);
+
+      P.text(bearTxt, cx, y, {
         font: F.microBold, color: rep.bearing > 0 ? C.friendly : C.warn,
         align: 'center', track: TRACK.head,
       });
@@ -551,22 +612,15 @@ export class TacticalOverlay {
         align: 'center', track: TRACK.label,
       });
 
-      // The salvage headline, in the same place and the same weight as the bearing
-      // headline, because it is the same size of decision.
       if (projection) {
-        const t = this._tally;
-        t.INTACT = 0; t.DAMAGED = 0; t.SCRAP = 0; t.modules = 0;
-        for (const row of projection) {
-          if (t[row.state] !== undefined) t[row.state]++;
-          if (row.moduleLikely) t.modules++;
-        }
-        const line = `SALVAGE  ${t.INTACT} INTACT · ${t.DAMAGED} DAMAGED · ${t.SCRAP} SCRAP`;
-        P.text(line, cx, y + 27, {
+        P.hline(cx - plateW * 0.5 + 6, y + 19, plateW - 12, C.ruleDim);
+        P.text(salvTxt, cx, y + 32, {
           font: F.microBold, color: t.SCRAP > t.INTACT ? C.warn : C.salvage,
           align: 'center', track: TRACK.label,
         });
-        P.text(`${t.modules} SECTIONS STILL YIELD A PART · ${fmtPct(target.salvageIntegrity ?? 1)} OVERALL`,
-          cx, y + 39, { font: F.micro, color: C.salvageDim, align: 'center', track: TRACK.label });
+        P.text(partTxt, cx, y + 43, {
+          font: F.micro, color: C.salvageDim, align: 'center', track: TRACK.label,
+        });
       }
     }
   }

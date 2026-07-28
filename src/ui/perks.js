@@ -35,7 +35,9 @@ export class PerksPanel extends Panel {
       hint: 'P',
       w: 500,
       h: 400,
-      place: (P) => ({ x: 30, y: Math.max(30, Math.round(P.h * 0.5 - 300)) }),
+      // Right of frame: OBJECTIVES opens on the left and these two are the pair the
+      // player reads together — what the world is asking, and what the hull can buy.
+      place: (P) => ({ x: P.w - 530, y: Math.max(40, Math.min(118, P.h - 440)) }),
     });
     this.ui = ui;
     this.world = ui.world;

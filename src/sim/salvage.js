@@ -118,6 +118,7 @@ export class Wreck {
    */
   _buildSections(ship, rng) {
     const pool = allModules();
+    const codex = ship.world?.systems?.codex ?? null;
     let index = 0;
 
     for (const sub of ship.subsystems.values()) {
@@ -132,9 +133,10 @@ export class Wreck {
       let moduleId = null;
       if (condition >= CONDITION.scrap
         && (sub.def.kind === 'weapon' || sub.def.kind === 'reactor' || sub.def.kind === 'hangar' || sub.def.kind === 'sensor')) {
-        // Match a registered module of this faction whose role fits the subsystem.
+        // Match a registered module of this faction whose role fits the subsystem, then
+        // let the codex choose between them. See `pickByCodex`.
         const candidates = pool.filter((m) => m.faction === this.faction && matchesKind(m, sub.def.kind));
-        if (candidates.length) moduleId = rng.pick(candidates).id;
+        if (candidates.length) moduleId = pickByCodex(candidates, codex, rng)?.id ?? null;
       }
 
       this.sections.push(new WreckSection({
@@ -263,6 +265,59 @@ export class DetachedModule {
   }
 }
 
+/**
+ * CODEX BIAS — the world shows you what you have not got.
+ *
+ * `_buildSections` used to call `rng.pick(candidates)`: uniform, uncurated, and the
+ * reason `closest-comparables.md` §5.2 Product 5 says our 24-module library reads as a
+ * slot machine. Variance without curation is the opposite failure from convergence — you
+ * cannot ever aim at a specific thing, so no destination is ever a reason to go anywhere.
+ *
+ * The fix is a weighting, not a system. Every module the codex has never heard of is six
+ * times as likely to be on a hull as one you are already flying. Three consequences fall
+ * straight out:
+ *
+ *   - the codex becomes a WANT LIST. An entry at `unknown` is a thing the world will
+ *     reliably put in front of you, so reading it is planning rather than book-keeping.
+ *   - reconnaissance becomes purposeful. Resolving a destroyer at a POI now tells you
+ *     something about what is likely to be bolted to it, because the roll is biased by
+ *     what you are missing.
+ *   - the library stops repeating itself. Once you own a thing the world stops offering
+ *     it, which is FTL's shop expressed as an enemy fleet.
+ *
+ * The weights never reach zero: a hull you have stripped ten times can still carry a
+ * cannon bank you already own, because a world that only ever hands you novelties is
+ * just as unbelievable as one that never does.
+ *
+ * No allocation: this is a two-pass walk over a list that is already in hand.
+ */
+const CODEX_BIAS = {
+  unknown: 6.0,
+  seen: 3.5,
+  scanned: 2.0,
+  salvaged: 1.0,
+  installed: 0.6,
+};
+
+export function codexBiasFor(codex, moduleId) {
+  if (!codex) return 1;
+  return CODEX_BIAS[codex.stateOf('module', moduleId)] ?? 1;
+}
+
+function pickByCodex(candidates, codex, rng) {
+  if (candidates.length === 1) return candidates[0];
+  if (!codex) return rng.pick(candidates);
+  let total = 0;
+  for (let i = 0; i < candidates.length; i++) total += codexBiasFor(codex, candidates[i].id);
+  if (!(total > 0)) return rng.pick(candidates);
+  let r = rng.next() * total;
+  for (let i = 0; i < candidates.length; i++) {
+    r -= codexBiasFor(codex, candidates[i].id);
+    if (r <= 0) return candidates[i];
+  }
+  return candidates[candidates.length - 1];
+}
+
 function matchesKind(moduleDef, kind) {
   if (kind === 'weapon') return !!moduleDef.weapon;
   if (kind === 'hangar') return !!moduleDef.grants?.hangarBays;
@@ -348,7 +403,7 @@ export class SalvageSystem {
    * Called by `Ship._detachMount` when a module's mount pad is destroyed. The module is
    * intact; it is simply no longer attached to anybody. Go and get it.
    */
-  spawnDetachedModule({ ship, mount, moduleDef, condition, point }) {
+  spawnDetachedModule({ ship, mount, moduleDef, condition, point, quiet = false }) {
     const name = moduleDef?.name ?? mount?.def?.name ?? 'MODULE';
     const detached = new DetachedModule({
       id: `detached:${this._detachIndex++}`,
@@ -362,7 +417,9 @@ export class SalvageSystem {
       rng: this.rng.fork(`detach:${this._detachIndex}`),
     });
     this.world.addWreck(detached);
-    this.bus.emit(EV.NOTIFY, { text: `${name} SHOT FREE — INTACT`, important: true });
+    // `quiet` is for the derelict layer putting a remembered site back into the world:
+    // hardware you lost two sorties ago has not just been "shot free".
+    if (!quiet) this.bus.emit(EV.NOTIFY, { text: `${name} SHOT FREE — INTACT`, important: true });
     return detached;
   }
 

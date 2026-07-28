@@ -178,6 +178,27 @@ export class TravelSystem {
 
   get inTransit() { return this.state === 'spooling' || this.state === 'burning' || this.state === 'turning'; }
 
+  /**
+   * Everything OTHER than the drive and the terrain that is making the ship loud right
+   * now: an active survey sweep, and a hostile probe holding a fix on you. Terrain is
+   * excluded on purpose - `plot()` integrates it along the leg, and `_rollRisk` samples
+   * it where the ship actually is.
+   *
+   * Returns 1 when the discovery layer is absent, so travel still works standalone.
+   */
+  get emissionMultiplier() {
+    return this.world.systems?.discovery?.emissionMultiplier ?? 1;
+  }
+
+  /**
+   * The signature the interception roll actually uses at a point: drive state x
+   * emissions x terrain. This is the whole "hiding is a real option" claim in one line.
+   */
+  signatureAt(x, z) {
+    const terrain = this.system.terrainAt(x, z);
+    return this.signature * this.emissionMultiplier * terrain.signature;
+  }
+
   /** Plot a single leg from where the player is to a POI. */
   plotTo(poiId) {
     const node = this.system.get(poiId);
@@ -218,18 +239,45 @@ export class TravelSystem {
 
       // Heat along the leg. Sampled rather than taken at the endpoints, because a leg
       // that starts and ends in quiet space can still run straight down a front.
+      //
+      // TERRAIN IS SAMPLED ON THE SAME NINE POINTS. `discovery.signatureMultiplier`
+      // would be a reading taken at the origin, which is the one place on the leg the
+      // player is about to stop being - so the mask is integrated over the course
+      // instead. This is what makes "run it through the Saltpan" a plan you can price
+      // before you commit rather than a thing you find out afterwards.
       let heatSum = 0;
       let heatPeak = 0;
+      let riskSum = 0;
+      let maskSum = 0;
+      let maskedSamples = 0;
+      let dominantTerrain = 'open';
+      let dominantWeight = 0;
       const SAMPLES = 9;
       for (let s = 0; s < SAMPLES; s++) {
         const t = (s + 0.5) / SAMPLES;
-        const h = this.war ? this.war.heatAtPoint(cursorX + dx * t, cursorZ + dz * t) : 0;
+        const sx = cursorX + dx * t;
+        const sz = cursorZ + dz * t;
+        const h = this.war ? this.war.heatAtPoint(sx, sz) : 0;
+        const terrain = this.system.terrainAt(sx, sz);
         heatSum += h;
+        maskSum += terrain.signature;
+        if (terrain.weight > 0.02) maskedSamples++;
+        if (terrain.weight > dominantWeight) {
+          dominantWeight = terrain.weight;
+          dominantTerrain = terrain.id;
+        }
         if (h > heatPeak) heatPeak = h;
+        // Risk is heat x signature evaluated POINTWISE, because a hot sample you cross
+        // hidden and a cold sample you cross lit are not the same leg.
+        riskSum += h * terrain.signature;
       }
       const heat = heatSum / SAMPLES;
+      const emission = this.signature * this.emissionMultiplier;
       const rolls = Math.floor(time / TRANSIT.riskRollPeriod);
-      const perRoll = Math.min(TRANSIT.heatCap, Math.max(0, heat * TRANSIT.heatK * this.signature));
+      const perRoll = Math.min(
+        TRANSIT.heatCap,
+        Math.max(0, (riskSum / SAMPLES) * TRANSIT.heatK * emission),
+      );
       const interceptChance = 1 - Math.pow(1 - perRoll, rolls);
 
       legs.push({
@@ -239,6 +287,14 @@ export class TravelSystem {
         poiId: poiIds[i] ?? this.system.containing(p.x, p.z)?.id ?? null,
         distance, time, propellant, heat, heatPeak, rolls, perRoll, interceptChance,
         profile,
+        /** Mean terrain signature multiplier over the leg. Below 1 the course hides. */
+        mask: maskSum / SAMPLES,
+        /** Fraction of the leg spent inside any terrain at all. */
+        maskedFraction: maskedSamples / SAMPLES,
+        /** Which terrain does the most work on this leg. */
+        terrain: dominantTerrain,
+        /** Signature actually used in the roll, terrain excluded. */
+        emission,
       });
 
       cursorX = p.x;
@@ -305,7 +361,9 @@ export class TravelSystem {
 
   fixedUpdate(dt) {
     const player = this.world.player;
-    if (!player || player.dead) {
+    // A crippled hull is not a dead hull, but it is exactly as incapable of a transit
+    // burn. Treat the two the same everywhere the drive is involved.
+    if (!player || player.dead || player.crippled) {
       if (this.state !== 'idle') this.abort('transit lost');
       return;
     }
@@ -322,8 +380,28 @@ export class TravelSystem {
       default: break;
     }
 
+    if (this.docked) this._updateDock(player);
     if (this.inTransit) this._updateBand(player);
     this._updateArrivalTracking(player);
+  }
+
+  /**
+   * A berth is a place, not a mode. Two things end it without the player pressing
+   * anything: driving away from it, and it becoming a battle. Both leave the docked
+   * flag lying if nobody checks, and a stale flag is what makes yard rates and refit
+   * gating silently wrong.
+   */
+  _updateDock(player) {
+    const node = this.system.get(this.dockedAt);
+    if (!node) { this.undock('berth lost'); return; }
+    if (player.position.distanceTo(node.position) > DOCK_RANGE * 1.5) {
+      this.undock('cast off');
+      return;
+    }
+    const st = this.war?.poiState(this.dockedAt);
+    if (st?.battle || st?.owner === 'contested') {
+      this.undock('THE BERTH IS UNDER ATTACK — PUT TO SEA');
+    }
   }
 
   _leg() { return this.course?.legs[this.legIndex] ?? null; }
@@ -394,11 +472,20 @@ export class TravelSystem {
     }
   }
 
+  /**
+   * The roll, once a minute of transit, at the point the ship is standing on.
+   *
+   * The signature term is now the terrain-modified one, so a leg that runs the length of
+   * the Saltpan is genuinely safer than the same leg run wide of it, and a leg that
+   * clips an anchorage is genuinely worse. The quoted percentage on the plotted course
+   * is computed from the same function, so the quote and the roll cannot disagree.
+   */
   _rollRisk(player, dt) {
     if (this.riskTimer < TRANSIT.riskRollPeriod) return;
     this.riskTimer -= TRANSIT.riskRollPeriod;
     const heat = this.war ? this.war.heatAtPoint(player.position.x, player.position.z) : 0;
-    const p = Math.min(TRANSIT.heatCap, Math.max(0, heat * TRANSIT.heatK * this.signature));
+    const signature = this.signatureAt(player.position.x, player.position.z);
+    const p = Math.min(TRANSIT.heatCap, Math.max(0, heat * TRANSIT.heatK * signature));
     if (p <= 0) return;
     if (this.interceptRng.next() < p) this._intercepted(player, heat);
   }
@@ -780,6 +867,7 @@ export class TravelSystem {
 
     if (out.docked) { out.ok = true; out.reason = 'berthed'; return out; }
     if (!player || player.dead) { out.reason = 'no ship'; return out; }
+    if (player.crippled) { out.reason = 'DRIFTING — no drive, no helm; wait for the tender'; return out; }
     if (this.inTransit) { out.reason = 'under way — abort the course first'; return out; }
     if (owner === 'contested' || st?.battle) {
       out.reason = `${node.name.toUpperCase()} IS CONTESTED — the berth is shut`;
@@ -955,8 +1043,17 @@ export class TravelSystem {
     const done = [];
     let subsidy = { alloy: 0, composite: 0, electronics: 0, exotic: 0 };
     let spent = 0;
+    const gate = this.world.systems.refitGate ?? null;
+    const skipped = [];
     for (const row of refit.repairPlan().slice(0, limit)) {
       if (!row.affordable) continue;
+      // Rebuilding the structure of a mount that has actually been breached is heavy
+      // work. A tender anchorage can weld plate; it cannot re-frame a hardpoint.
+      if (row.kind === 'structure' && row.detail?.startsWith('BREACHED')
+        && !(gate ? gate.canRebuildHardpoint() : svc.heavyRefit)) {
+        skipped.push({ id: row.id, reason: 'needs heavy gantries — Ironhold or Tallow' });
+        continue;
+      }
       let res = null;
       if (row.kind === 'module') res = refit.repairModule(row.hardpoint, 1);
       else if (row.kind === 'part') res = refit.repairPart(row.hardpoint, row.partId);
@@ -966,9 +1063,14 @@ export class TravelSystem {
       else if (row.kind === 'coolant') res = refit.refillCoolant();
       if (!res?.ok) continue;
       done.push(row.id);
-      const cost = res.cost ?? { alloy: res.cost ?? 0 };
+      // Three different refit calls report their price three different ways: a cost
+      // object, a bare alloy number, and named `alloy`/`composite` fields. Normalise
+      // rather than pretending they agree.
+      const cost = typeof res.cost === 'number'
+        ? { alloy: res.cost }
+        : (res.cost ?? { alloy: res.alloy ?? 0, composite: res.composite ?? 0 });
       for (const k of ['alloy', 'composite', 'electronics', 'exotic']) {
-        const n = typeof cost === 'number' ? (k === 'alloy' ? cost : 0) : (cost[k] ?? 0);
+        const n = cost[k] ?? 0;
         subsidy[k] += n * svc.repairSubsidy;
         spent += n;
       }
@@ -977,8 +1079,10 @@ export class TravelSystem {
     if (economy) economy.credit(subsidy, 'yard subsidy');
     else for (const k in subsidy) this.world.materials[k] = (this.world.materials[k] ?? 0) + subsidy[k];
 
-    this.bus.emit(MEV.SERVICE_USED, { service: 'repair', poiId: this.dockedAt, jobs: done.length, subsidy, spent });
-    return { ok: true, jobs: done, spent, subsidy, rate: refit.repairRate };
+    this.bus.emit(MEV.SERVICE_USED, {
+      service: 'repair', poiId: this.dockedAt, jobs: done.length, subsidy, spent, skipped,
+    });
+    return { ok: true, jobs: done, skipped, spent, subsidy, rate: refit.repairRate };
   }
 
   /** Push the whole scrap backlog into the refinery. Cheap, and the reason to be here. */
@@ -1044,24 +1148,26 @@ export class TravelSystem {
     const discovery = this.world.systems.discovery ?? null;
     const prop = this.world.propellant;
     const spendable = Math.max(0, prop.current - prop.reserve);
+    // Row objects are cached on the node, not rebuilt: `status()` is a per-frame read
+    // for the tactical overlay and five fresh objects a frame is five objects a frame.
     for (const node of this.system.anchorages()) {
       if (discovery && !discovery.isKnown(node.id)) continue;
       const d = player.position.distanceTo(node.position);
       const cost = (d / KM) * this.propellantPerKm;
       const owner = this.ownerOf(node.id);
-      rows.push({
-        id: node.id,
-        name: node.name,
-        kind: node.kind,
-        owner,
-        standing: this.world.reputation?.[owner] ?? 0,
-        minStanding: node.anchorage.minStanding ?? -100,
-        km: d / KM,
-        propellant: cost,
-        reachable: cost <= spendable,
-        heavyRefit: !!node.anchorage.heavyRefit,
-        propellantPerUnit: node.anchorage.propellantPerUnit,
-      });
+      const row = node._dockRow ?? (node._dockRow = {});
+      row.id = node.id;
+      row.name = node.name;
+      row.kind = node.kind;
+      row.owner = owner;
+      row.standing = this.world.reputation?.[owner] ?? 0;
+      row.minStanding = node.anchorage.minStanding ?? -100;
+      row.km = d / KM;
+      row.propellant = cost;
+      row.reachable = cost <= spendable;
+      row.heavyRefit = !!node.anchorage.heavyRefit;
+      row.propellantPerUnit = node.anchorage.propellantPerUnit;
+      rows.push(row);
     }
     rows.sort((a, b) => a.km - b.km);
     return rows;

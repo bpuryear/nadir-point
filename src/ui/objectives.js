@@ -45,7 +45,7 @@ export class ObjectivesPanel extends Panel {
       hint: 'J',
       w: 452,
       h: 384,
-      place: (P) => ({ x: 30, y: Math.max(30, Math.round(P.h * 0.5 - 300)) }),
+      place: (P) => ({ x: 30, y: Math.max(40, Math.min(118, P.h - 420)) }),
     });
     this.ui = ui;
     this.world = ui.world;
