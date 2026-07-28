@@ -265,10 +265,13 @@ export class UILayer {
    */
   spawnOrderMarker(kind, payload = {}) {
     // One live marker per kind: a second move order replaces the first rather than
-    // leaving a trail of ghosts the player has to mentally discard.
+    // leaving a trail of ghosts the player has to mentally discard. A REJECTED
+    // marker is exempt - it is already dissolving, and the case the player most
+    // needs to see is the illegal order flashing red beside the legal one that
+    // replaced it.
     for (let i = this.markers.count - 1; i >= 0; i--) {
       const m = this.markers.items[i];
-      if (m.active && m.kind === kind) { m.active = false; this.markers.kill(i); }
+      if (m.active && m.kind === kind && m.stage !== 'rejected') { m.active = false; this.markers.kill(i); }
     }
     const m = this.markers.spawn();
     if (!m) return null;

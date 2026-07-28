@@ -124,9 +124,16 @@ export default {
     const rig = buildPOILighting(S.poi, {
       rng: world.rng.fork('ui-rig'), materials: registry, palette: registry.palette,
       faction: 'player', lod: 0,
-    }, world, { shadows: true, fog: true, shadowRadius: 2600 });
+    }, world, { shadows: true, fog: true, shadowRadius: 2600, shadowMapSize: 1024 });
     if (rig?.keyProxy) renderer.post.setKeyLight(rig.keyProxy, rig.keyColor ?? null);
     registry.applyEnvironment(scene, S.poi, 0.9);
+
+    // GTAO and a 24-tap godray pass at 1600x900 are the two most expensive things in
+    // the frame on a software rasteriser, and neither is what this probe is judging.
+    // Bloom and SMAA stay: they are load-bearing for how the interface reads over the
+    // scene, and the grade's crushed blacks and vignette are the point.
+    renderer.post.gtao.enabled = false;
+    renderer.post.godrays.uniforms.samples.value = 8;
 
     // ---- the cruiser ------------------------------------------------------
     const hull = buildCruiser({
@@ -197,9 +204,10 @@ export default {
     const enemies = spawnEnemies(world, registry, screenName);
     const target = enemies[0] ?? null;
     if (target) {
-      player.orderAttack(target, 'reactor');
       // A fight already in progress: the target has lost a battery and is holed.
-      damageShip(target, 0.58, ['port_battery', 'stbd_battery']);
+      damageShip(target, 0.58);
+      const aim = [...target.subsystems.values()].find((s) => !s.destroyed && s.def.kind === 'reactor');
+      player.orderAttack(target, aim?.def.id ?? null);
     }
 
     // ---- damage the player, so the structure panel has something to say ----
@@ -226,14 +234,21 @@ export default {
     // Real weapon world-positions, real traverse, real shield and power state come
     // from stepping the engine, not from assignment.
     player.body.desiredHeading = player.heading;
-    for (let i = 0; i < 90; i++) engine.stepOnce();
+    for (let i = 0; i < 60; i++) engine.stepOnce();
+
+    // Turn the hull so the arc edge cuts through the target - see the function.
+    if (target && !locked) {
+      tuneHeadingForMixedBearing(player, target, combat);
+      for (let i = 0; i < 4; i++) engine.stepOnce();
+      player.body.desiredHeading = player.heading;
+    }
 
     // ---- power: caught mid-swing -----------------------------------------
     // The gap between requested and delivered IS the mechanic, so the frame is taken
     // while four channels are still spooling toward a stance the player just picked.
     if (!locked && world.unlocked.powerRouting) {
       player.power.applyPreset('assault');
-      for (let i = 0; i < 46; i++) engine.stepOnce();   // ~0.77 s of spool
+      for (let i = 0; i < 18; i++) engine.stepOnce();   // ~0.3 s of a ~0.75 s swing
     }
 
     // ---- the UI itself ----------------------------------------------------
@@ -377,19 +392,59 @@ function spawnEnemies(world, registry, screenName) {
   return out;
 }
 
-function damageShip(ship, hullFrac, destroyIds) {
+/**
+ * Chew the target up the way a careful salvager would: one weapon mount shot out
+ * entirely, another most of the way, everything else scratched. Selected by KIND
+ * rather than by id, so this keeps working whichever hull the roster hands back.
+ */
+function damageShip(ship, hullFrac) {
   ship.hullHP = ship.maxHullHP * hullFrac;
   ship.salvageIntegrity = 0.72;
-  let killed = 0;
-  for (const id of destroyIds) {
-    const s = ship.subsystems.get(id);
-    if (!s) continue;
-    if (killed === 0) { s.hp = 0; s.destroyed = true; killed++; }
-    else s.hp = s.maxHP * 0.31;
-  }
+  const weapons = [...ship.subsystems.values()].filter((s) => s.def.kind === 'weapon');
+  if (weapons[0]) { weapons[0].hp = 0; weapons[0].destroyed = true; }
+  if (weapons[1]) weapons[1].hp = weapons[1].maxHP * 0.31;
+  const engines = [...ship.subsystems.values()].filter((s) => s.def.kind === 'engine');
+  if (engines[0]) { engines[0].hp = 0; engines[0].destroyed = true; }
+  let i = 0;
   for (const s of ship.subsystems.values()) {
-    if (!s.destroyed && s.hp === s.maxHP) s.hp = s.maxHP * 0.78;
+    if (!s.destroyed && s.hp === s.maxHP) s.hp = s.maxHP * (0.84 - 0.09 * (i++ % 5));
   }
+}
+
+/**
+ * Find the hull heading that best DEMONSTRATES the grey-out.
+ *
+ * The subsystem ring greys entries `combat.canAnyWeaponBear()` returns false for,
+ * and that grey is the mechanism the whole spatial layer is taught through. A frame
+ * where every entry is lit proves nothing and a frame where every entry is grey
+ * proves nothing either; the frame that teaches is the one where the arc edge cuts
+ * THROUGH the target and half the ring goes dark.
+ *
+ * So rather than hand-tuning an angle that would rot the moment a module's arc
+ * changed, this sweeps every heading and keeps the one with the most balanced split.
+ * Deterministic, and self-correcting against the real arc data.
+ */
+function tuneHeadingForMixedBearing(player, target, combat) {
+  const subs = [...target.subsystems.values()].filter((s) => !s.destroyed);
+  if (!subs.length || !player.weapons.length) return player.heading;
+  let best = player.heading;
+  let bestScore = -1;
+  for (let i = 0; i < 360; i++) {
+    const h = (i / 360) * Math.PI * 2;
+    for (const m of player.weapons) m.updateWorld(player.position, h);
+    player.body.heading = h;
+    let lit = 0;
+    for (const s of subs) if (combat.canAnyWeaponBear(player, s)) lit++;
+    const grey = subs.length - lit;
+    // Balanced split first; ties broken toward more lit entries so the frame still
+    // shows a live firing solution rather than a hull with nothing on target.
+    const score = Math.min(lit, grey) * 100 + lit;
+    if (score > bestScore) { bestScore = score; best = h; }
+  }
+  player.body.heading = best;
+  player.body.desiredHeading = best;
+  for (const m of player.weapons) m.updateWorld(player.position, best);
+  return best;
 }
 
 /** A hulk with cut sections, so the salvage marker and the hold have provenance. */
@@ -424,34 +479,38 @@ function makeWreck(world, registry, salvage) {
  */
 function seedMarkers(ui, world, player, target, wreck) {
   const t = ui.time;
+  const p = player?.position ?? new THREE.Vector3();
 
-  // 1. PROVISIONAL — spawned this instant, not yet drawn once.
-  const move = ui.spawnOrderMarker('move', {
-    point: new THREE.Vector3(2350, 0, -2150),
+  // 1. REJECTED first — the dissolve, with a specific reason on it. Spawned before
+  //    the legal move order, exactly as it would happen at the desk.
+  const bad = ui.spawnOrderMarker('move', {
+    point: new THREE.Vector3(p.x - 2100, 0, p.z + 2600),
   });
-  if (move) { move.frame0 = ui.frame + 4; move.stage = 'provisional'; }
-
-  // 2. COMMITTED — mid scale-in.
-  if (target) {
-    const atk = ui.spawnOrderMarker('attack', { target, subsystem: 'reactor' });
-    if (atk) { atk.stage = 'committed'; atk.stageAt = t - 0.055; atk.t0 = t - 0.07; }
-  }
-
-  // 3. REJECTED — the dissolve, with the specific reason on it.
-  const bad = ui.spawnOrderMarker('move', { point: new THREE.Vector3(-3050, 0, -900) });
   if (bad) {
     bad.stage = 'rejected';
     bad.stageAt = t - 0.055;
     bad.reason = 'OUT OF ARC — PORT BATTERY BEARS 20°–160°';
   }
 
+  // 2. PROVISIONAL — spawned this instant, not yet drawn once.
+  const move = ui.spawnOrderMarker('move', {
+    point: new THREE.Vector3(p.x + 1900, 0, p.z - 2400),
+  });
+  if (move) { move.frame0 = ui.frame + 4; move.stage = 'provisional'; }
+
+  // 3. COMMITTED — mid scale-in, on the locked target.
+  if (target) {
+    const atk = ui.spawnOrderMarker('attack', { target, subsystem: player?.targetSubsystem ?? null });
+    if (atk) { atk.stage = 'committed'; atk.stageAt = t - 0.055; atk.t0 = t - 0.07; }
+  }
+
   // A live salvage cut, so the amber bracket and its progress bar are in frame.
   const cutting = world.systems.salvage?.cutting;
   if (cutting) {
     const m = ui.spawnOrderMarker('salvage', { section: cutting.section });
-    if (m) { m.stage = 'committed'; m.stageAt = t - 0.4; m.ttl = 30; }
+    if (m) { m.stage = 'committed'; m.stageAt = t - 0.6; m.ttl = 30; }
   }
-  void player; void wreck;
+  void wreck;
 }
 
 // ---------------------------------------------------------------------------

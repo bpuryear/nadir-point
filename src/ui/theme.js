@@ -162,6 +162,8 @@ export function fmtMass(tonnes) {
 
 const _v4 = new THREE.Vector4();
 const _mvp = new THREE.Matrix4();
+/** How far outside the frame a projected vertex is allowed to land, in viewports. */
+const CLAMP_SCREENS = 6;
 
 /**
  * World point to CSS pixels, with an honest behind-the-camera test.
@@ -186,14 +188,28 @@ export class Projector {
     _mvp.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   }
 
-  /** @returns {boolean} true when the point is in front of the eye. */
+  /**
+   * @returns {boolean} true when the point is in front of the eye.
+   *
+   * Two guards, both of which exist because a firing arc is nine kilometres wide and
+   * parts of it are behind the camera:
+   *   - `w <= 1e-3` rejects anything at or behind the eye plane outright.
+   *   - coordinates are clamped to a few screen-widths. A vertex at w = 1e-4 lands
+   *     at 10^7 px, and asking a software rasteriser to scan-convert a polygon that
+   *     size is how a 2 ms overlay becomes a 2 s one. Clamping this far outside the
+   *     frame cannot move where an edge crosses it by a visible amount.
+   */
   point(x, y, z, out) {
     _v4.set(x, y, z, 1).applyMatrix4(_mvp);
     const w = _v4.w;
-    if (w <= 1e-6) { out.ok = false; return false; }
+    if (w <= 1e-3) { out.ok = false; return false; }
     const iw = 1 / w;
-    out.x = (_v4.x * iw * 0.5 + 0.5) * this.width;
-    out.y = (-_v4.y * iw * 0.5 + 0.5) * this.height;
+    const lx = this.width * CLAMP_SCREENS;
+    const ly = this.height * CLAMP_SCREENS;
+    const px = (_v4.x * iw * 0.5 + 0.5) * this.width;
+    const py = (-_v4.y * iw * 0.5 + 0.5) * this.height;
+    out.x = px < -lx ? -lx : px > lx ? lx : px;
+    out.y = py < -ly ? -ly : py > ly ? ly : py;
     out.z = _v4.z * iw;
     out.ok = true;
     return true;
