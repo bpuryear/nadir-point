@@ -360,17 +360,36 @@ export const POI_PALETTES = {
     id: 'giant-orbit',
     name: 'Gas Giant Orbit',
     key: { color: 0xfff0d8, intensity: 13.5, angularRadius: 0.009 },
-    // Planetshine. Enormous and blue - but stated as a PEAK CHANNEL, so its blue
-    // lands 5-6 stops under the key's blue instead of matching it.
-    fill: { color: 0x3f63b4, intensity: 2.30, broad: 0.42 },
-    bounce: { color: 0x6f8ed8, intensity: 0.90 },
+    /*
+     * KEY-TO-FILL RATIO IS THE WHOLE LOOK, AND IT WAS WRONG.
+     *
+     * These were fill 2.30, bounce 0.90, rim 1.25, ibl 0.78 - together about 38% of
+     * the key. Every non-key source is omnidirectional or near-omnidirectional, so
+     * that sum lands on EVERY face regardless of which way it points. The result was
+     * exactly what the review found: a hull whose top faces and flanks read the same
+     * value, no terminator, and no readable light direction, on a build whose own
+     * palette comments describe an intended cream-and-blue two-temperature frame.
+     *
+     * Exposure was not the problem - the frame measured 0% clipped and still looked
+     * like white paper. Flat is not the same failure as blown out, and fixing the
+     * second does nothing for the first.
+     *
+     * Now roughly 6% of key for the ambient terms. That is a ~17:1 key-to-fill ratio,
+     * which is what produces near-black shadows. The shadow side is kept READABLE by
+     * the rim rather than by ambient: a kicker is directional, so it separates the
+     * silhouette edge without lifting the faces behind it. That distinction is the
+     * difference between "shadowed regions retain readable value separation" and
+     * "ambient wash", which the criteria list as opposite outcomes.
+     */
+    fill: { color: 0x3f63b4, intensity: 0.42, broad: 0.42 },
+    bounce: { color: 0x6f8ed8, intensity: 0.16 },
     // The kicker. Tracks the camera, sits behind the subject, and is the only thing
     // separating a grey hull from a black sky when the key is on the far side.
-    rim: { color: 0x8fb4ff, intensity: 1.25 },
+    rim: { color: 0x8fb4ff, intensity: 0.95 },
     shadow: 0x050912,
     fog: { color: 0x16223c, density: 0.000012 },
     accent: 0x8fb4ff,
-    ibl: { zenith: 0x0a1024, horizon: 0x24406e, ground: 0x070b16, sun: 0xfff3e0, sunSize: 0.055, intensity: 0.78 },
+    ibl: { zenith: 0x0a1024, horizon: 0x24406e, ground: 0x070b16, sun: 0xfff3e0, sunSize: 0.055, intensity: 0.16 },
     grade: {
       exposure: 1.0, bloom: 0.42, godrays: 0.30, vignette: 0.44,
       // Cold in the toe, cream in the shoulder. This is what puts the rocks, the
