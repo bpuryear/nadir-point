@@ -191,6 +191,25 @@ vec2 nadirMacroUV(vec3 p, vec3 n) {
   float row = 1.0 - floor(idx / 3.0);
   return (vec2(col, row) + f) / vec2(3.0, 2.0);
 }
+
+/**
+ * Surface-gradient normal perturbation from a height sampled at this pixel.
+ *
+ * This is three's own `perturbNormalArb` construction (ShaderChunk/bumpmap_pars),
+ * inlined because the material is not a bump-mapped material and defining
+ * USE_BUMPMAP would fight the tangent-space normal map it already has. `dHdx`/`dHdy`
+ * are METRES OF RELIEF PER SCREEN PIXEL, which is why they are clamped: a macro
+ * region boundary is a discontinuity in the atlas UV and its derivative is unbounded.
+ */
+vec3 nadirPerturb(vec3 n, vec3 viewPos, float dHdx, float dHdy) {
+  vec3 sx = dFdx(viewPos);
+  vec3 sy = dFdy(viewPos);
+  vec3 r1 = cross(sy, n);
+  vec3 r2 = cross(n, sx);
+  float det = dot(sx, r1);
+  vec3 grad = sign(det) * (dHdx * r1 + dHdy * r2);
+  return normalize(abs(det) * n - grad);
+}
 `;
 
 /**
@@ -201,11 +220,22 @@ vec2 nadirMacroUV(vec3 p, vec3 n) {
 const MAP_FRAGMENT = /* glsl */`
 #ifdef USE_MAP
 	vec4 sampledDiffuseColor = texture2D( map, vMapUv + nadirUvOffset );
+	/**
+	 * DETAIL GAIN. The tiling map's contrast is pushed about its own mean: up inside
+	 * a macro structure band, down over open armour. `nadirDetail` is 1.0 on a calm
+	 * face, so a 700 m flank belt renders EXACTLY as authored and only the bands move.
+	 * Pivoting on 0.5 rather than on the texel keeps the mean value of the surface
+	 * constant, so amplifying detail does not also change how light the ship is.
+	 */
+	sampledDiffuseColor.rgb = clamp(
+		vec3(0.5) + (sampledDiffuseColor.rgb - vec3(0.5)) * nadirDetail, vec3(0.0), vec3(1.0) );
 	diffuseColor *= sampledDiffuseColor;
 #endif
 	// Low-frequency value drift. This is what stops two repeats of the plate tile
 	// from being the same patch, which is how the eye detects tiling at all.
 	diffuseColor.rgb *= 1.0 + (nadirMacroTexel.r - 0.5) * nadirMacro.y;
+	// Anything sunk below the neutral plane is a hole, and a hole is darker.
+	diffuseColor.rgb *= 1.0 - nadirCavity * 0.34;
 	// Soot, then marks. Marks go last because a hazard band that has been sooted
 	// over is a hazard band nobody can see.
 	diffuseColor.rgb = mix( diffuseColor.rgb, nadirSootColor, nadirMacroTexel.b * nadirMacro.z );
@@ -221,8 +251,11 @@ float roughnessFactor = roughness;
 	roughnessFactor *= texelRoughness.g;
 #endif
 	// Soot is matte. Without this the streaks are a paint job rather than a deposit.
+	// The roughness drift now rides the macro HEIGHT: a recess collects dirt and a
+	// proud frame gets rubbed clean, which is the right sign on both.
 	roughnessFactor = clamp( roughnessFactor
-		+ ( nadirMacroTexel.g - 0.5 ) * nadirWarp.z
+		- ( nadirMacroTexel.g - 0.5 ) * nadirWarp.z
+		+ nadirCavity * 0.12
 		+ nadirMacroTexel.b * 0.24, 0.035, 1.0 );
 `;
 
@@ -252,16 +285,25 @@ const NORMAL_FRAGMENT_MAPS = /* glsl */`
 	#if defined( USE_PACKED_NORMALMAP )
 		mapN = vec3( mapN.xy, sqrt( saturate( 1.0 - dot( mapN.xy, mapN.xy ) ) ) );
 	#endif
-	mapN.xy *= normalScale;
+	// Same frequency hierarchy as the albedo: the tiling relief is amplified inside a
+	// macro structure band and damped over open armour.
+	mapN.xy *= normalScale * nadirDetail;
 	normal = normalize( tbn * mapN );
 #elif defined( USE_BUMPMAP )
 	normal = perturbNormalArb( - vViewPosition, normal, dHdxy_fwd(), faceDirection );
 #endif
+	// THE MACRO RELIEF, applied last and in VIEW space so it is independent of the
+	// tangent frame. This is what makes an authored recess actually shade.
+	normal = nadirPerturb( normal, - vViewPosition, nadirDH.x, nadirDH.y );
 `;
 
 const AOMAP_FRAGMENT = /* glsl */`
 #ifdef USE_AOMAP
 	float ambientOcclusion = ( texture2D( aoMap, vAoMapUv + nadirUvOffset ).r - 1.0 ) * aoMapIntensity + 1.0;
+	// A recess sees less of the sky than a flat plate does. Without this an authored
+	// recess is only a shading trick and collapses the moment the key rakes the other
+	// way; with it, depth survives every lighting angle.
+	ambientOcclusion *= 1.0 - nadirCavity * nadirRelief.y;
 	reflectedLight.indirectDiffuse *= ambientOcclusion;
 	#if defined( USE_CLEARCOAT )
 		clearcoatSpecularIndirect *= ambientOcclusion;

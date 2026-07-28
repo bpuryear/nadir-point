@@ -38,6 +38,8 @@ export class ProjectilePool {
     this.tracking = new Float32Array(capacity); // >0 means it steers (missiles)
     this.targetRef = new Array(capacity).fill(null);
     this.subsystemRef = new Array(capacity).fill(null);
+    /** Second-tier aim point: which sub-part of the aimed module this shot wants. */
+    this.partRef = new Array(capacity).fill(null);
     this.sourceRef = new Array(capacity).fill(null);
     this.accuracy = new Float32Array(capacity);
   }
@@ -60,10 +62,12 @@ export class ProjectilePool {
       this.accuracy[i] = this.accuracy[last];
       this.targetRef[i] = this.targetRef[last];
       this.subsystemRef[i] = this.subsystemRef[last];
+      this.partRef[i] = this.partRef[last];
       this.sourceRef[i] = this.sourceRef[last];
     }
     this.targetRef[last] = null;
     this.subsystemRef[last] = null;
+    this.partRef[last] = null;
     this.sourceRef[last] = null;
   }
 }
@@ -245,17 +249,18 @@ export class CombatSystem {
     p.vy[i] = dir.y * def.projectileSpeed + ship.velocity.y;
     p.vz[i] = dir.z * def.projectileSpeed + ship.velocity.z;
     p.life[i] = def.range / def.projectileSpeed * 1.35;
-    p.damage[i] = def.damage;
+    p.damage[i] = damage;
     p.kind[i] = PROJECTILE_KINDS.indexOf(def.type === 'missile' ? 'missile' : def.type === 'rail' ? 'railslug' : def.type === 'flak' ? 'flak' : def.type === 'pd' ? 'pdslug' : 'slug');
     p.faction[i] = this.factionId(ship.faction);
     p.tracking[i] = def.type === 'missile' ? (def.tracking ?? 1.2) : 0;
-    p.accuracy[i] = def.subsystemAccuracy ?? 0.65;
+    p.accuracy[i] = (def.subsystemAccuracy ?? 0.65) * (1 - stress * 0.6);
     p.targetRef[i] = targetShip ?? null;
     p.subsystemRef[i] = ship.targetSubsystem ?? null;
+    p.partRef[i] = ship.targetPart ?? null;
     p.sourceRef[i] = ship;
   }
 
-  _resolveHitscan(ship, mount, aimPoint, targetShip) {
+  _resolveHitscan(ship, mount, aimPoint, targetShip, damage, stress) {
     const origin = mount.worldPosition;
     const dir = scratch.v3.copy(aimPoint).sub(origin);
     const maxDist = Math.min(dir.length(), mount.def.range);
@@ -278,11 +283,12 @@ export class CombatSystem {
       // Beams are precise: they hit what they were aimed at far more reliably than
       // a shell does, which is why they are the salvager's weapon.
       hitSub = ship.targetSubsystem;
-      hitShip.applyDamage(mount.def.damage, {
+      hitShip.applyDamage(damage, {
         subsystemId: hitSub,
+        partId: ship.targetPart ?? null,
         point: end,
         source: ship,
-        accuracy: mount.def.subsystemAccuracy ?? 0.92,
+        accuracy: (mount.def.subsystemAccuracy ?? 0.92) * (1 - stress * 0.6),
         rng: this.rng,
       });
       this.bus.emit(EV.PROJECTILE_IMPACT, { point: end.clone(), target: hitShip, type: mount.def.type, source: ship });
@@ -344,6 +350,7 @@ export class CombatSystem {
       if (hit) {
         hit.ship.applyDamage(p.damage[i], {
           subsystemId: p.subsystemRef[i],
+          partId: p.partRef[i],
           point: hit.point,
           source: p.sourceRef[i],
           accuracy: p.accuracy[i],
@@ -371,7 +378,7 @@ export class CombatSystem {
     const point = target?.worldPosition ?? target?.position ?? target;
     if (!point) return false;
     for (const m of fromShip.weapons) {
-      if (!m.online) continue;
+      if (!m.usable) continue;
       if (m.def.type === 'pd') continue; // point defence is not a commandable weapon
       if (m.canBear(fromShip.position, fromShip.heading, point)) return true;
     }
