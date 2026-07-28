@@ -97,7 +97,7 @@ export class WeaponAudio {
     // 1. the breach crack - the only part above 1 kHz, and it is what carries at range
     noiseBurst(A, d, t, {
       buffer: 'white', type: 'bandpass', freq: 2350 * k, q: 0.9 * v.q,
-      peak: 1.15, attack: 0.0012, tau: 0.018 * size,
+      peak: 1.45, attack: 0.0012, tau: 0.018 * size,
     });
     // 2. the gas body, saturated. This is the "crack" becoming a "boom".
     subThump(A, d, t + 0.002, {
@@ -117,7 +117,7 @@ export class WeaponAudio {
     // 5. the mount itself, ringing
     metalRing(A, d, t + 0.010, {
       freqs: [512 * k * v.ratio, 907 * k * v.ratio * 1.02, 1447 * k],
-      q: 8 * v.q, peak: 0.34, tau: 0.062 * size,
+      q: 8 * v.q, peak: 0.48, tau: 0.062 * size,
     });
     return true;
   }
@@ -333,10 +333,10 @@ export class WeaponAudio {
     // running a hair apart, and it is the single detail that stops a sustained
     // tone sounding like a test signal.
     const spec = type === 'lance'
-      ? { f: 112, beat: 1.05, band: 640, q: 2.6, sub: 41, subLvl: 0.45, drive: 3.2, noise: 0.16, am: 0, level: 1.05 }
+      ? { f: 112, beat: 1.05, band: 640, q: 2.6, sub: 41, subLvl: 0.45, drive: 3.2, noise: 0.16, am: 0, level: 1.55 }
       : type === 'mining'
-        ? { f: 186, beat: 3.1, band: 820, q: 3.4, sub: 62, subLvl: 0.18, drive: 2.2, noise: 0.42, am: 26, level: 0.85 }
-        : { f: 268, beat: 1.9, band: 1180, q: 2.1, sub: 67, subLvl: 0.20, drive: 1.6, noise: 0.22, am: 0, level: 1.00 };
+        ? { f: 186, beat: 3.1, band: 820, q: 3.4, sub: 62, subLvl: 0.18, drive: 2.2, noise: 0.42, am: 26, level: 1.25 }
+        : { f: 268, beat: 1.9, band: 1180, q: 2.1, sub: 67, subLvl: 0.20, drive: 1.6, noise: 0.22, am: 0, level: 1.50 };
 
     const k = v.f / Math.pow(size, 0.35);
 

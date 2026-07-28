@@ -377,7 +377,7 @@ function spawnEnemies(world, registry, screenName) {
   const rng = world.rng.fork('ui-enemies');
   const roster = [
     { id: 'concord_destroyer', angle: -0.62, dist: 2450 },
-    { id: 'concord_corvette', angle: -1.45, dist: 3400 },
+    { id: 'concord_corvette', angle: -0.02, dist: 4200 },
     { id: 'coalition_frigate', angle: 2.25, dist: 5600 },
   ];
   for (const r of roster) {
@@ -447,9 +447,10 @@ function tuneHeadingForMixedBearing(player, target, combat) {
     let lit = 0;
     for (const s of subs) if (combat.canAnyWeaponBear(player, s)) lit++;
     const grey = subs.length - lit;
-    // Balanced split first; ties broken toward more lit entries so the frame still
-    // shows a live firing solution rather than a hull with nothing on target.
-    const score = Math.min(lit, grey) * 100 + lit;
+    // Balanced split first, then a hull-centre firing solution so at least one wedge
+    // is drawn filled and on target, then a bias toward more lit entries.
+    const hullBears = combat.bearingReport(player, target).bearing > 0;
+    const score = Math.min(lit, grey) * 1000 + (hullBears ? 220 : 0) + lit * 3;
     if (score > bestScore) { bestScore = score; best = h; }
   }
   player.body.heading = best;
@@ -515,7 +516,7 @@ function seedMarkers(ui, world, player, target, pose) {
 
   // 1. REJECTED first — the dissolve, with a specific reason on it. Spawned before
   //    the legal move order, exactly as it would happen at the desk.
-  const bad = ui.spawnOrderMarker('move', { point: at(-1450, 700) });
+  const bad = ui.spawnOrderMarker('move', { point: at(-1750, 2050) });
   if (bad) {
     bad.stage = 'rejected';
     bad.stageAt = t - 0.055;
@@ -523,7 +524,7 @@ function seedMarkers(ui, world, player, target, pose) {
   }
 
   // 2. PROVISIONAL — spawned this instant, not yet drawn once.
-  const move = ui.spawnOrderMarker('move', { point: at(700, 1250) });
+  const move = ui.spawnOrderMarker('move', { point: at(360, 2150) });
   if (move) { move.frame0 = ui.frame + 4; move.stage = 'provisional'; }
 
   // 3. COMMITTED — mid scale-in, on the locked target.

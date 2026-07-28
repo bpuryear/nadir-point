@@ -76,9 +76,10 @@ export class TacticalOverlay {
     if (!player || player.dead) return;
     const combat = world.systems?.combat;
 
-    this._drawContacts(P, player);
+    // Arcs are the floor of the overlay; contacts and the target ring sit on them.
     if (combat) this._drawArcs(P, player, combat);
     this._drawRangeRings(P, player);
+    this._drawContacts(P, player);
     const target = player.target && !player.target.dead ? player.target : null;
     if (target) this._drawTargetRing(P, player, target, combat);
     this._drawCoverageRose(P, player, combat);
@@ -114,11 +115,11 @@ export class TacticalOverlay {
     // the plane; grown any larger the wide mounts (the dorsal bed is 306 degrees)
     // become a translucent disc over half the frame and the negative space that makes
     // this game legible is gone.
+    // Clear of the hull by a wide margin: an arc boundary drawn ACROSS the ship reads
+    // as damage, not as a limit.
     const camDist = proj.camera ? proj.camera.position.distanceTo(player.position) : 4000;
-    const roseR = Math.min(
-      THREE.MathUtils.clamp(camDist * 0.21, 650, 3200),
-      (player.radius ?? 600) * 2.2,
-    );
+    const hullR = player.radius ?? 600;
+    const roseR = Math.max(hullR * 3.0, Math.min(camDist * 0.34, 3600));
 
     // Bearing wedges last, so a live firing solution is never drawn under a wedge
     // that cannot reach the target.
@@ -176,11 +177,12 @@ export class TacticalOverlay {
         });
       }
 
-      // Label sits on the near rose, where the eye already is.
+      // Label sits on the near rose, where the eye already is, and yields to
+      // anything the frame has already reserved.
       const mid = a.centre;
-      if (proj.point(ox + Math.sin(mid) * near * 0.9, 0, oz + Math.cos(mid) * near * 0.9, this._pt)
+      if (proj.point(ox + Math.sin(mid) * near * 0.86, 0, oz + Math.cos(mid) * near * 0.86, this._pt)
         && this._pt.x > 8 && this._pt.x < P.w - 8 && this._pt.y > 20 && this._pt.y < P.h - 20) {
-        P.text(`${a.type.toUpperCase()} ${fmtRange(a.range)}`, this._pt.x, this._pt.y, {
+        P.textIfClear(`${a.type.toUpperCase()} ${fmtRange(a.range)}`, this._pt.x, this._pt.y, {
           font: F.micro, color: bearing ? C.hostile : C.inkFaint,
           align: 'center', track: TRACK.label,
         });
@@ -222,10 +224,10 @@ export class TacticalOverlay {
         const i = (start + (step % 2 ? -1 : 1) * Math.ceil(step / 2) + RING_SEGS * 2) % RING_SEGS;
         const p = this._ring[i];
         if (!p.ok || p.x < 150 || p.x > P.w - 150 || p.y < 40 || p.y > P.h - 130) continue;
-        P.text(`${ring.label} ${fmtRange(ring.r)}`, p.x, p.y - 4, {
+        if (!P.textIfClear(`${ring.label} ${fmtRange(ring.r)}`, p.x, p.y - 4, {
           font: F.micro, color: ring.salvage ? C.salvageDim : C.inkGhost,
           align: 'center', track: TRACK.label,
-        });
+        })) continue;
         break;
       }
     }
@@ -261,7 +263,7 @@ export class TacticalOverlay {
       P.rule(this._pt.x - r, this._pt.y - r, r * 2, P.hair, col);
       P.rule(this._pt.x - r, this._pt.y + r, r * 2, P.hair, col);
       if (r > 12) {
-        P.text(s.classDef.name.toUpperCase(), this._pt.x, this._pt.y + r + 12,
+        P.textIfClear(s.classDef.name.toUpperCase(), this._pt.x, this._pt.y + r + 12,
           { font: F.micro, color: col, align: 'center', track: TRACK.label });
       }
     }
@@ -272,7 +274,7 @@ export class TacticalOverlay {
       const r = Math.max(9, proj.radiusAt(wreck.body.position, wreck.body.radius ?? 60));
       P.diamond(this._pt.x, this._pt.y, r * 0.5, { stroke: C.salvageDim, weight: 1 });
       const live = wreck.sections.filter((s) => s.cuttable).length;
-      P.text(`HULK · ${live}`, this._pt.x, this._pt.y - r * 0.5 - 7,
+      P.textIfClear(`HULK · ${live} SECTIONS`, this._pt.x, this._pt.y - r * 0.5 - 7,
         { font: F.micro, color: C.salvageDim, align: 'center', track: TRACK.label });
     }
   }
@@ -368,19 +370,54 @@ export class TacticalOverlay {
         P.rule(e.x, e.y - k, P.hair, k * 2, col);
       }
 
-      // Labels only outboard, so the ring never writes over the hull.
-      const tx = cx + Math.cos(e.angle) * (ringR + 14);
-      const ty = cy + Math.sin(e.angle) * (ringR + 14);
-      const align = Math.cos(e.angle) < -0.25 ? 'right' : Math.cos(e.angle) > 0.25 ? 'left' : 'center';
-      const name = (s.def.label ?? s.def.id).toUpperCase();
-      P.text(dead ? `${name} ✕` : name, tx, ty + 3, {
-        font: isAim ? F.microBold : F.micro,
-        color: dead ? C.inkGhost : e.bears ? C.ink : C.inkFaint,
-        align, track: TRACK.label,
-      });
-      if (!dead) {
-        P.text(fmtPct(frac), tx, ty + 13, {
-          font: F.micro, color: dead ? C.inkGhost : e.bears ? C.hostileDim : C.inkGhost, align,
+    }
+
+    // --- labels, de-overlapped ---------------------------------------------
+    // Nine subsystems on one ring will always collide if each label is drawn at its
+    // own angle. Split by side, sort down the screen and push apart to a minimum
+    // pitch, keeping a leader back to the segment so the association survives.
+    for (const side of [-1, 1]) {
+      const list = [];
+      for (let i = 0; i < n; i++) {
+        const e = subs[i];
+        if ((Math.cos(e.angle) >= 0 ? 1 : -1) !== side) continue;
+        list.push({ e, y: cy + Math.sin(e.angle) * (ringR + 12) });
+      }
+      list.sort((a, b) => a.y - b.y);
+      const pitch = 21;
+      // Centre the stack on the group's own mean so it does not drift off the hull.
+      let mean = 0;
+      for (const it of list) mean += it.y;
+      mean = list.length ? mean / list.length : cy;
+      let yCursor = mean - ((list.length - 1) * pitch) / 2;
+      for (const it of list) {
+        it.ly = Math.max(yCursor, it.y - pitch * 1.5);
+        yCursor = it.ly + pitch;
+      }
+
+      for (const it of list) {
+        const e = it.e;
+        const s = e.sub;
+        const dead = s.destroyed;
+        const frac = s.maxHP > 0 ? s.hp / s.maxHP : 0;
+        const isAim = aimed === s.def.id;
+        const tx = cx + side * (ringR + 16);
+        const align = side < 0 ? 'right' : 'left';
+        const anchorX = cx + Math.cos(e.angle) * (ringR + 3);
+        const anchorY = cy + Math.sin(e.angle) * (ringR + 3);
+        P.leader(anchorX, anchorY, tx - side * 4, it.ly - 3,
+          dead ? C.inkGhost : e.bears ? C.hostileGhost : C.inkGhost, 1);
+
+        const name = (s.def.label ?? s.def.id).toUpperCase();
+        P.text(dead ? `${name} ✕` : name, tx, it.ly, {
+          font: isAim ? F.microBold : F.micro,
+          color: dead ? C.inkGhost : e.bears ? C.ink : C.inkFaint,
+          align, track: TRACK.label,
+        });
+        P.text(dead ? 'DESTROYED' : fmtPct(frac), tx, it.ly + 10, {
+          font: F.micro,
+          color: dead ? C.inkGhost : e.bears ? C.hostileDim : C.inkGhost,
+          align,
         });
       }
     }
@@ -500,7 +537,11 @@ export function bearingAdvice(player, target, report, combat) {
   let best = null;
   let bestErr = Infinity;
   for (const m of player.weapons ?? []) {
-    if (!m.online || m.def.type === 'pd') continue;
+    // Point defence is reactive, and a tractor beam on a full-circle utility mount
+    // is never off bearing, so it would win this search every time and tell the
+    // player to close to 1.8 km with a salvage arm. Neither is a commandable weapon.
+    if (!m.online || m.def.type === 'pd' || m.def.type === 'mining') continue;
+    if (m.yawWidth >= Math.PI * 1.98) continue;
     const dx = target.position.x - m.worldPosition.x;
     const dz = target.position.z - m.worldPosition.z;
     const rel = angleDelta(player.heading + m.yawCentre, yawOf(dx, dz));

@@ -172,7 +172,13 @@ export class HUD {
         P.text(fmtRange(dist), this._pt.x + 12, this._pt.y - 10,
           { font: F.small, color, track: TRACK.value });
         if (m.stage === 'rejected' && m.reason) {
-          P.label(m.reason, this._pt.x + 12, this._pt.y + 4, { color: C.warn });
+          // On its own plate. A rejection reason is the one string in the interface
+          // that has to survive being drawn over a starfield, a hull or an arc.
+          const tw = P.measure(m.reason, F.microBold, TRACK.label);
+          P.scrim(this._pt.x + 8, this._pt.y - 4, tw + 12, 15, { alpha: 0.86 });
+          P.fill(this._pt.x + 8, this._pt.y - 4, 2, 15, C.warn);
+          P.text(m.reason, this._pt.x + 14, this._pt.y + 7,
+            { font: F.microBold, color: C.warn, track: TRACK.label });
         }
       }
       this._planeRing(P, m.x, m.z, 220 * scale, color, m.stage === 'provisional' ? 1 : 1.5,

@@ -154,16 +154,14 @@ export class AudioMixer {
     this.master.connect(out);
 
     // --- reverb ------------------------------------------------------------
-    this.reverb = createFDN(ctx, { feedback: 0.68, damp: 3800, preDelay: 0.014, size: 1 });
-    this.reverbReturn = mkGain(ctx, 0.9);
+    this.reverb = createFDN(ctx, { feedback: 0.52, damp: 3800, preDelay: 0.014, size: 1 });
+    this.reverbReturn = mkGain(ctx, 0.5);
     this.reverb.output.connect(this.reverbReturn);
     this.reverbReturn.connect(this.sum);
 
     // --- buses -------------------------------------------------------------
     /** @type {Object<string, GainNode>} */
     this.buses = Object.create(null);
-    /** @type {Object<string, GainNode>} */
-    this.sends = Object.create(null);
     /** Ducking applied to the world buses when something enormous happens. */
     this.duckGain = mkGain(ctx, 1);
     this.duckGain.connect(this.sum);
@@ -176,12 +174,11 @@ export class AudioMixer {
       const ducked = name === 'ambience' || name === 'engines';
       g.connect(ducked ? this.duckGain : this.sum);
       this.buses[name] = g;
-
-      const s = mkGain(ctx, MIX.send[name]);
-      g.connect(s);
-      s.connect(this.reverb.input);
-      this.sends[name] = s;
     }
+    // NOTE: there is deliberately no bus-level reverb send. Every voice opens its
+    // own, scaled by MIX.send for its bus, so a voice can ask for more or less
+    // space than its neighbours. A bus send on top of that double-feeds the FDN -
+    // which is how the reverb ended up louder than the dry signal.
 
     this._duckUntil = 0;
   }
@@ -218,7 +215,7 @@ export class AudioMixer {
     try {
       this.master.disconnect();
       this.sum.disconnect();
-      for (const name of BUSES) { this.buses[name].disconnect(); this.sends[name].disconnect(); }
+      for (const name of BUSES) this.buses[name].disconnect();
     } catch { /* context already gone */ }
   }
 }
@@ -553,7 +550,7 @@ export class AudioEngine {
 
     let send = null;
     if (reverb > 0 && MIX.send[busName] > 0) {
-      send = mkGain(ctx, reverb);
+      send = mkGain(ctx, reverb * MIX.send[busName]);
       g.connect(send);
       send.connect(mixer.reverb.input);
     }
@@ -597,7 +594,7 @@ export class AudioEngine {
     g.connect(mixer.bus(busName));
     let send = null;
     if (reverb > 0 && MIX.send[busName] > 0) {
-      send = mkGain(ctx, reverb);
+      send = mkGain(ctx, reverb * MIX.send[busName]);
       g.connect(send);
       send.connect(mixer.reverb.input);
     }

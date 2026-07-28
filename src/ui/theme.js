@@ -323,6 +323,10 @@ export class Painter {
     this.hair = 1;
     this.t = 0;          // wall-clock seconds since install; UI animates on this
     this._track = TRACK.none;
+    /** Frame-scoped occupancy for world-anchored labels. See `claim`. */
+    this._claims = [];
+    this._claimCount = 0;
+    for (let i = 0; i < 256; i++) this._claims.push({ x: 0, y: 0, w: 0, h: 0 });
   }
 
   begin(t) {
@@ -334,8 +338,49 @@ export class Painter {
     this.dpr = this.surface.dpr;
     this.hair = 1 / this.dpr;
     this.t = t;
+    this._claimCount = 0;
     this.setTrack(TRACK.none);
     return c;
+  }
+
+  /**
+   * Reserve a rectangle for a world-anchored label.
+   *
+   * Range rings, arc wedges, contacts, hulks and order markers all want to write a
+   * caption beside a projected point, and where those points land is the camera's
+   * business, not the layout's. With no occupancy test they pile into the same forty
+   * pixels and the frame turns to mush the instant the player zooms.
+   *
+   * First writer wins, which makes drawing order into priority order: the locked
+   * target's readouts take their space before the ambient captions get a look.
+   * Fixed panels do not use this - their layout is known in advance.
+   *
+   * @returns {boolean} true when the space was free and has now been taken
+   */
+  claim(x, y, w, h, pad = 2) {
+    const n = this._claimCount;
+    for (let i = 0; i < n; i++) {
+      const r = this._claims[i];
+      if (x - pad < r.x + r.w && x + w + pad > r.x && y - pad < r.y + r.h && y + h + pad > r.y) return false;
+    }
+    if (n >= this._claims.length) return true;   // out of slots: draw rather than drop
+    const r = this._claims[n];
+    r.x = x; r.y = y; r.w = w; r.h = h;
+    this._claimCount = n + 1;
+    return true;
+  }
+
+  /** Text that yields to anything already claimed near it. False if it was dropped. */
+  textIfClear(str, x, y, opts = {}) {
+    const font = opts.font ?? F.body;
+    const track = opts.track ?? TRACK.value;
+    const w = this.measure(str, font, track);
+    const align = opts.align ?? 'left';
+    const left = align === 'right' ? x - w : align === 'center' ? x - w * 0.5 : x;
+    const lh = opts.lineHeight ?? 11;
+    if (!this.claim(left, y - lh + 2, w, lh, opts.pad ?? 2)) return false;
+    this.text(str, x, y, opts);
+    return true;
   }
 
   /** Snap a coordinate to the device pixel grid so a hairline stays a hairline. */

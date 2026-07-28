@@ -168,7 +168,7 @@ export class ExplosionAudio {
       const g = mkGain(ctx, 0);
       src.connect(hp); hp.connect(rm); rm.connect(g); g.connect(d);
       const total = 2.4 * ts * S;
-      percEnv(g.gain, b, { peak: 0.30, attack: 0.02 * S, hold: 0.15 * S, tau: 0.62 * ts * S, duration: total });
+      percEnv(g.gain, b, { peak: 0.46, attack: 0.02 * S, hold: 0.15 * S, tau: 0.62 * ts * S, duration: total });
       sweep(modOsc.frequency, b, [[0, 47 * A.pitch], [total, 12 * A.pitch]]);
       startAt(modOsc, b);
       startAt(src, b, A.rng.next() * A.buffers.sparkle.duration);
@@ -187,7 +187,7 @@ export class ExplosionAudio {
       const g = mkGain(ctx, 0);
       fm.output.connect(bp); bp.connect(g); g.connect(d);
       const total = 2.2 * ts * S;
-      percEnv(g.gain, b + 0.02, { peak: 0.26, attack: 0.04 * S, hold: 0.2 * S, tau: 0.55 * ts * S, duration: total });
+      percEnv(g.gain, b + 0.02, { peak: 0.38, attack: 0.04 * S, hold: 0.2 * S, tau: 0.55 * ts * S, duration: total });
       sweep(fm.carrier.frequency, b, [
         [0, 88 * A.pitch / Math.pow(s, 0.4)],
         [total, 26 * A.pitch / Math.pow(s, 0.4)],

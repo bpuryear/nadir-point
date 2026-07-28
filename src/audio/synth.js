@@ -426,10 +426,23 @@ export function ringMod(ctx, modulatorNode) {
  * sound in this game is heard through a kilometre and a half of structure, and the
  * graveyard's long tail is that structure ringing.
  */
+/**
+ * The maximum per-pass loop gain the network is allowed. Measured, not derived:
+ * the four delay lines are close in length, so the network's real loop gain runs
+ * about 25% above the nominal matrix scale and it goes unstable somewhere between
+ * 0.75 and 0.84. Reverb LENGTH is bought with `size` - longer delay lines, same
+ * gain - rather than by pushing feedback toward one, which is the operation that
+ * turns a reverb into an oscillator. `docs/probes/audio.png` is where this gets
+ * re-verified: an FDN that is growing shows up as an ambience bed whose envelope
+ * rises.
+ */
+export const FDN_MAX_FEEDBACK = 0.70;
+
 export function createFDN(ctx, {
-  times = [0.0297, 0.0371, 0.0411, 0.0437], feedback = 0.72,
+  times = [0.0297, 0.0371, 0.0411, 0.0437], feedback = 0.52,
   damp = 4200, preDelay = 0.012, size = 1,
 } = {}) {
+  feedback = clamp(feedback, 0, FDN_MAX_FEEDBACK);
   const input = gain(ctx, 1);
   const hp = biquad(ctx, 'highpass', 140, 0.6);   // keep the sub out of the tail
   const pre = ctx.createDelay(0.5);
@@ -440,7 +453,12 @@ export function createFDN(ctx, {
   for (let i = 0; i < 4; i++) {
     const d = ctx.createDelay(1.0);
     d.delayTime.value = clamp(times[i] * size, 0.001, 0.99);
-    const f = biquad(ctx, 'lowpass', damp, 0.5);
+    // Q IS IN DECIBELS for lowpass and highpass in the Web Audio API, not a
+    // linear Q. `0.5` here does not mean a gentle filter, it means a +1.6 dB
+    // resonant peak - INSIDE THE FEEDBACK LOOP, where it multiplied the loop gain
+    // by 1.2 and turned the reverb into a slowly rising oscillator. -3 dB is the
+    // Butterworth point: monotonic, peak gain exactly 0 dB, nothing to accumulate.
+    const f = biquad(ctx, 'lowpass', damp, -3);
     d.connect(f);
     delays.push(d);
     damps.push(f);
@@ -485,7 +503,7 @@ export function createFDN(ctx, {
     /** Retune the space. `when` lets a POI transition ramp rather than jump. */
     set({ feedback: fb, damp: dz, size: sz } = {}, when = 0, tau = 0.4) {
       if (fb !== undefined) {
-        const kk = clamp(fb, 0, 0.97) / 2;
+        const kk = clamp(fb, 0, FDN_MAX_FEEDBACK) / 2;
         for (let i = 0; i < 4; i++) {
           for (let j = 0; j < 4; j++) {
             fbs[i * 4 + j].gain.setTargetAtTime(H[i][j] * kk, when, tau);

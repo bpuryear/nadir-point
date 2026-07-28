@@ -465,10 +465,9 @@ function drawPanel(width, height, title, analyses, { note = '' } = {}) {
   const pct = (v) => String(Math.round(v * 100)).padStart(2, '0');
   if (analyses.length === 1) {
     const a = primary;
-    const tail = a.sustained ? 'TAIL SUSTAINED' : `TAIL ${a.tail.toFixed(2)}S`;
-    label(c, `PK ${fmtDb(dB(a.peak))}  RMS ${fmtDb(dB(a.rms))}  ${tail}`, PAD, fy, 2, INK.label, 1);
-    label(c, `CTR ${Math.round(a.centroid)} / A ${Math.round(a.centroidA)} HZ`,
-      width - PAD, fy, 2, INK.dim, 1, 'right');
+    const tail = a.sustained ? 'SUSTAINED' : `TAIL ${a.tail.toFixed(2)}S`;
+    label(c, `PK ${fmtDb(dB(a.peak))}  RMS ${fmtDb(dB(a.rms))}`, PAD, fy, 2, INK.label, 1);
+    label(c, tail, width - PAD, fy, 2, a.sustained ? INK.dim : INK.label, 1, 'right');
 
     // Two stacked band bars. The top one is raw power - "is the sub actually
     // there". The bottom one is A-weighted - "is it what the player hears". A
@@ -493,11 +492,12 @@ function drawPanel(width, height, title, analyses, { note = '' } = {}) {
     drawBar(barY + barH + 2, a.bandsA);
     const b = a.bands;
     const ly = barY + barH * 2 + 6;
-    label(c, `PWR SUB ${pct(b.sub)}`, PAD, ly, 2, BAND_INK.sub, 1);
-    label(c, `LOW ${pct(b.low)}`, PAD + 134, ly, 2, BAND_INK.low, 1);
-    label(c, `MID ${pct(b.mid)}`, PAD + 226, ly, 2, BAND_INK.mid, 1);
-    label(c, `HI ${pct(b.high)}`, PAD + 318, ly, 2, BAND_INK.high, 1);
-    label(c, 'A-WT', width - PAD, ly, 2, INK.dim, 1, 'right');
+    label(c, `SUB ${pct(b.sub)}`, PAD, ly, 2, BAND_INK.sub, 1);
+    label(c, `LOW ${pct(b.low)}`, PAD + 92, ly, 2, BAND_INK.low, 1);
+    label(c, `MID ${pct(b.mid)}`, PAD + 184, ly, 2, BAND_INK.mid, 1);
+    label(c, `HI ${pct(b.high)}`, PAD + 276, ly, 2, BAND_INK.high, 1);
+    label(c, `CTR ${Math.round(a.centroid)}/${Math.round(a.centroidA)}`,
+      width - PAD, ly, 2, INK.dim, 1, 'right');
   } else {
     analyses.forEach((a, ai) => {
       const colour = TRACE_COLOURS[ai % TRACE_COLOURS.length];
@@ -752,7 +752,8 @@ export default {
 
     quad(scene, drawHeader(2048, 96, [
       'NADIR POINT / AUDIO',
-      `EVERY INSTRUMENT RENDERED OFFLINE AT ${SR / 1000}KHZ THROUGH THE LIVE MIX - LIMITER / FDN REVERB / BUSES`,
+      `OFFLINE RENDER OF THE LIVE GRAPH AT ${SR / 1000}KHZ   /   AMBER: ENVELOPE DB   CYAN: SPECTRUM PER OCTAVE`
+      + '   /   BARS: UPPER POWER PER BAND, LOWER A-WEIGHTED   /   CTR: CENTROID RAW/A-WEIGHTED',
     ]), left, top, gridW, HEADER_H);
     top -= HEADER_H + GAP;
 

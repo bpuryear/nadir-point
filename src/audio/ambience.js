@@ -32,14 +32,22 @@ import {
   loopBuffer, genBrown, genTicks, genGroans, normalise,
 } from './synth.js';
 
-/** Reverb character per POI. `wet` is the return level, not a send. */
+/**
+ * Reverb character per POI. `wet` is the return level, not a send.
+ *
+ * LENGTH COMES FROM `size`, NEVER FROM `feedback`. Feedback is the per-pass loop
+ * gain and it is capped at FDN_MAX_FEEDBACK in synth.js; pushing it toward one to
+ * buy a long tail is what makes a delay network ring forever instead of decaying.
+ * A long graveyard tail is long DELAY LINES at a safe gain: size 1.9 puts them at
+ * 56-83 ms and gives roughly three seconds of RT60.
+ */
 const SPACE = {
-  'near-star': { feedback: 0.42, damp: 2600, size: 0.7, wet: 0.28 },
-  belt: { feedback: 0.66, damp: 3400, size: 1.15, wet: 0.55 },
-  graveyard: { feedback: 0.87, damp: 2300, size: 1.9, wet: 0.80 },
-  'giant-orbit': { feedback: 0.61, damp: 4200, size: 1.0, wet: 0.42 },
-  station: { feedback: 0.73, damp: 4800, size: 1.25, wet: 0.58 },
-  yard: { feedback: 0.76, damp: 3600, size: 1.45, wet: 0.62 },
+  'near-star': { feedback: 0.30, damp: 2600, size: 0.7, wet: 0.22 },
+  belt: { feedback: 0.52, damp: 3400, size: 1.15, wet: 0.55 },
+  graveyard: { feedback: 0.70, damp: 2300, size: 1.9, wet: 0.85 },
+  'giant-orbit': { feedback: 0.46, damp: 4200, size: 1.0, wet: 0.42 },
+  station: { feedback: 0.58, damp: 4800, size: 1.25, wet: 0.60 },
+  yard: { feedback: 0.62, damp: 3600, size: 1.45, wet: 0.66 },
 };
 
 /**
@@ -48,12 +56,12 @@ const SPACE = {
  * system and the quietest, and the player will feel every one of them.
  */
 const LEVEL = {
-  'near-star': 0.95,
-  belt: 0.46,
-  graveyard: 0.26,
-  'giant-orbit': 0.42,
-  station: 0.38,
-  yard: 0.44,
+  'near-star': 1.85,
+  belt: 0.40,
+  graveyard: 0.12,
+  'giant-orbit': 0.36,
+  station: 0.34,
+  yard: 0.40,
 };
 
 const FALLBACK = 'giant-orbit';

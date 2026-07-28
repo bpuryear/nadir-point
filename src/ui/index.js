@@ -55,6 +55,9 @@ const NOTIFY_CAPACITY = 6;
 
 const MARKER_TTL = { move: 9, attack: 6.5, salvage: 6.5, hold: 2.5, power: 2.5 };
 
+/** Scratch for the reservation pass. Never allocated per frame. */
+const _reserveP = { x: 0, y: 0, z: 0, ok: false };
+
 export class UILayer {
   constructor(world, opts = {}) {
     this.world = world;
@@ -352,6 +355,7 @@ export class UILayer {
     this.hit.length = 0;
 
     try {
+      if (this.screen !== 'refit') this._reserveFrame(P);
       if (this.screen === 'refit') {
         this.refit.draw(P, this.hit);
         this.hud._drawNotifications(P);
@@ -369,6 +373,49 @@ export class UILayer {
         console.error('[ui] draw failed', err);
       }
     }
+  }
+
+  /**
+   * Reserve the frame before anything opportunistic is drawn into it.
+   *
+   * The fixed panels and the locked target's readouts are not negotiable; the
+   * ambient captions - range rings, arc wedges, contact names - are. Claiming the
+   * non-negotiable space first turns `Painter.textIfClear` into a priority system
+   * instead of a race, and it is the difference between a display that stays
+   * readable at every zoom and one that only works at the zoom it was authored at.
+   */
+  _reserveFrame(P) {
+    const claim = (x, y, w, h) => P.claim(x, y, w, h, 3);
+    claim(P.w * 0.5 - 270, 0, 540, 142);            // time strip, order bar, toasts
+    claim(P.w - 190, 6, 190, 96);                   // hold and materials
+    claim(6, P.h - 336, 356, 336);                  // own-ship panel
+    claim(352, P.h - 168, 116, 160);                // arc coverage rose
+    claim(P.w * 0.5 - 196, P.h - 240, 392, 240);    // reactor routing
+    claim(P.w - 376, P.h - 386, 376, 386);          // target panel
+
+    const player = this.world.player;
+    const proj = this.projector;
+    if (!player || !proj.camera) return;
+
+    // The locked target's ring owns a generous box: its subsystem labels fan out
+    // sideways and a range-ring caption landing in that fan is unreadable.
+    const target = player.target && !player.target.dead ? player.target : null;
+    if (target && proj.vec(target.position, _reserveP)) {
+      const hullR = Math.max(22, proj.radiusAt(target.position, target.radius ?? 60));
+      const ringR = Math.max(82, hullR * 1.7);
+      claim(_reserveP.x - ringR - 235, _reserveP.y - ringR - 72,
+        (ringR + 235) * 2, (ringR + 72) * 2 + 66);
+    }
+
+    // Order markers carry the acknowledgement text; nothing may sit on top of it.
+    this.markers.forEach((m) => {
+      if (!m.active) return;
+      const p = m.kind === 'salvage' ? m.section?.worldPosition
+        : m.kind === 'attack' ? m.target?.position : null;
+      const ok = p ? proj.vec(p, _reserveP) : proj.point(m.x, 0, m.z, _reserveP);
+      if (!ok) return;
+      claim(_reserveP.x - 30, _reserveP.y - 26, 300, 54);
+    });
   }
 
   _updateMarkers() {

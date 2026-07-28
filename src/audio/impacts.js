@@ -53,11 +53,11 @@ export class ImpactAudio {
     });
     // The mass. Two sub layers so the hit has both a punch and a body.
     subThump(A, d, t, {
-      f0: 82 * k, f1: 36 * k, sweepTime: 0.06 * size, peak: 0.52 * sev,
+      f0: 82 * k, f1: 36 * k, sweepTime: 0.06 * size, peak: 0.38 * sev,
       attack: 0.0025, tau: 0.082 * size, drive: 2.0, type: 'triangle',
     });
     subThump(A, d, t + 0.004, {
-      f0: 48 * k, f1: 26 * k, sweepTime: 0.2 * size, peak: 0.24 * sev,
+      f0: 48 * k, f1: 26 * k, sweepTime: 0.2 * size, peak: 0.15 * sev,
       attack: 0.010, tau: 0.145 * size,
     });
     // Armour flexing.
@@ -67,7 +67,7 @@ export class ImpactAudio {
     });
     // Plate resonance - the only thing that says which faction's armour this is.
     metalRing(A, d, t + 0.006, {
-      freqs: [318 * k, 561 * k, 903 * k], q: 12, peak: 0.62 * sev, tau: 0.115 * size,
+      freqs: [318 * k, 561 * k, 903 * k], q: 12, peak: 0.85 * sev, tau: 0.115 * size,
     });
     // Spall.
     noiseBurst(A, d, t + 0.012, {
