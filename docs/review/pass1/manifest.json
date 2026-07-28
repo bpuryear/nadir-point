@@ -1,0 +1,46 @@
+[
+  {
+    "id": "three-quarter",
+    "ok": true,
+    "description": "Mid tactical range, raking key. The everyday playing view.",
+    "file": "docs/review/pass1/three-quarter.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 15.799999998504063,
+      "stepMs": 0.4000000022351742,
+      "renderMs": 4.699999999254942,
+      "steps": 6,
+      "calls": 143,
+      "triangles": 90469,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 67,
+      "textures": 70
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "wide",
+    "ok": true,
+    "description": "Maximum tactical zoom. Cruiser a bright speck against the gas giant. The shot that sells the game.",
+    "file": "docs/review/pass1/wide.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 8.200000000746513,
+      "stepMs": 0.3999999985098839,
+      "renderMs": 2.699999999254942,
+      "steps": 6,
+      "calls": 98,
+      "triangles": 65721,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 68,
+      "textures": 70
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

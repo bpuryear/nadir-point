@@ -523,9 +523,7 @@ function seedMarkers(ui, world, player, target, pose) {
   }
 
   // 2. PROVISIONAL — spawned this instant, not yet drawn once.
-  const move = ui.spawnOrderMarker('move', {
-    point: new THREE.Vector3(p.x + 1900, 0, p.z - 2400),
-  });
+  const move = ui.spawnOrderMarker('move', { point: at(700, 1250) });
   if (move) { move.frame0 = ui.frame + 4; move.stage = 'provisional'; }
 
   // 3. COMMITTED — mid scale-in, on the locked target.
@@ -540,7 +538,33 @@ function seedMarkers(ui, world, player, target, pose) {
     const m = ui.spawnOrderMarker('salvage', { section: cutting.section });
     if (m) { m.stage = 'committed'; m.stageAt = t - 0.6; m.ttl = 30; }
   }
-  void wreck;
+  void player;
+}
+
+/**
+ * Look square across the engagement axis, framing both hulls.
+ *
+ * `pose.yaw = φ − π/2` is the azimuth at which the player→target vector lies along
+ * screen-right, so the pair spreads across the frame instead of stacking in depth.
+ * The focus is pushed below the plane, which lifts both ships above centre and
+ * leaves the lower third to the panels.
+ */
+function framePair(pose, player, target, screenName) {
+  if (!player) { pose.target.set(0, 40, 0); return pose; }
+  if (!target) { pose.target.copy(player.position); pose.target.y = -120; return pose; }
+
+  const phi = Math.atan2(target.position.x - player.position.x, target.position.z - player.position.z);
+  pose.yaw = phi - Math.PI * 0.5;
+
+  if (screenName === 'hit') {
+    // The cruiser is deliberately out of shot; this plate is about the chevron.
+    pose.target.copy(target.position);
+    pose.target.y = -150;
+  } else {
+    pose.target.copy(player.position).lerp(target.position, 0.44);
+    pose.target.y = -320;
+  }
+  return pose;
 }
 
 // ---------------------------------------------------------------------------

@@ -110,8 +110,15 @@ export class TacticalOverlay {
     const arcs = combat.describeArcs(player);
     if (!arcs.length) return;
 
+    // The rose is deliberately SMALL. It sits around the hull like a compass drawn on
+    // the plane; grown any larger the wide mounts (the dorsal bed is 306 degrees)
+    // become a translucent disc over half the frame and the negative space that makes
+    // this game legible is gone.
     const camDist = proj.camera ? proj.camera.position.distanceTo(player.position) : 4000;
-    const roseR = THREE.MathUtils.clamp(camDist * 0.36, 900, 7000);
+    const roseR = Math.min(
+      THREE.MathUtils.clamp(camDist * 0.21, 650, 3200),
+      (player.radius ?? 600) * 2.2,
+    );
 
     // Bearing wedges last, so a live firing solution is never drawn under a wedge
     // that cannot reach the target.
@@ -132,7 +139,10 @@ export class TacticalOverlay {
       }
 
       const near = Math.min(range, roseR);
-      const fillA = !a.online ? 0 : bearing ? 0.115 : 0.040;
+      // Fill only what is ON TARGET, and only when the wedge is narrow enough for a
+      // fill to read as a wedge. Everything else is an outline. One filled shape in
+      // the frame means the eye finds the firing solution without being told.
+      const fillA = bearing && a.width < Math.PI * 1.15 ? 0.10 : 0;
       const n = ARC_SEGS;
       const count = n + 2;
 
@@ -200,23 +210,23 @@ export class TacticalOverlay {
     }
     rings.sort((a, b) => a.r - b.r);
 
-    for (const ring of rings.slice(0, 5)) {
+    const shown = rings.slice(0, 5);
+    for (let k = 0; k < shown.length; k++) {
+      const ring = shown[k];
       this._planeRing(P, player.position.x, player.position.z, ring.r,
         ring.salvage ? C.salvageGhost : C.inkGhost, 1, this._dash);
-      // Label at the topmost valid vertex, so it never lands under the ship panel.
-      let best = -1;
-      let bestY = Infinity;
-      for (let i = 0; i <= RING_SEGS; i++) {
+      // Each ring takes its own sector of the circle for its label. Putting them all
+      // at the top of their ring stacks five readouts into one illegible block.
+      const start = Math.round(((k * 2 + 1) / (shown.length * 2)) * RING_SEGS);
+      for (let step = 0; step < RING_SEGS; step++) {
+        const i = (start + (step % 2 ? -1 : 1) * Math.ceil(step / 2) + RING_SEGS * 2) % RING_SEGS;
         const p = this._ring[i];
-        if (!p.ok || p.x < 120 || p.x > P.w - 120) continue;
-        if (p.y < bestY) { bestY = p.y; best = i; }
-      }
-      if (best >= 0 && bestY > 24) {
-        const p = this._ring[best];
-        P.text(`${ring.label} ${fmtRange(ring.r)}`, p.x, p.y - 5, {
+        if (!p.ok || p.x < 150 || p.x > P.w - 150 || p.y < 40 || p.y > P.h - 130) continue;
+        P.text(`${ring.label} ${fmtRange(ring.r)}`, p.x, p.y - 4, {
           font: F.micro, color: ring.salvage ? C.salvageDim : C.inkGhost,
           align: 'center', track: TRACK.label,
         });
+        break;
       }
     }
   }
@@ -278,7 +288,7 @@ export class TacticalOverlay {
     const cy = this._pt.y;
 
     const hullR = Math.max(22, proj.radiusAt(target.position, target.radius ?? 60));
-    const ringR = Math.max(64, hullR * 1.5);
+    const ringR = Math.max(82, hullR * 1.7);
 
     // Hard bracket on the hull.
     P.corners(cx, cy, hullR, hullR * 0.74, Math.min(16, hullR * 0.5), C.hostile, 1.5);
