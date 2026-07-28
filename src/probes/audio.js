@@ -748,6 +748,7 @@ export default {
     const totalH = HEADER_H + GAP + gridH + GAP + STRIP_H + GAP + FOOTER_H;
     const left = -gridW / 2;
     let top = totalH / 2;
+    const gridTop = top - HEADER_H - GAP;
 
     quad(scene, drawHeader(2048, 96, [
       'NADIR POINT / AUDIO',
@@ -802,14 +803,32 @@ export default {
 
     // Frame it exactly. 46 degree vertical FOV: visible height = 2 d tan(fov/2).
     const fov = (world.camera.fov * Math.PI) / 180;
-    const needByHeight = (totalH * 1.03) / (2 * Math.tan(fov / 2));
     const aspect = world.camera.aspect || 16 / 9;
-    const needByWidth = (gridW * 1.03) / (2 * Math.tan(fov / 2) * aspect);
-    ctx.pose.distance = Math.max(needByHeight, needByWidth);
-    ctx.pose.pitch = 0;
-    ctx.pose.yaw = 0;
-    ctx.pose.target.set(0, 0, 0);
-    ctx.applyPose();
+    const frame = (cx, cy, w, h) => {
+      ctx.pose.distance = Math.max(
+        (h * 1.06) / (2 * Math.tan(fov / 2)),
+        (w * 1.06) / (2 * Math.tan(fov / 2) * aspect),
+      );
+      ctx.pose.pitch = 0;
+      ctx.pose.yaw = 0;
+      ctx.pose.target.set(cx, cy, 0);
+      ctx.applyPose();
+    };
+
+    // `?panel=n` frames one instrument full-screen. The sheet is dense on purpose
+    // and a reviewer chasing one balance question should not have to squint at it.
+    const panelIndex = Number(ctx.params?.get('panel') ?? NaN);
+    if (Number.isFinite(panelIndex) && panelIndex >= 0 && panelIndex < COLS * ROWS) {
+      const col = panelIndex % COLS;
+      const row = Math.floor(panelIndex / COLS);
+      frame(
+        left + col * (PANEL_W + GAP) + PANEL_W / 2,
+        gridTop - row * (PANEL_H + GAP) - PANEL_H / 2,
+        PANEL_W, PANEL_H,
+      );
+    } else {
+      frame(0, 0, gridW, totalH);
+    }
 
     // A live bench for tuning: `window.__NADIR.ctx.lab.run(seconds, perform)`
     // renders any arrangement of the real instruments and hands back the metrics,
