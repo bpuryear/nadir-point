@@ -78,6 +78,43 @@ const H = {
   groove: 0.20,
 };
 
+/**
+ * ---------------------------------------------------------------------------
+ * A SEAM IS A STEP, NOT A SCRIBED LINE, AND THE OLD ONE WAS SUB-PIXEL
+ * ---------------------------------------------------------------------------
+ * Round-two review: "the calm armour tier is a 93.6 m tile carrying three hairline
+ * seams and a flat normal map at roughly 1% albedo contrast, i.e. a blank tile."
+ *
+ * That was arithmetic, not taste. `grooveM` was a flat 0.26 m on EVERY tier. On the
+ * 93.6 m calm tile at 512 texels that is 1.4 texels; the tile covers 93.6 m, which at
+ * the default 3200 m camera is 31 screen pixels, so the groove rendered **0.08 px
+ * wide**. It could not be seen at any distance the game is ever played at, and the
+ * armour tier was therefore a flat grey with nothing on it — which is exactly what
+ * the review measured as 93-97% calm and 0% dense.
+ *
+ * ship-language.md §0 states the floor plainly: at the default camera one pixel is
+ * 3.0 m and the smallest feature that reads is 9 m. A plate outline on a 1400 m ship
+ * must therefore be METRES wide, and it is: on real capital armour the joint between
+ * two 30 x 190 m slabs is a shadow gap with a chamfer either side, and the whole dark
+ * band is a few metres across. `grooveM` is now set per tier against the STRAKE
+ * HEIGHT (hullMaps.js), so it scales with the surface it sits on — which is the
+ * "cell size must scale with the surface" rule, applied to the seam rather than only
+ * to the plate.
+ *
+ * THE PROFILE IS ASYMMETRIC, and that is what makes it survive a raking key:
+ *
+ *        lip  ___                      proud lip, one side only  (+lipHM)
+ *            /   \____ flat plate
+ *   ________/
+ *   \______/  <- groove floor                                    (-grooveDepthM)
+ *      ramp   <- chamfer back up on the other side
+ *
+ * A symmetric V-groove shades identically on both sides and averages back to the
+ * plate value as soon as it drops below a pixel. A step with a lit lip and a dark
+ * floor keeps a light side and a dark side at every angle and every mip level, and
+ * that is a value EVENT rather than a line.
+ */
+
 export const PANEL_DEFAULTS = {
   size: 512,
   /**
@@ -90,8 +127,18 @@ export const PANEL_DEFAULTS = {
   strakes: 4,
   /** Plate length / strake height. Real hull plate runs long and narrow. */
   plateAspect: 2.6,
-  /** Seam width, METRES. ship-language review: groove <= 0.3 m, no bevel. */
+  /**
+   * Seam width, METRES — the flat dark floor of the groove, before the lip and the
+   * chamfer either side. hullMaps.js sets this from the strake height so it scales
+   * with the surface; the default here is only for direct callers.
+   */
   grooveM: 0.26,
+  /** How deep the groove floor sits below the plate, metres of apparent relief. */
+  grooveDepthM: 0.5,
+  /** Width of the proud lip on the upper side of a strake seam, metres. */
+  lipM: 0.9,
+  /** Height of that lip, metres of apparent relief. */
+  lipHM: 0.28,
   /** Chance a seam is a proud weld bead instead of a groove. */
   weld: 0.34,
   /** Bead width, metres. */
@@ -244,6 +291,14 @@ const wrapDist = (a, b) => {
   return d > 0.5 ? 1 - d : d;
 };
 
+/** Wrapped SIGNED offset from `b` to `a` on the unit circle, in (-0.5, 0.5]. */
+const wrapSigned = (a, b) => {
+  let d = a - b;
+  if (d > 0.5) d -= 1;
+  if (d < -0.5) d += 1;
+  return d;
+};
+
 /**
  * Rasterise a layout into float fields.
  * @returns {{height:Float32Array, tone:Float32Array, roughVar:Float32Array,
@@ -265,7 +320,19 @@ export function panelField(rng, opts = {}) {
   const px = size / tileM;                       // texels per metre
   const halfGroove = Math.max(0.55, o.grooveM * 0.5 * px);   // texels
   const halfWeld = Math.max(0.8, o.weldM * 0.5 * px);
-  const seamReach = Math.max(halfGroove, halfWeld) + 1;
+  /**
+   * ONE HEIGHT UNIT IS ABOUT `tileM * 0.09` METRES of apparent relief once
+   * heightToNormalBytes has run at strength 1 (see the note on `stepH` below, which
+   * has always used this conversion). Every relief figure in this file is authored in
+   * METRES and converted here, so a groove is physically the same depth on the 187 m
+   * armour tile and the 30 m machinery tile even though it is a wildly different
+   * number of texels on each.
+   */
+  const relief = (metres) => saturate01(metres / (tileM * 0.09));
+  const lipPx = Math.max(1.0, o.lipM * px);
+  const grooveDepth = relief(o.grooveDepthM) * 0.5;
+  const lipH = relief(o.lipHM) * 0.5;
+  const seamReach = Math.max(halfGroove + lipPx, halfWeld) + 1;
   // A step of `stepM` metres of relief, expressed in the height field's units. The
   // field's 0..1 range is mapped by heightToNormalBytes against the tile, so one
   // height unit is about `tileM * 0.09` metres of apparent relief at strength 1.
@@ -300,7 +367,13 @@ export function panelField(rng, opts = {}) {
   // Per-row strake lookup, so the inner loop does no searching. Only valid when the
   // boundaries are straight; the skewed path recomputes per pixel.
   const rowStrake = new Int16Array(size);
-  const rowSeamDist = new Float32Array(size);    // texels to the nearest strake seam
+  /**
+   * SIGNED texels to the nearest strake seam. Positive means "above the seam", i.e.
+   * on the +v side of it, and the sign is the whole reason the profile can be
+   * asymmetric — see the note at the top of the file. The old field was unsigned, so
+   * the only profile it could express was a symmetric V.
+   */
+  const rowSeamDist = new Float32Array(size);
   const rowSeamWeld = new Uint8Array(size);
   const strakeAt = (v) => {
     for (let s = 0; s < strakes.length; s++) {
@@ -312,12 +385,12 @@ export function panelField(rng, opts = {}) {
     const v = (y + 0.5) / size;
     const idx = strakeAt(v);
     rowStrake[y] = idx;
-    // Distance to this strake's two edges, wrapped.
-    const d0 = wrapDist(v, strakes[idx].y0) * size;
     const nxt = (idx + 1) % strakes.length;
-    const d1 = wrapDist(v, strakes[nxt].y0) * size;
-    rowSeamDist[y] = Math.min(d0, d1);
-    rowSeamWeld[y] = (d0 <= d1 ? strakes[idx].weld : strakes[nxt].weld) ? 1 : 0;
+    const s0 = wrapSigned(v, strakes[idx].y0) * size;   // this strake's lower edge
+    const s1 = wrapSigned(v, strakes[nxt].y0) * size;   // its upper edge
+    const nearer0 = Math.abs(s0) <= Math.abs(s1);
+    rowSeamDist[y] = nearer0 ? s0 : s1;
+    rowSeamWeld[y] = (nearer0 ? strakes[idx].weld : strakes[nxt].weld) ? 1 : 0;
   }
 
   for (let y = 0; y < size; y++) {
@@ -334,11 +407,12 @@ export function panelField(rng, opts = {}) {
         const v = (vRow + waveAmp * Math.sin(u * Math.PI * 2 * waveTurns) + 1) % 1;
         const idx = strakeAt(v);
         s = strakes[idx];
-        const d0 = wrapDist(v, s.y0) * size;
         const nxt = (idx + 1) % strakes.length;
-        const d1 = wrapDist(v, strakes[nxt].y0) * size;
-        dSeam = Math.min(d0, d1);
-        seamIsWeld = (d0 <= d1 ? s.weld : strakes[nxt].weld);
+        const s0 = wrapSigned(v, s.y0) * size;
+        const s1 = wrapSigned(v, strakes[nxt].y0) * size;
+        const nearer0 = Math.abs(s0) <= Math.abs(s1);
+        dSeam = nearer0 ? s0 : s1;
+        seamIsWeld = (nearer0 ? s.weld : strakes[nxt].weld);
       }
 
       // Which plate, and how far to the nearest butt. Plates are few (1-6 per
@@ -366,26 +440,54 @@ export function panelField(rng, opts = {}) {
       // groove (0.55 m against 0.26 m on the player hull) and testing against the
       // groove alone silently clipped every bead to the groove's width — which made
       // the one feature in here that reads as "welded" instead read as a thin ridge.
+      // A butt is SUBORDINATE: narrower groove, no lip, and it is overwritten where
+      // it meets a strake seam.
       if (dButt < seamReach) {
         if (buttWeld) {
           const t = saturate01(1 - dButt / (halfWeld + 1));
           h += t * t * stepH * 0.55;
           e = Math.max(e, t * 0.5);
         } else {
-          const t = saturate01(1 - dButt / (halfGroove + 1));
-          h -= t * H.groove * 0.85;
-          e = Math.max(e, t);
+          const a = dButt;
+          if (a <= halfGroove * 0.7) { h -= grooveDepth; e = Math.max(e, 1); }
+          else {
+            const t = saturate01(1 - (a - halfGroove * 0.7) / (lipPx * 0.7));
+            h -= grooveDepth * t * t;
+            e = Math.max(e, t * 0.7);
+          }
         }
       }
-      if (dSeam < seamReach) {
+      if (Math.abs(dSeam) < seamReach) {
         if (seamIsWeld) {
-          const t = saturate01(1 - dSeam / (halfWeld + 1));
+          const t = saturate01(1 - Math.abs(dSeam) / (halfWeld + 1));
           h = H.flat + t * t * stepH * 0.7;
           e = Math.max(e, t * 0.6);
         } else {
-          const t = saturate01(1 - dSeam / (halfGroove + 1));
-          h = H.flat - t * H.groove;
-          e = Math.max(e, t);
+          /**
+           * THE ASYMMETRIC STEP. Groove floor in the middle, a proud lip on the +v
+           * side, a chamfer ramp on the -v side. Written ABSOLUTELY (h = H.flat + ...)
+           * rather than added, so the strake seam always wins over a butt that crosses
+           * it and the long line stays continuous — that priority is what separates a
+           * plated hull from a grid.
+           */
+          const a = Math.abs(dSeam);
+          if (a <= halfGroove) {
+            h = H.flat - grooveDepth;
+            e = Math.max(e, 1);
+          } else {
+            const t = saturate01(1 - (a - halfGroove) / lipPx);
+            const fall = t * t;
+            if (dSeam > 0) {
+              // Upper side: the plate above laps over, so its edge stands proud and
+              // catches the key. This is the light half of the pair.
+              h = H.flat + lipH * fall;
+              e = Math.max(e, fall * 0.30);
+            } else {
+              // Lower side: chamfer back up out of the groove. The dark half.
+              h = H.flat - grooveDepth * fall;
+              e = Math.max(e, fall * 0.75);
+            }
+          }
         }
       }
 
@@ -418,6 +520,96 @@ export function panelField(rng, opts = {}) {
   }
 
   return { height, tone, roughVar, edge, ao, size, layout: lay.layout, strakes };
+}
+
+/**
+ * A HEAT-REJECTION PANEL, WHICH IS NOT PLATING AND MUST NOT SHARE ITS GENERATOR.
+ *
+ * Round-two review: "It is also on the radiator fins, which are heat-rejection panels
+ * and should never carry an armour-plate map." Correct, and the reason is functional:
+ * a radiator is not built to stop a shell, it is built to move heat out of a working
+ * fluid, so its surface is a dense run of parallel channels with transverse manifolds
+ * — one strong direction at one fine frequency, and no plates, no butts, no fasteners
+ * and no armour belt anywhere in it.
+ *
+ * The output shape is identical to `panelField`'s so the hull composer does not care
+ * which one it got. `layout.leaves` is empty on purpose: nothing stencils a radiator.
+ *
+ * @returns {{height:Float32Array, tone:Float32Array, roughVar:Float32Array,
+ *            edge:Float32Array, ao:Float32Array, size:number, layout:Object}}
+ */
+export function radiatorField(rng, opts = {}) {
+  const o = { ...PANEL_DEFAULTS, ...opts };
+  const size = o.size;
+  const tileM = Math.max(1e-3, o.tileM);
+  const px = size / tileM;
+  const n = size * size;
+
+  const height = field(size, H.flat);
+  const tone = field(size, 1);
+  const roughVar = field(size, 0);
+  const edge = field(size, 0);
+
+  // Channel pitch in METRES, so the flutes are the same physical size whatever tile
+  // the caller picked. 1.15 m is a coolant channel a person could straddle.
+  const pitchM = o.flutePitchM ?? 1.15;
+  // Whole texels per pitch, and an integer number of pitches across the tile, or the
+  // repeat seams.
+  const flutes = Math.max(4, Math.round(tileM / pitchM));
+  // Manifolds: a transverse header every `manifoldM` metres, again an integer count.
+  const manifolds = Math.max(1, Math.round(tileM / (o.manifoldM ?? 21)));
+
+  const relief = (metres) => saturate01(metres / (tileM * 0.09)) * 0.5;
+  const channelD = relief(o.channelDepthM ?? 0.42);
+  const manifoldH = relief(o.manifoldHeightM ?? 0.55);
+  const manifoldHalf = Math.max(1.2, (o.manifoldWidthM ?? 1.9) * 0.5 * px);
+
+  const tr = rng.fork('radiator');
+  // A few channels are blanked off — a repaired panel never has every tube live.
+  const dead = new Uint8Array(flutes);
+  for (let i = 0; i < flutes; i++) dead[i] = tr.next() < 0.06 ? 1 : 0;
+
+  for (let y = 0; y < size; y++) {
+    const v = (y + 0.5) / size;
+    // Position within one channel, 0..1.
+    const fp = v * flutes;
+    const fi = Math.floor(fp) % flutes;
+    const f = fp - Math.floor(fp);
+    // Rounded tube with a hard valley between tubes: cos gives the tube, the valley
+    // is where it meets its neighbour and that is the line the eye reads.
+    const tube = Math.sin(f * Math.PI);
+    const hv = dead[fi] ? -channelD * 0.35 : (tube * tube * channelD - channelD * 0.5);
+    const valley = saturate01(1 - Math.abs(f - 0.5) * 2);   // 1 at the valley
+    for (let x = 0; x < size; x++) {
+      const u = (x + 0.5) / size;
+      let h = H.flat + hv;
+      let e = (1 - valley) * 0.55;
+
+      // Transverse manifold: a proud round bar across every channel.
+      const mp = u * manifolds;
+      const md = Math.abs((mp - Math.floor(mp)) - 0.5) * (size / manifolds);
+      if (md < manifoldHalf) {
+        const t = 1 - md / manifoldHalf;
+        h = H.flat + manifoldH * Math.sqrt(saturate01(t));
+        e = Math.max(e, 0.4);
+      }
+
+      const i = y * size + x;
+      height[i] = h;
+      edge[i] = e;
+      // Very little tone variation: a radiator is one coating, applied once.
+      tone[i] = 1 + (dead[fi] ? -o.toneSpread * 0.8 : 0);
+      roughVar[i] = (valley - 0.5) * 0.6;
+    }
+  }
+
+  const ao = field(size, 1);
+  const blurred = blurField(Float32Array.from(height), size, Math.max(2, Math.round(size / 110)), 2);
+  for (let i = 0; i < n; i++) {
+    ao[i] = saturate01(0.58 + (height[i] - blurred[i]) * 2.6 + height[i] * 0.26);
+  }
+
+  return { height, tone, roughVar, edge, ao, size, layout: { leaves: [] }, strakes: [] };
 }
 
 /** One raised fastener head, wrapped. */

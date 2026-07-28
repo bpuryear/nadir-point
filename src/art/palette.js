@@ -134,8 +134,9 @@ export const FACTION_PALETTES = {
       hull: { metalness: 0.22, roughness: 0.62, variance: 0.18 },
       hullDark: { metalness: 0.30, roughness: 0.74, variance: 0.16 },
       plating: { metalness: 0.26, roughness: 0.52, variance: 0.18 },
-      greeble: { metalness: 0.86, roughness: 0.42, variance: 0.20 },
+      greeble: { metalness: 0.58, roughness: 0.48, variance: 0.20 },
       trim: { metalness: 0.10, roughness: 0.54, variance: 0.12 },
+      radiator: { metalness: 0.12, roughness: 0.90, variance: 0.10 },
     },
 
     // --- plating layout ---
@@ -225,8 +226,9 @@ export const FACTION_PALETTES = {
       hull: { metalness: 0.07, roughness: 0.30, variance: 0.10 },
       hullDark: { metalness: 0.60, roughness: 0.38, variance: 0.12 },
       plating: { metalness: 0.05, roughness: 0.21, variance: 0.08 },
-      greeble: { metalness: 0.90, roughness: 0.28, variance: 0.15 },
+      greeble: { metalness: 0.62, roughness: 0.34, variance: 0.15 },
       trim: { metalness: 0.16, roughness: 0.26, variance: 0.09 },
+      radiator: { metalness: 0.08, roughness: 0.84, variance: 0.07 },
     },
 
     panel: {
@@ -276,8 +278,9 @@ export const FACTION_PALETTES = {
       hull: { metalness: 0.40, roughness: 0.76, variance: 0.26 },
       hullDark: { metalness: 0.30, roughness: 0.88, variance: 0.22 },
       plating: { metalness: 0.46, roughness: 0.68, variance: 0.24 },
-      greeble: { metalness: 0.74, roughness: 0.60, variance: 0.26 },
+      greeble: { metalness: 0.55, roughness: 0.64, variance: 0.26 },
       trim: { metalness: 0.34, roughness: 0.62, variance: 0.20 },
+      radiator: { metalness: 0.18, roughness: 0.92, variance: 0.14 },
     },
 
     // A 3.4 km hulk with one weave at one density has no scale hierarchy at all, so
@@ -314,10 +317,27 @@ export const FACTION_PALETTES = {
     // light puts the lit deck at ~0.74, which leaves the running lights, the bare
     // metal at plate edges and the rim somewhere to be brighter THAN, and a value
     // is only bright relative to something.
+    /**
+     * THREE VALUES, NOT THREE NAMES.
+     *
+     * Round-two review, on the controlled material chart: "The player HULL, HULLDARK
+     * and PLATING swatches are visually indistinguishable near-white spheres ... Three
+     * named surfaces that cannot be told apart on a controlled chart under a controlled
+     * light will never separate on a hull." They could not be told apart because
+     * `plating` was 0x727982 and `hull` 0x666d75 — 45% against 40% reflectance, an
+     * eighth of a stop, which the ACES shoulder then compressed to nothing.
+     *
+     * `plating` now sits a genuine half-stop BELOW `hull` rather than a whisker above
+     * it, and the direction matters as much as the size. The calm armour belt is the
+     * ship's lightest large surface and the medium plating is its mid; that makes the
+     * belt/spine split a VALUE split that survives to LOD2, instead of a texture
+     * difference that dies with the first mip. Measured through the rig's ACES at
+     * key 11.5 a fully lit face reads: hull 0.71, plating 0.63, hullDark 0.42.
+     */
     base: 0x666d75,
     baseAlt: 0x585f67,
-    baseDark: 0x2e323a,
-    plating: 0x727982,
+    baseDark: 0x3a3f47,
+    plating: 0x565d66,
     greeble: 0xa4aab0,
     trim: 0xa8a294,        // bone, not a hue. Reads as "unfactioned".
     glass: 0x090c10,
@@ -340,12 +360,30 @@ export const FACTION_PALETTES = {
      * Bare metal still appears - the wear layer raises metalness at plate edges,
      * which is where a repaired hull actually shows metal.
      */
+    /**
+     * `greeble` came down from metalness 0.88, and it is the fix for "the one dense
+     * element on the ship ... is far darker than everything around it, so it reads as
+     * a decal boundary rather than a structural one".
+     *
+     * That patch was dark for a physical reason, not an authoring one. A metal has no
+     * diffuse lobe: at 0.88 metalness essentially the whole response is the specular
+     * reflection of the environment, and this rig runs `scene.environmentIntensity` at
+     * a deliberate 0.10 so the IBL cannot flatten the terminator. Metal + almost no
+     * environment = almost black, whatever the albedo says. At 0.52 the machinery
+     * keeps a real metallic highlight off the key and gets its base value back from
+     * the diffuse term, which lands it within a stop of the plating around it — which
+     * is the review's own criterion for it reading as structure rather than as a
+     * sticker.
+     */
     surface: {
       hull: { metalness: 0.18, roughness: 0.54, variance: 0.16 },
-      hullDark: { metalness: 0.28, roughness: 0.68, variance: 0.14 },
-      plating: { metalness: 0.24, roughness: 0.46, variance: 0.16 },
-      greeble: { metalness: 0.88, roughness: 0.36, variance: 0.18 },
+      hullDark: { metalness: 0.26, roughness: 0.68, variance: 0.14 },
+      plating: { metalness: 0.22, roughness: 0.50, variance: 0.16 },
+      greeble: { metalness: 0.52, roughness: 0.52, variance: 0.18 },
       trim: { metalness: 0.12, roughness: 0.50, variance: 0.12 },
+      // Heat rejection: a black coating chosen for emissivity, so nearly pure
+      // dielectric and very rough. It is the darkest large surface in the game.
+      radiator: { metalness: 0.10, roughness: 0.88, variance: 0.08 },
     },
 
     panel: {

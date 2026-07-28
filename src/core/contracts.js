@@ -27,6 +27,30 @@ export const FACTIONS = ['coalition', 'concord', 'derelict', 'player'];
 export const WEAPON_TYPES = ['cannon', 'beam', 'rail', 'missile', 'flak', 'pd', 'lance', 'mining'];
 
 /**
+ * Sub-part kinds inside a module. A cannon bank is not one HP bar: it is barrels, a
+ * feed, a traverse ring and the pad it is bolted to, and each one fails differently.
+ * Killing the `mount` drops the whole module into space INTACT, which is the point.
+ */
+export const PART_KINDS = ['output', 'feed', 'traverse', 'cooling', 'mount'];
+
+/**
+ * Ammunition classes. `null` on a WeaponDef means the weapon is energy-fed and costs
+ * reactor charge instead - the two-currency decision.
+ */
+export const AMMO_CLASSES = ['shell', 'railslug', 'missile', 'flakcan', 'pdslug'];
+
+/**
+ * @typedef {Object} PartDef
+ * @property {string} id
+ * @property {string} label                    second-tier label in the subsystem ring
+ * @property {string} kind                     one of PART_KINDS
+ * @property {number} hpShare                  0..1 of the module's HP held by this part
+ * @property {[number,number,number]} [offset] from the module origin, metres
+ * @property {number} [radius]                 hit sphere, metres
+ * @property {number} [salvageValue]           0..1 share of the module's salvage
+ */
+
+/**
  * @typedef {Object} BuildContext
  * @property {import('./rng.js').RNG} rng      deterministic stream for this build
  * @property {Object} materials                the shared material registry
@@ -62,6 +86,12 @@ export const WEAPON_TYPES = ['cannon', 'beam', 'rail', 'missile', 'flak', 'pd', 
  * @property {number} [yawWidth]               overrides the hardpoint arc
  * @property {number} [pitchWidth]             vertical arc; PD is near-spherical
  * @property {number} [subsystemAccuracy]      0..1 chance of hitting the aimed subsystem
+ * @property {string|null} [ammoClass]         one of AMMO_CLASSES; null/absent = energy-fed
+ * @property {number} [ready]                  rounds held in the mount's own feed
+ * @property {number} [reload]                 seconds, ship magazine -> ready feed
+ * @property {number} [heatPerShot]            0..1 of the mount's thermal capacity per shot
+ * @property {number} [coolRate]               0..1 of thermal capacity shed per second
+ * @property {number} [spread]                 dispersion in radians at nominal heat
  */
 
 /**
@@ -89,6 +119,14 @@ export const WEAPON_TYPES = ['cannon', 'beam', 'rail', 'missile', 'flak', 'pd', 
  * @property {Object} [grants]                 passive effects: {hangarBays, salvageRate, powerOutput, thrust, turnRate, cargo, sensorRange, shieldCapacity}
  * @property {number} [mass]                   tonnes; affects handling
  * @property {string[]} [silhouetteTags]       what it should read as at distance
+ * @property {PartDef[]} [parts]               sub-parts; sim/subparts.js supplies defaults
+ * @property {number} [volume]                 cubic metres it occupies in the hold. The
+ *                                             hold is measured in m3, not slots, so a
+ *                                             destroyer reactor is genuinely bulky.
+ *                                             Optional: `sim/meta/cargo.js#moduleVolume`
+ *                                             derives one from mass and role when a
+ *                                             module does not declare it, so authoring
+ *                                             this is an override, never an obligation.
  */
 
 /**
@@ -124,6 +162,31 @@ export const WEAPON_TYPES = ['cannon', 'beam', 'rail', 'missile', 'flak', 'pd', 
  * @property {[number,number]} systemPos       position on the system map, arbitrary units
  */
 
+/**
+ * Item kinds. An ITEM IS NOT A MODULE. A module is bolted to one of six hardpoints and
+ * is part of the silhouette; an item is carried in the hold, occupies volume, and is
+ * spent. The scope decision puts items in on the Everspace-2 principle: a device that
+ * CHANGES WHAT YOU CAN DO is worth more than a device that adds 8% damage, so every
+ * item here is a new verb and none of them is a stat.
+ *
+ *   consumable  one-shot, consumed on use
+ *   device      one-shot, but its effect is a timed window rather than an instant
+ */
+export const ITEM_KINDS = ['consumable', 'device'];
+
+/**
+ * @typedef {Object} ItemDef
+ * @property {string} id
+ * @property {string} name
+ * @property {string} kind                     one of ITEM_KINDS
+ * @property {string} description              one sentence, functional. Codex card rule.
+ * @property {number} volume                   cubic metres per unit in the hold
+ * @property {number} [maxStack]
+ * @property {Object} [buildCost]              refined materials to fabricate one
+ * @property {string} [requires]               short human-readable precondition
+ * @property {(ctx:Object) => {ok:boolean, reason?:string}} activate
+ */
+
 // ---------------------------------------------------------------------------
 // Registries
 // ---------------------------------------------------------------------------
@@ -131,11 +194,13 @@ export const WEAPON_TYPES = ['cannon', 'beam', 'rail', 'missile', 'flak', 'pd', 
 const _modules = new Map();
 const _shipClasses = new Map();
 const _pois = new Map();
+const _items = new Map();
 
 const REQUIRED = {
   module: ['id', 'name', 'hardpoint', 'tier', 'faction', 'build', 'triBudget'],
   ship: ['id', 'name', 'faction', 'role', 'length', 'mass', 'maxSpeed', 'accel', 'turnRate', 'hullHP', 'build', 'triBudget'],
   poi: ['id', 'name', 'kind', 'keyLight', 'build'],
+  item: ['id', 'name', 'kind', 'description', 'volume', 'activate'],
 };
 
 function validate(kind, def) {
@@ -155,6 +220,37 @@ function validate(kind, def) {
     }
     if (def.weapon && !WEAPON_TYPES.includes(def.weapon.type)) {
       throw new Error(`[contracts] module "${def.id}" weapon type "${def.weapon.type}" is not a WEAPON_TYPE`);
+    }
+    if (def.weapon?.ammoClass != null && !AMMO_CLASSES.includes(def.weapon.ammoClass)) {
+      throw new Error(`[contracts] module "${def.id}" ammoClass "${def.weapon.ammoClass}" is not an AMMO_CLASS`);
+    }
+    // Sub-parts are optional. When declared they must be legible aim points, so the
+    // budget is enforced here rather than discovered as an unusable UI ring later.
+    if (def.parts) {
+      if (!Array.isArray(def.parts) || def.parts.length > 4) {
+        throw new Error(`[contracts] module "${def.id}" declares ${def.parts?.length ?? '?'} parts; 1..4 is the budget`);
+      }
+      let share = 0;
+      for (const part of def.parts) {
+        if (!part.id || !PART_KINDS.includes(part.kind)) {
+          throw new Error(`[contracts] module "${def.id}" part "${part.id ?? '<no id>'}" has unknown kind "${part.kind}"`);
+        }
+        share += part.hpShare ?? 0;
+      }
+      if (share > 1.0001) {
+        throw new Error(`[contracts] module "${def.id}" part hpShare sums to ${share.toFixed(2)}, must be <= 1`);
+      }
+    }
+  }
+  if (kind === 'item') {
+    if (!ITEM_KINDS.includes(def.kind)) {
+      throw new Error(`[contracts] item "${def.id}" declares unknown kind "${def.kind}"`);
+    }
+    if (!(def.volume > 0)) {
+      throw new Error(`[contracts] item "${def.id}" must declare a positive volume in m3`);
+    }
+    if (typeof def.activate !== 'function') {
+      throw new Error(`[contracts] item "${def.id}" has no activate(ctx)`);
     }
   }
   if (kind === 'ship') {
@@ -188,13 +284,27 @@ export function registerPOI(def) {
   return def;
 }
 
+/**
+ * Register a carried item. Re-registering the same id is a NO-OP rather than a throw,
+ * unlike the geometry registries: the item library lives in `sim/meta/items.js` and is
+ * imported by an installer that must be safe to run twice.
+ */
+export function registerItem(def) {
+  if (_items.has(def.id)) return _items.get(def.id);
+  validate('item', def);
+  _items.set(def.id, def);
+  return def;
+}
+
 export const getModule = (id) => _modules.get(id);
 export const getShipClass = (id) => _shipClasses.get(id);
 export const getPOI = (id) => _pois.get(id);
+export const getItem = (id) => _items.get(id);
 
 export const allModules = () => Array.from(_modules.values());
 export const allShipClasses = () => Array.from(_shipClasses.values());
 export const allPOIs = () => Array.from(_pois.values());
+export const allItems = () => Array.from(_items.values());
 
 export const modulesForHardpoint = (hp) => allModules().filter((m) => m.hardpoint === hp);
 export const shipClassesForFaction = (f) => allShipClasses().filter((s) => s.faction === f);
@@ -208,5 +318,6 @@ export function registryReport() {
     modulesByHardpoint: byHardpoint,
     shipClasses: _shipClasses.size,
     pois: _pois.size,
+    items: _items.size,
   };
 }

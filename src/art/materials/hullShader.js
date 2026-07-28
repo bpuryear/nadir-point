@@ -45,8 +45,48 @@
 import * as THREE from 'three';
 import { MACRO_DEFAULT_M } from '../textures/macro.js';
 
+/**
+ * ---------------------------------------------------------------------------
+ * ROUND THREE: THE MACRO LAYER NOW CARRIES RELIEF, NOT JUST PAINT
+ * ---------------------------------------------------------------------------
+ * Round-two review, three separate BLOCKERs that all reduce to one mechanism:
+ *
+ *   "There is currently exactly one dense element on the entire 1400 m ship."
+ *   "if you want greeble somewhere, cut a recess for it first."
+ *   "The ship does not read as self-shadowing anywhere in the shipped frames."
+ *
+ * A tiling detail map cannot cut a recess, because it does not know where it is. The
+ * macro layer does — it is addressed in object space and sampled once from stem to
+ * stern. So its G channel stopped being a roughness scribble and became a HEIGHT
+ * FIELD in metres of hull, and three things are derived from it, all from the one
+ * texture fetch that was already being paid for:
+ *
+ * 1. NORMAL PERTURBATION. `dFdx`/`dFdy` of the sampled height, fed through the same
+ *    surface-gradient construction three's own `perturbNormalArb` uses. A 12 m recess
+ *    at the bay rail now shades like a 12 m recess: its far wall goes dark under the
+ *    key and its near lip catches it. No extra sampler, no tangents required, and it
+ *    is object-space so it survives every mip drop the tiling maps do not.
+ *
+ * 2. CAVITY. Anything below the neutral plane loses indirect light and a little
+ *    albedo, which is what a hole in a hull does. This is what makes a recess read as
+ *    depth under a key that does not happen to rake across it.
+ *
+ * 3. DETAIL GAIN — the frequency hierarchy, applied per square metre rather than per
+ *    material. The tiling detail map's relief and contrast are multiplied UP where
+ *    the macro layer says there is structure (a recess, a frame, a machinery band)
+ *    and DOWN over open armour. One tiling map therefore renders as calm over the
+ *    700 m flank belts and as dense inside the bands, which is §3's 60/30/10 split
+ *    expressed as a field instead of as three separate materials that geometry has to
+ *    place perfectly.
+ *
+ * The gradient is CLAMPED. At a macro region boundary — the six-way split on the
+ * dominant object-space normal axis — the atlas UV jumps, and an unclamped derivative
+ * there would draw a bright hairline along every chine. The clamp bounds it to
+ * something indistinguishable from the chine's own highlight.
+ */
+
 /** Bumped when the GLSL below changes, so a stale program cache cannot survive it. */
-const PATCH_VERSION = 'nadir/hull-macro/3';
+const PATCH_VERSION = 'nadir/hull-macro/4';
 
 const PARS_FRAGMENT = /* glsl */`
 varying vec3 vNadirObjPos;
@@ -56,6 +96,11 @@ uniform sampler2D nadirMacroMap;
 uniform vec4 nadirMacro;
 /** x: warp uv frequency   y: warp amplitude (uv units)   z: roughness drift   w: unused */
 uniform vec4 nadirWarp;
+/**
+ * x: macro height range, METRES for a full 0..1 swing of the G channel
+ * y: cavity strength      z: detail gain      w: max |dH| per pixel (the clamp)
+ */
+uniform vec4 nadirRelief;
 uniform vec3 nadirInkColor;
 uniform vec3 nadirHazardColor;
 uniform vec3 nadirSootColor;

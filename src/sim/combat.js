@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { EV } from '../core/events.js';
 import { scratch } from '../core/world.js';
 import { interceptPoint, raySphere } from './physics.js';
+import { fireRateMul, damageMul, misfeedChance, MISFEED_STALL } from './condition.js';
+import { THERMAL } from './heat.js';
 
 /**
  * Combat resolution.
@@ -104,7 +106,9 @@ export class CombatSystem {
     const hasTarget = target && !target.dead;
 
     for (const mount of ship.weapons) {
-      if (!mount.online) continue;
+      if (!mount.online || !mount.usable) continue;
+      // A misfeed from a worn feed is a stall you can watch on the weapon strip.
+      if (mount.stall > 0) continue;
 
       // Point defence picks its own target - it is reactive, not commanded.
       const isPD = mount.def.type === 'pd' || mount.def.type === 'flak';
@@ -137,16 +141,37 @@ export class CombatSystem {
       // Weapons draw from the power pool. Starve them and they fire slowly.
       const powerFactor = ship.power.unlocked ? Math.max(0.25, ship.power.factor('weapons')) : 1;
 
+      // Three multipliers on the same cadence, from three different systems:
+      // power routing, the module's condition, and whether its feed still works.
+      const cadence = Math.max(0.05, powerFactor * fireRateMul(mount.condition) * mount.parts.fireRateMul);
+
       if (mount.burstRemaining > 0) {
         if (mount.burstTimer <= 0) {
-          this._fire(ship, mount, lead, aimShip);
-          mount.burstRemaining--;
-          mount.burstTimer = mount.def.burstInterval / powerFactor;
+          // Stores are checked per shot, not per burst: running dry mid-burst is a
+          // thing that happens and the player should see the burst cut short.
+          if (!ship.stores || ship.stores.consumeShot(mount)) {
+            this._fire(ship, mount, lead, aimShip, powerFactor);
+            mount.burstRemaining--;
+            mount.burstTimer = mount.def.burstInterval / cadence;
+          } else {
+            mount.burstRemaining = 0;
+            mount.cooldown = Math.max(mount.cooldown, 0.5);
+          }
         }
       } else if (mount.cooldown <= 0) {
+        if (ship.stores && ship.stores.blockedReason(mount)) continue;
+        // Worn feeds jam. Rolled once per burst so it reads as "this gun jams
+        // sometimes" rather than "this gun is broken" - see condition.js.
+        const jam = misfeedChance(mount.condition);
+        if (jam > 0 && this.rng.next() < jam) {
+          mount.stall = MISFEED_STALL;
+          mount.cooldown = MISFEED_STALL;
+          this.bus.emit(EV.NOTIFY, { text: `${mount.def.name ?? 'MOUNT'} MISFEED`, ship, mount });
+          continue;
+        }
         mount.burstRemaining = mount.def.shotsPerBurst;
         mount.burstTimer = 0;
-        mount.cooldown = mount.def.cooldown / powerFactor;
+        mount.cooldown = mount.def.cooldown / cadence;
       }
     }
   }
@@ -175,14 +200,28 @@ export class CombatSystem {
     return hostile ? { point: hostile.position, ship: hostile } : null;
   }
 
-  _fire(ship, mount, aimPoint, targetShip) {
+  /**
+   * One shot.
+   *
+   * Heat is added here and nowhere else, so "how much did that burst cost me" has
+   * exactly one answer. Condition scales muzzle energy; heat scales dispersion and
+   * ruins the fire solution, which means a mount held past its soft cap stops being a
+   * precision instrument - it still does damage, it just stops hitting what you aimed
+   * at. That is the interlock that makes overheating cost you SALVAGE, not just DPS.
+   */
+  _fire(ship, mount, aimPoint, targetShip, powerFactor = 1) {
     const def = mount.def;
+    ship.thermal?.onShot(mount, powerFactor);
+    const stress = mount.thermal ? mount.thermal.stress : 0;
+    const damage = def.damage * damageMul(mount.condition);
+
     this.bus.emit(EV.WEAPON_FIRED, {
       ship, mount, origin: mount.worldPosition, aimPoint, type: def.type,
+      heat: mount.thermal ? mount.thermal.heat : 0,
     });
 
     if (HITSCAN.has(def.type)) {
-      this._resolveHitscan(ship, mount, aimPoint, targetShip);
+      this._resolveHitscan(ship, mount, aimPoint, targetShip, damage, stress);
       return;
     }
 
@@ -191,8 +230,9 @@ export class CombatSystem {
     if (i < 0) return;
 
     const dir = scratch.v3.copy(aimPoint).sub(mount.worldPosition).normalize();
-    // Dispersion: cheap weapons scatter, precision weapons do not.
-    const spread = def.spread ?? 0.004;
+    // Dispersion: cheap weapons scatter, precision weapons do not, and a mount held
+    // above its thermal soft cap scatters like a cheap one however good it is.
+    const spread = (def.spread ?? 0.004) * (1 + stress * 2.4);
     dir.x += this.rng.signed() * spread;
     dir.y += this.rng.signed() * spread * 0.6;
     dir.z += this.rng.signed() * spread;

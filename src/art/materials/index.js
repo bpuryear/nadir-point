@@ -59,6 +59,17 @@ export const MATERIAL_KEYS = [
   'asteroid', 'debris', 'derelictHull',
   // beyond the required set, because somebody has to own them:
   'runningLights', 'decal',
+  /**
+   * A HEAT-REJECTION PANEL IS NOT ARMOUR AND MUST NOT SHARE ITS MAP.
+   *
+   * Round-two review, BLOCKER: "It is also on the radiator fins, which are
+   * heat-rejection panels and should never carry an armour-plate map." This key
+   * routes to `textures/panelLines.js#radiatorField` — parallel coolant channels and
+   * transverse manifolds, no strakes, no butts, no fasteners — over the darkest
+   * albedo in the faction palette, because a radiator that reflects is a radiator
+   * that is not working.
+   */
+  'radiator',
 ];
 
 const quantize = (v, step) => Math.round(v / step) * step;
@@ -86,8 +97,11 @@ const HULL_VARIANTS = {
   // Greeble is genuinely bare hardware, so it keeps a strong relief and a real
   // environment response. It is the frequency contrast against the calm hull, and it
   // takes only a whisper of macro - machinery is not where soot and stencils live.
-  greeble: { variant: 'greeble', normalScale: 1.0, envMapIntensity: 1.10, macro: 0.35 },
+  greeble: { variant: 'greeble', normalScale: 1.0, envMapIntensity: 0.85, macro: 0.35 },
   trim: { variant: 'trim', normalScale: 0.45, envMapIntensity: 0.60, macro: 0.5 },
+  // The fin's own relief IS the surface, so it keeps a strong normal. It takes the
+  // macro layer's drift and soot (a radiator gets filthy) but no marks worth the name.
+  radiator: { variant: 'radiator', normalScale: 0.9, envMapIntensity: 0.35, macro: 0.55 },
   derelictHull: { variant: 'derelictHull', normalScale: 0.80, envMapIntensity: 0.60, macro: 0.9 },
   // Debris is instanced, so every fragment shares one object space and would carry
   // one identical macro layer. It gets none; `instanceColor` is its variation.
@@ -296,6 +310,7 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
     greeble: (o) => standardFromMaps(hullMapsFor(o, 'greeble'), HULL_VARIANTS.greeble, o),
     trim: (o) => standardFromMaps(hullMapsFor(o, 'trim'), HULL_VARIANTS.trim, o),
     derelictHull: (o) => standardFromMaps(hullMapsFor(o, 'derelictHull'), HULL_VARIANTS.derelictHull, o),
+    radiator: (o) => standardFromMaps(hullMapsFor(o, 'radiator'), HULL_VARIANTS.radiator, o),
 
     /**
      * Torn hull fragment. The albedo is deliberately desaturated so an

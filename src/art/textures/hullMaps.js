@@ -25,7 +25,7 @@ import {
   ctx2d, canvasTexture, saturate01, smoothstep, lerp,
   hexBytes, heightToNormalBytes, bytesToCanvas, css,
 } from './canvas2d.js';
-import { panelField } from './panelLines.js';
+import { panelField, radiatorField } from './panelLines.js';
 import { greebleMap } from './greeble.js';
 import { wear } from './wear.js';
 import { drawText, factionSigil, hullCode, hazardStripes } from './decals.js';
@@ -74,6 +74,43 @@ function busyField(fbm, calm) {
 }
 
 /**
+ * ---------------------------------------------------------------------------
+ * THE TIER TABLE, ROUND THREE. READ THE ARITHMETIC BEFORE CHANGING A NUMBER.
+ * ---------------------------------------------------------------------------
+ * Round two failed the mirror image of round one's failure: round one was uniform
+ * MEDIUM everywhere, round two was uniform NOTHING. Measured on three hull crops of
+ * the shipped frame, 93.5 / 95.8 / 97.6% calm and 0.0% dense, against §3's reference
+ * median of 62 / 21 / 14.
+ *
+ * Two mechanical causes, both fixed here rather than argued about:
+ *
+ * 1. THE SEAM WAS SUB-PIXEL ON EVERY TIER. `grooveM` was 0.26 m flat, so on the
+ *    93.6 m calm tile it was 0.08 screen pixels at the default camera. See the long
+ *    note in panelLines.js. Seam width, seam depth and the lip are now derived from
+ *    the STRAKE HEIGHT of the tier that is asking for them, so the surface treatment
+ *    scales with the surface — the frequency-hierarchy rule applied to the seam.
+ *
+ * 2. THE MEDIUM TIER WAS ISOTROPIC. 29.9 m tile / 3 strakes / 1 plate is a 10.0 m x
+ *    29.9 m block laid in running bond: aspect 3:1, which the review correctly named
+ *    as ashlar masonry at every scale it appeared. Anisotropy is exactly
+ *    `strakes / platesPerStrake`, so it is now set directly: ten strakes and one
+ *    plate per strake is 10:1, i.e. a 10.4 m x 104 m plank. Strake seams run the
+ *    length of the hull; butts are one per plate and staggered.
+ *
+ *      tier      tileM   strakes  plates  strake h   plate L   aspect  repeats/1400 m
+ *      hull      187.2      6        1      31.2 m    187.2 m   6.0:1       7.5
+ *      plating   104.0     10        1      10.4 m    104.0 m  10.0:1      13.5
+ *      greeble    29.9      5        2       6.0 m     15.0 m   2.5:1      46.8
+ *      radiator   36.4     n/a      n/a      1.15 m channels  — its own generator
+ *
+ * The dense tier is deliberately NOT anisotropic: machinery is isotropic, that is
+ * what makes it read as machinery against two directional tiers either side of it.
+ * It is also the only tier that repeats often, and that is fine because it only ever
+ * appears in 55 x 200 m bands — 1.8 repeats across a band, against the six the review
+ * counted on the old 13 m tile.
+ */
+
+/**
  * FREQUENCY HIERARCHY — three genuinely different KINDS of surface.
  *
  * Round-one review, measured: "There is no calm square metre on the ship. The same
@@ -110,20 +147,23 @@ function variantSpec(pal, variant) {
     case 'hullDark': return {
       base: pal.baseDark, alt: pal.base, surface: pal.surface.hullDark,
       greeble: 1.0, markings: false, wearMul: 1.15,
-      tileMul: 1.6, calmAdd: 0.06, contrastMul: 0.92, rivetMul: 0.7,
-      strakes: 4, plateAspect: 2.8, stepMul: 0.9,
+      tileMul: 5.0, calmAdd: 0.06, contrastMul: 0.92, rivetMul: 0.7,
+      strakes: 8, plateAspect: 8.0, stepMul: 0.9,
     };
+    // MEDIUM, and its whole job is to be DIRECTIONAL. Ten strakes to one plate is a
+    // 10:1 plank; the review's ashlar read came from 3:1 blocks in running bond.
     case 'plating': return {
       base: pal.plating, alt: pal.base, surface: pal.surface.plating,
-      greeble: 0.45, markings: true, wearMul: 0.85,
-      tileMul: 1.15, calmAdd: 0.04, contrastMul: 0.95, rivetMul: 0.9,
-      strakes: 3, plateAspect: 3.2, stepMul: 1.0,
+      greeble: 0.38, markings: true, wearMul: 0.85,
+      tileMul: 4.0, calmAdd: 0.02, contrastMul: 1.0, rivetMul: 0.9,
+      strakes: 10, plateAspect: 10.0, stepMul: 1.15,
     };
+    // DENSE. Isotropic on purpose - machinery is - and the ONLY tier allowed to be.
     case 'greeble': return {
       base: pal.greeble, alt: pal.baseDark, surface: pal.surface.greeble,
       greeble: 0.90, markings: false, wearMul: 1.0,
-      tileMul: 0.50, calmAdd: -0.26, contrastMul: 1.0, rivetMul: 1.0,
-      strakes: 4, plateAspect: 2.2, stepMul: 1.4,
+      tileMul: 1.15, calmAdd: -0.26, contrastMul: 1.0, rivetMul: 1.0,
+      strakes: 5, plateAspect: 2.5, stepMul: 1.4,
       // The greeble variant's own base IS the machinery colour and its `alt` is
       // already baseDark, so tinting the mechanical mask towards baseDark a second
       // time drove whole bands to near-black. Every other variant needs the full tint
@@ -154,8 +194,22 @@ function variantSpec(pal, variant) {
     case 'derelictHull': return {
       base: pal.base, alt: pal.baseAlt, surface: pal.surface.hull,
       greeble: 0.8, markings: true, wearMul: 1.0,
-      tileMul: 2.6, calmAdd: 0.14, contrastMul: 0.86, rivetMul: 1.0,
-      strakes: 3, plateAspect: 2.2, stepMul: 1.3,
+      tileMul: 5.2, calmAdd: 0.14, contrastMul: 0.86, rivetMul: 1.0,
+      strakes: 5, plateAspect: 5.0, stepMul: 1.3,
+    };
+    /**
+     * A HEAT-REJECTION PANEL. Not a hull variant at all — it routes to
+     * `radiatorField`, which knows nothing about strakes, plates, butts or armour.
+     * Dark, because a radiator's job is to emit and a bright radiator is a broken
+     * one; that darkness is also the largest single value event on the stern, which
+     * the frame badly needed.
+     */
+    case 'radiator': return {
+      base: pal.baseDark, alt: shade(pal.baseDark, 0.72), surface: pal.surface.radiator,
+      greeble: 0.0, markings: false, wearMul: 0.9,
+      tileMul: 1.4, calmAdd: 0.5, contrastMul: 0.9, rivetMul: 0,
+      strakes: 1, plateAspect: 1, stepMul: 0,
+      radiator: true, greebleTint: 0,
     };
     case 'hull':
     default: return {
@@ -167,9 +221,17 @@ function variantSpec(pal, variant) {
        * Greeble, steps and fasteners are all switched OFF on this tier; the only
        * events on a 94 m tile are two strake seams and one butt joint per strake.
        */
+      /**
+       * CALM, and calm is now QUIET rather than BLANK — the distinction the round-two
+       * review turned on. Zero greeble and zero fasteners stay; what comes back is a
+       * plate outline that is a real 3 m step with a lit lip and a dark floor, plus a
+       * small number of proud plates (`stepMul` off zero) so the belt has a top and a
+       * bottom under a raking key. Six strakes over a 187 m tile is a 31 x 187 m
+       * armour slab: 7.5 repeats over 1400 m, half what the last pass shipped.
+       */
       greeble: 0.0, markings: true, wearMul: 0.7,
-      tileMul: 3.6, calmAdd: 0.34, contrastMul: 0.62, rivetMul: 0.0,
-      strakes: 3, plateAspect: 3.4, stepMul: 0.0,
+      tileMul: 7.2, calmAdd: 0.34, contrastMul: 0.80, rivetMul: 0.0,
+      strakes: 6, plateAspect: 6.0, stepMul: 0.9,
     };
   }
 }
@@ -200,22 +262,50 @@ export function hullMaps(opts = {}) {
    * the machinery reads as a dense assembly, from the same generator.
    */
   const tileM = pal.panel.tileM * o.scale * spec.tileMul;
+  const strakeCount = Math.max(1, Math.round(spec.strakes * (tier === 3 ? 1.34 : tier === 2 ? 1.0 : 0.8)));
+  /**
+   * SEAM SIZE IS DERIVED FROM STRAKE HEIGHT, NOT STATED AS A CONSTANT.
+   *
+   * This is the fix for "the calm tier is a blank tile". A plate outline has to be a
+   * fixed FRACTION of the plate it outlines, or it disappears the moment the plate
+   * gets big: 0.26 m is a credible joint on a 6 m strake and an invisible one on a
+   * 31 m armour slab, and the last two passes shipped the second case. At 9% of the
+   * strake height the calm tier's groove is 2.8 m — about one screen pixel at the
+   * default 3200 m camera, which is the floor for a line that reads at all — while
+   * the machinery tier's is 0.54 m, which is still a scribe. Same rule, both ends.
+   *
+   * `grooveM` from the faction palette survives as a FLOOR, so a faction that wants
+   * unusually tight or unusually eroded joints still gets them.
+   */
+  const strakeHeightM = tileM / strakeCount;
+  const seamM = Math.max(pal.panel.grooveM ?? 0.26, strakeHeightM * 0.09);
   const panelOpts = {
     ...pal.panel,
     size,
     tileM,
+    grooveM: seamM,
+    // A joint is about as deep as it is wide, and the lip that laps over it is
+    // roughly twice its width and a third of its depth proud. Those ratios are what
+    // make the profile read as a step rather than as a scratch; see panelLines.js.
+    grooveDepthM: seamM * 0.85,
+    lipM: seamM * 2.1,
+    lipHM: seamM * 0.30,
+    weldM: Math.max(pal.panel.weldM ?? 0.55, seamM * 1.6),
     /**
      * Tier raises the seam count only slightly. It used to feed `splits` on a
      * recursive subdivision, where +1 doubled the leaf count; here it is a strake
      * count and a 5 -> 6 step turns a 10 m strake into an 8 m plank, which is what
      * made the medium tier read as running-bond brick on the first sheet.
      */
-    strakes: Math.max(1, Math.round(spec.strakes * (tier === 3 ? 1.34 : tier === 2 ? 1.0 : 0.8))),
+    strakes: strakeCount,
     plateAspect: spec.plateAspect,
     step: (pal.panel.step ?? 0.10) * spec.stepMul,
+    stepM: (pal.panel.stepM ?? 0.35) * Math.max(1, strakeHeightM / 10),
     rivets: pal.panel.rivets * spec.rivetMul,
   };
-  const panel = panelField(rng.fork(`panel:${o.variant}`), panelOpts);
+  const panel = spec.radiator
+    ? radiatorField(rng.fork(`radiator:${o.variant}`), panelOpts)
+    : panelField(rng.fork(`panel:${o.variant}`), panelOpts);
 
   // --- density hierarchy ----------------------------------------------------
   // Built before the mechanical layer because everything below is gated by it.
