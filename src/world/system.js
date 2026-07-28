@@ -36,6 +36,58 @@ import { buildPOIInstance } from './poi/index.js';
 export const LINK_RANGE = 620 * KM;
 
 /**
+ * ANCHORAGES — the places that service a ship.
+ *
+ * `closest-comparables.md` §3.5 names this as the reason the map has no shape: repair,
+ * refit, refining and refuelling all worked anywhere, instantly, forever, and
+ * `travel.refuel()` was called by nobody. A game where every service is available
+ * everywhere gives you no reason to go anywhere.
+ *
+ * So the five station and yard POIs that already existed - and they are five, not the
+ * six the research counted; `vault-nine` is a graveyard with a yard's blurb and nobody
+ * runs it - become the only places the ship can be serviced. Everything below is a
+ * DEFAULT that the per-POI `anchorage` block in the table overrides, because the point
+ * is that they are not interchangeable: Cinderport sells cheap propellant and cannot
+ * touch your hardpoints, Ironhold rebuilds a hull and charges like a dry well, Tallow
+ * turns a fit around in a fifth of the time, and Hollow Anchor is close to the fighting
+ * and will not serve somebody Concord dislikes.
+ *
+ * Numbers are per-unit costs in REFINED ALLOY, which is the same alloy that repairs and
+ * ammunition come out of. That is deliberate: propellant is now a fourth claim on the
+ * pool the scope decision asked to keep scarce.
+ */
+export const ANCHORAGE_DEFAULTS = {
+  station: {
+    kindLabel: 'ANCHORAGE',
+    propellantPerUnit: 0.9,
+    repairSubsidy: 0.20,
+    repairRateMul: 2.2,
+    refineRateMul: 3.0,
+    refitSpeedMul: 2.0,
+    heavyRefit: false,
+    berthFee: 16,
+    minStanding: -30,
+  },
+  yard: {
+    kindLabel: 'REPAIR YARD',
+    propellantPerUnit: 1.20,
+    repairSubsidy: 0.45,
+    repairRateMul: 4.0,
+    refineRateMul: 2.0,
+    refitSpeedMul: 4.0,
+    heavyRefit: true,
+    berthFee: 30,
+    minStanding: -20,
+  },
+};
+
+/** How close the cruiser has to be to a berth to be handled by it. */
+export const DOCK_RANGE = 9 * KM;
+
+/** And how slowly. You do not arrive at a gantry at three kilometres a second. */
+export const DOCK_SPEED = 90;
+
+/**
  * The authored table.
  *
  * `pos` is [x, z] in KILOMETRES, converted to metres on load - authoring 1640000 by
@@ -54,12 +106,28 @@ const TABLE = [
     pos: [-880, -690], control: 0.95, heat: 0.16, value: 0.95, sun: [212, 24],
     blurb: 'Coalition heavy repair. Gantries the length of a frigate, lit around the clock.',
     field: 'yard-heavy',
+    // The best hull work in the system, and it charges for propellant like a place that
+    // does not sell propellant. You come here to be rebuilt, not to be topped up.
+    anchorage: {
+      berth: 'IRONHOLD GANTRY 4',
+      propellantPerUnit: 1.35, repairSubsidy: 0.50, repairRateMul: 4.5,
+      refineRateMul: 1.8, refitSpeedMul: 4.0, heavyRefit: true, berthFee: 34,
+      minStanding: -20,
+    },
   },
   {
     id: 'cinderport', name: 'Cinderport Anchorage', kind: 'station', paletteId: 'station',
     pos: [-540, -880], control: 0.88, heat: 0.22, value: 0.80, sun: [166, 17],
     blurb: 'A tender anchorage. Everything here is waiting for something else to break.',
     field: 'station-quiet',
+    // Cheapest propellant in the system and a refinery running day and night, because
+    // everything moored here is already waiting. Nobody will rebuild your hardpoints.
+    anchorage: {
+      berth: 'CINDERPORT OUTER RING',
+      propellantPerUnit: 0.62, repairSubsidy: 0.18, repairRateMul: 2.0,
+      refineRateMul: 3.6, refitSpeedMul: 1.8, heavyRefit: false, berthFee: 10,
+      minStanding: -40,
+    },
   },
   {
     id: 'marrow-shoal', name: 'Marrow Shoal', kind: 'belt', paletteId: 'belt',
@@ -79,6 +147,14 @@ const TABLE = [
     pos: [160, -330], control: -0.44, heat: 0.58, value: 0.78, sun: [318, 9],
     blurb: 'A Concord forward picket built into a hollowed tender. Nothing docks by accident.',
     field: 'station-picket',
+    // The nearest berth to the contested middle, and the one that will actually check
+    // who you are. Forward pickets do not extend credit and do not do favours.
+    anchorage: {
+      berth: 'HOLLOW ANCHOR, INNER CRADLE',
+      propellantPerUnit: 1.10, repairSubsidy: 0.12, repairRateMul: 2.4,
+      refineRateMul: 2.2, refitSpeedMul: 1.6, heavyRefit: false, berthFee: 22,
+      minStanding: 0,
+    },
   },
   {
     id: 'the-nail', name: 'The Nail', kind: 'belt', paletteId: 'belt',
@@ -97,6 +173,14 @@ const TABLE = [
     pos: [760, -140], control: -0.96, heat: 0.20, value: 0.98, sun: [22, 21],
     blurb: 'Concord fleet base. Clean plate, cold light, and gun batteries pointed outward.',
     field: 'station-fortress',
+    // Everything, well, at a fleet base's prices, at the far end of Concord space, and
+    // only for somebody Concord is not currently shooting at.
+    anchorage: {
+      berth: 'MERIDIAN GATE, CIVIL BERTH 12',
+      propellantPerUnit: 0.85, repairSubsidy: 0.34, repairRateMul: 3.4,
+      refineRateMul: 3.0, refitSpeedMul: 2.6, heavyRefit: false, berthFee: 26,
+      minStanding: 5,
+    },
   },
   {
     id: 'vault-nine', name: 'Vault Nine', kind: 'graveyard', paletteId: 'graveyard',
@@ -116,6 +200,14 @@ const TABLE = [
     pos: [140, 640], control: -0.72, heat: 0.24, value: 0.72, sun: [246, 27],
     blurb: 'Concord refit slips. Half-built hulls hang in the frames with their frames open.',
     field: 'yard-light',
+    // A fitting yard, not a repair yard: the fastest module work in the system and only
+    // adequate at putting a hull back together.
+    anchorage: {
+      berth: 'TALLOW SLIP 9',
+      propellantPerUnit: 1.05, repairSubsidy: 0.22, repairRateMul: 2.6,
+      refineRateMul: 2.0, refitSpeedMul: 5.0, heavyRefit: true, berthFee: 24,
+      minStanding: -15,
+    },
   },
   {
     id: 'the-lattice', name: 'The Lattice', kind: 'belt', paletteId: 'belt',

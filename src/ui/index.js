@@ -37,15 +37,40 @@
 import * as THREE from 'three';
 import { EV } from '../core/events.js';
 import { ActiveSet } from '../core/pool.js';
+import { getItem } from '../core/contracts.js';
 import { Surface, Painter, Projector, C, F, TRACK } from './theme.js';
 import { HUD, BREACH_WARN_FRACTION } from './hud.js';
 import { TacticalOverlay, bearingAdvice } from './tactical.js';
 import { PowerPanel } from './power.js';
 import { RefitScreen } from './refit.js';
 import { InventoryPanel } from './inventory.js';
+import { PanelHost, TITLE_H } from './panels.js';
+import { ArmamentPanel } from './weapons.js';
+import { HoldPanel, MaterialsPanel } from './hold.js';
+import { CodexPanel } from './codex.js';
+import { ObjectivesPanel } from './objectives.js';
+import { PerksPanel } from './perks.js';
 
 export { HUD, TacticalOverlay, PowerPanel, RefitScreen, InventoryPanel };
+export { PanelHost, ArmamentPanel, HoldPanel, MaterialsPanel, CodexPanel, ObjectivesPanel, PerksPanel };
 export { C as UI_COLORS, F as UI_FONTS, BREACH_WARN_FRACTION };
+
+/**
+ * PANEL TOGGLE KEYS.
+ *
+ * Every one of these was checked against `src/input/controls.js` before it was claimed:
+ * that file owns space, 1–3, [ ], HOME, F, V, H, ESC, Z, F1–F5 and WASD/QE for the
+ * camera, and `UILayer` already owned M and backquote. Nothing below collides, so no
+ * flight control had to be moved to make room for a readout.
+ */
+const PANEL_KEYS = {
+  keyx: 'armament',
+  keyc: 'codex',
+  keyj: 'objectives',
+  keyg: 'hold',
+  keyk: 'materials',
+  keyp: 'perks',
+};
 
 /** Order-band slots this stream occupies. Both inside the documented UI band. */
 export const UI_ORDER = { watch: 95, draw: 320 };
@@ -75,6 +100,27 @@ export class UILayer {
     this.power = new PowerPanel(this);
     this.refit = new RefitScreen(this);
     this.inventory = new InventoryPanel(this);
+
+    /**
+     * THE FLOATING PANEL LAYER.
+     *
+     * Every system that landed with a read API and no UI gets a window here rather
+     * than another welded strip: `reference-ui-language.md` §2 observed that the
+     * reference has no docked chrome at all, and the audit's standing complaint is
+     * that ours sits on the cruiser at ordinary framings. A panel you can close and
+     * drag cannot occlude anything you did not choose to occlude.
+     *
+     * Only ARMAMENT opens by default. It carries per-mount heat, condition, stores and
+     * sub-part state — the state that is changing while the player is being shot at,
+     * and therefore the only set that has earned permanent screen space.
+     */
+    this.panels = new PanelHost(this);
+    this.armament = this.panels.add(new ArmamentPanel(this));
+    this.holdPanel = this.panels.add(new HoldPanel(this));
+    this.materialsPanel = this.panels.add(new MaterialsPanel(this));
+    this.codexPanel = this.panels.add(new CodexPanel(this));
+    this.objectivesPanel = this.panels.add(new ObjectivesPanel(this));
+    this.perksPanel = this.panels.add(new PerksPanel(this));
 
     /** null while flying; a string while a modal screen owns the frame. */
     this.screen = null;
@@ -193,14 +239,93 @@ export class UILayer {
       if (code === 'keym') {
         this.openScreen(this.screen === 'refit' ? null : 'refit');
         e.stopPropagation(); e.preventDefault();
-      } else if (code === 'backquote') {
+        return;
+      }
+      if (code === 'backquote') {
         this.tactical.enabled = !this.tactical.enabled;
         this.orderBar.say(this.tactical.enabled ? 'TACTICAL OVERLAY ON' : 'TACTICAL OVERLAY OFF', 'info');
         e.stopPropagation();
+        return;
+      }
+      if (this.screen) return;
+
+      const panelId = PANEL_KEYS[code];
+      if (panelId) {
+        const p = this.panels.toggle(panelId);
+        if (p) this.orderBar.say(`${p.title} ${p.open ? 'OPEN' : 'CLOSED'}`, 'info');
+        e.stopPropagation(); e.preventDefault();
+        return;
+      }
+
+      // Device hotbar. Deliberately independent of whether the armament panel is
+      // open: a closed readout must never take a capability away from the player.
+      const slot = ArmamentPanel.keyIndex(code);
+      if (slot >= 0) {
+        this.useDevice(this.armament.deviceIdAt(slot));
+        e.stopPropagation(); e.preventDefault();
+        return;
+      }
+
+      // ESC closes the topmost window before it reaches the flight controls, where it
+      // would also cancel a cut and drop the selection. It only claims the key when
+      // there is actually a window to close.
+      if (code === 'escape' && this.panels.anyOpen) {
+        for (let i = this.panels.panels.length - 1; i >= 0; i--) {
+          if (this.panels.panels[i].open) { this.panels.panels[i].open = false; break; }
+        }
+        e.stopPropagation(); e.preventDefault();
       }
     };
     // Capture phase so a modal screen wins the key before the flight controls see it.
     window.addEventListener('keydown', this._onKeyDown, true);
+
+    /**
+     * POINTER, WITHOUT TAKING THE MOUSE AWAY FROM THE GAME.
+     *
+     * The overlay canvas keeps `pointer-events: none` while flying, so every click the
+     * player makes still reaches `input/controls.js`. These listeners sit on `window`
+     * in the CAPTURE phase, which runs before the game element's own target-phase
+     * handlers; they hit-test this frame's regions and only call `stopPropagation`
+     * when the point is genuinely over a panel. A closed panel therefore costs the
+     * player nothing at all, and an open one costs exactly its own rectangle.
+     */
+    this._onWinMove = (e) => {
+      if (this.screen) return;
+      this.pointer.x = e.clientX;
+      this.pointer.y = e.clientY;
+      if (this.panels.onPointerMove(e.clientX, e.clientY)) {
+        e.stopPropagation();
+      }
+    };
+    this._onWinDown = (e) => {
+      if (this.screen) return;
+      const region = this._pick(e.clientX, e.clientY);
+      if (!region) return;
+      if (this.panels.onPointerDown(region, e.clientX, e.clientY)) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    };
+    this._onWinUp = (e) => {
+      if (this.panels.onPointerUp()) e.stopPropagation();
+    };
+    this._onWinWheel = (e) => {
+      if (this.screen) return;
+      const region = this._pick(e.clientX, e.clientY);
+      if (!region) return;
+      if (this.panels.onWheel(region, e.deltaY)) {
+        e.stopPropagation();
+        e.preventDefault();
+      } else if (region.panel) {
+        // Still swallow it: scrolling over a window must not zoom the camera behind it.
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('pointermove', this._onWinMove, true);
+    window.addEventListener('pointerdown', this._onWinDown, true);
+    window.addEventListener('pointerup', this._onWinUp, true);
+    window.addEventListener('wheel', this._onWinWheel, { capture: true, passive: false });
 
     const canvas = this.surface.canvas;
     if (!canvas) return;
@@ -224,6 +349,27 @@ export class UILayer {
     };
     canvas.addEventListener('pointermove', this._onMove);
     canvas.addEventListener('pointerdown', this._onDown);
+  }
+
+  /**
+   * Fire a carried device. One path, shared by the hotbar key and the hotbar click, so
+   * the two can never disagree about whether a charge was spent — `ItemSystem.use`
+   * only consumes on a successful activation, and the rejection reason it returns is
+   * printed verbatim rather than being reduced to "cannot use".
+   */
+  useDevice(itemId) {
+    if (!itemId) return null;
+    const items = this.world.systems?.items;
+    const name = String(getItem(itemId)?.name ?? itemId).toUpperCase();
+    if (!items) { this.orderBar.say(`${name} — NO DEVICE SYSTEM`, 'error'); return null; }
+    const res = items.use(itemId);
+    if (res?.ok) {
+      this.orderBar.say(`${name} — ACTIVATED`, 'good');
+      this.notify(`${name} ACTIVATED`, { important: true });
+    } else {
+      this.orderBar.say(`${name} — ${String(res?.reason ?? 'FAILED').toUpperCase()}`, 'error');
+    }
+    return res;
   }
 
   _pick(x, y) {
@@ -365,6 +511,9 @@ export class UILayer {
         if (camera) this.tactical.draw(P);
         this.hud.draw(P);
         this.power.draw(P);
+        // Windows last: they are opaque plates and they are meant to be on top of the
+        // welded layer, not fighting it for the same pixels.
+        this.panels.draw(P, this.hit);
       }
     } catch (err) {
       // A UI that throws mid-frame must not take the game down with it. Say so once
@@ -393,6 +542,15 @@ export class UILayer {
     claim(352, P.h - 168, 116, 160);                // arc coverage rose
     claim(P.w * 0.5 - 196, P.h - 240, 392, 240);    // reactor routing
     claim(P.w - 376, P.h - 386, 376, 386);          // target panel
+
+    // Open windows are opaque. Claiming their rectangles here stops the world-anchored
+    // caption layer - range rings, arc labels, contact names - from writing text that
+    // is then painted over, which would show up as captions that flicker as a panel
+    // moves rather than as captions that politely got out of the way.
+    for (const panel of this.panels.panels) {
+      if (!panel.open || panel.x === null) continue;
+      claim(panel.x, panel.y, panel.w, panel.collapsed ? TITLE_H : panel.h);
+    }
 
     const player = this.world.player;
     const proj = this.projector;
@@ -438,8 +596,13 @@ export class UILayer {
   dispose() {
     for (const off of this._offs) off?.();
     this._offs.length = 0;
-    if (typeof window !== 'undefined' && this._onKeyDown) {
-      window.removeEventListener('keydown', this._onKeyDown, true);
+    for (const panel of this.panels.panels) panel.dispose?.();
+    if (typeof window !== 'undefined') {
+      if (this._onKeyDown) window.removeEventListener('keydown', this._onKeyDown, true);
+      if (this._onWinMove) window.removeEventListener('pointermove', this._onWinMove, true);
+      if (this._onWinDown) window.removeEventListener('pointerdown', this._onWinDown, true);
+      if (this._onWinUp) window.removeEventListener('pointerup', this._onWinUp, true);
+      if (this._onWinWheel) window.removeEventListener('wheel', this._onWinWheel, true);
     }
     const canvas = this.surface.canvas;
     if (canvas) {

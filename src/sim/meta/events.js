@@ -32,4 +32,30 @@ export const MEV = {
   OBJECTIVE_OPENED: 'meta:objective-opened',
   OBJECTIVE_CLOSED: 'meta:objective-closed',
   OBJECTIVE_PROGRESS: 'meta:objective-progress',
+
+  // the sortie loop
+  DOCKED: 'meta:docked',
+  UNDOCKED: 'meta:undocked',
+  SORTIE_STARTED: 'meta:sortie-started',
+  SORTIE_ENDED: 'meta:sortie-ended',
+  SERVICE_USED: 'meta:service-used',
+  DEBT_CHANGED: 'meta:debt-changed',
+
+  // refit commitment
+  REFIT_STARTED: 'meta:refit-started',
+  REFIT_FINISHED: 'meta:refit-finished',
+  REFIT_REFUSED: 'meta:refit-refused',
+
+  // crippling, not death
+  PLAYER_CRIPPLED: 'meta:player-crippled',
+  PLAYER_RECOVERED: 'meta:player-recovered',
+  WRECKSITE_MARKED: 'meta:wrecksite-marked',
+
+  // the escalation ledger
+  LEDGER_CHANGED: 'meta:ledger-changed',
+  ESCALATION: 'meta:escalation',
+
+  // persistence
+  SAVED: 'meta:saved',
+  LOADED: 'meta:loaded',
 };
