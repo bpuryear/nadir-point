@@ -73,6 +73,15 @@ export const C = {
   scrim: rgba(NEUTRAL.spaceBlack, 0.72),
   scrimHard: rgba(NEUTRAL.spaceBlack, 0.90),
   scrimSoft: rgba(NEUTRAL.spaceBlack, 0.42),
+  /**
+   * The floating-panel backing. reference-ui-language.md §3 is explicit that the
+   * reference's dense small type is legible over a bright nebula BECAUSE the plate
+   * behind it is near-opaque, not because the type is large. 0.955 is as far as this
+   * can go and still read as a window sitting on the frame rather than a hole cut
+   * out of it; the 1 px border does the rest of the work.
+   */
+  panel: rgba(NEUTRAL.spaceBlack, 0.955),
+  panelTitle: rgba(NEUTRAL.spaceBlack, 0.99),
   void: rgba(NEUTRAL.void, 1),
 
   hostile: rgba(NEUTRAL.hostile, 1),
@@ -595,6 +604,62 @@ export class Painter {
     if (frame) this.frame(x, y, w, h, C.ruleDim);
   }
 
+  /**
+   * A vertical bar. Same contract as `bar` but filling upward from the bottom, which
+   * is the reference's thermal readout (reference-ui-language.md §5: "a large vertical
+   * orange bar"). Growing downward would read as a drain, and heat is not a drain.
+   */
+  vbar(x, y, w, h, value, {
+    color = C.ink, track = C.inkGhost, segments = 0, threshold = null, thresholdColor = C.warn,
+  } = {}) {
+    const v = THREE.MathUtils.clamp(value, 0, 1);
+    this.fill(x, y, w, h, track);
+    if (v > 0) this.fill(x, y + h * (1 - v), w, h * v, color);
+    if (segments > 1) {
+      for (let i = 1; i < segments; i++) {
+        this.rule(x, y + (h * i) / segments, w, this.hair, C.scrimHard);
+      }
+    }
+    if (threshold !== null) {
+      const ty = y + h * (1 - THREE.MathUtils.clamp(threshold, 0, 1));
+      this.rule(x - 3, ty - this.hair, w + 6, this.hair * 2, thresholdColor);
+    }
+  }
+
+  /**
+   * A SOLID FILLED LABEL CHIP with dark text — the reference's single loudest
+   * primitive (§4: "a solid filled label chip above the target, in accent colour with
+   * dark text"). It is reserved for states the player must not be able to miss, so it
+   * is deliberately expensive-looking and deliberately rare.
+   *
+   * @returns {number} the x past the right edge of the chip
+   */
+  chip(str, x, y, {
+    fill = C.ink, color = C.void, font = F.microBold, padX = 4, h = 12,
+    align = 'left', track = TRACK.label, minW = 0, hatched = null,
+  } = {}) {
+    const s = String(str);
+    const w = Math.max(minW, this.measure(s, font, track) + padX * 2);
+    const left = align === 'right' ? x - w : align === 'center' ? x - w * 0.5 : x;
+    this.fill(left, y, w, h, fill);
+    if (hatched) this.hatch(left, y, w, h, hatched, { spacing: 4, weight: 1 });
+    this.text(s, left + padX, y + h - 3.5, { font, color, track });
+    return left + w;
+  }
+
+  /** The hollow form: 1 px border, no fill. For a state that is present but inert. */
+  chipOutline(str, x, y, {
+    color = C.inkFaint, border = null, font = F.microBold, padX = 4, h = 12,
+    align = 'left', track = TRACK.label, minW = 0,
+  } = {}) {
+    const s = String(str);
+    const w = Math.max(minW, this.measure(s, font, track) + padX * 2);
+    const left = align === 'right' ? x - w : align === 'center' ? x - w * 0.5 : x;
+    this.frame(left, y, w, h, border ?? color);
+    this.text(s, left + padX, y + h - 3.5, { font, color, track });
+    return left + w;
+  }
+
   /** A row of pips. Tier, hardpoint count, cargo slots. */
   pips(x, y, n, filled, { size = 4, gap = 3, color = C.ink, empty = C.inkGhost } = {}) {
     for (let i = 0; i < n; i++) {
@@ -602,6 +667,26 @@ export class Painter {
     }
     return x + n * (size + gap) - gap;
   }
+
+  /** Truncate to a pixel width with an ellipsis. Cached through `measure`. */
+  clip(str, font, maxW, track = TRACK.value) {
+    const s = String(str);
+    if (this.measure(s, font, track) <= maxW) return s;
+    let out = s;
+    while (out.length > 1 && this.measure(`${out}…`, font, track) > maxW) out = out.slice(0, -1);
+    return `${out}…`;
+  }
+
+  /** Push a clip rectangle. Every floating panel body draws inside one. */
+  pushClip(x, y, w, h) {
+    const c = this.ctx;
+    c.save();
+    c.beginPath();
+    c.rect(x, y, w, h);
+    c.clip();
+  }
+
+  popClip() { this.ctx.restore(); }
 }
 
 const EMPTY_DASH = [];
