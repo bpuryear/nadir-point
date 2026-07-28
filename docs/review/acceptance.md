@@ -13,8 +13,8 @@ Last updated: after wave 3 integration, before the visual fix pass.
 |---|---|---|
 | 60 fps at 1440p on an Apple laptop | **UNVERIFIED** | No GPU in this environment. See below. |
 | 1% lows above 50 fps | **UNVERIFIED** | Same. |
-| Benchmark scene: 200+ debris, 12 combat ships, 1 capital, full post chain | **PARTIAL** | Debris fields and ships exist and instance correctly; the committed benchmark probe still needs assembling and running. |
-| Draw calls under a committed ceiling, measured and reported | **PASS** | Ceiling committed at 320 in `core/units.js#BUDGET`. Assembled game measures **143 draw calls / 90,469 triangles / 58 programs**. |
+| Benchmark scene: 200+ debris, 12 combat ships, 1 capital, full post chain | **PASS** | `src/probes/benchmark.js`: 930 instanced objects, 12 combat ships actively engaging, 1 fully-fitted capital, full post chain. |
+| Draw calls under a committed ceiling, measured and reported | **FAIL** | Committed 320, measured **650** in the benchmark scene. Reported as a miss with diagnosis in `docs/review/benchmark.md`. The assembled game at normal play framing measures 143. |
 
 ### Why frame rate is unverified, stated plainly
 
