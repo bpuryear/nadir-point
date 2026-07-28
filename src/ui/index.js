@@ -306,6 +306,13 @@ export class UILayer {
       // order API the input stream uses - `Ship.orderAttack(target, subsystem, part)` -
       // so there is exactly one path by which an aim point is chosen, and the order
       // acknowledgement animation fires for it like any other order.
+      if (region.kind === 'panel:tab') {
+        this.panels.toggle(region.panelId);
+        e.stopPropagation();
+        e.preventDefault();
+        return;
+      }
+
       if (region.kind === 'tactical:part') {
         const player = this.world.player;
         const target = player?.target;
@@ -555,7 +562,8 @@ export class UILayer {
   _reserveFrame(P) {
     const claim = (x, y, w, h) => P.claim(x, y, w, h, 3);
     claim(P.w * 0.5 - 270, 0, 540, 142);            // time strip, order bar, toasts
-    claim(P.w - 190, 6, 190, 96);                   // hold and materials
+    claim(16, 4, 560, 30);                          // window tab row
+    claim(P.w - 200, 6, 200, 108);                  // hold volume and material pools
     claim(6, P.h - 336, 356, 336);                  // own-ship panel
     claim(352, P.h - 168, 116, 160);                // arc coverage rose
     claim(P.w * 0.5 - 196, P.h - 240, 392, 240);    // reactor routing
@@ -648,6 +656,15 @@ export function installUI(world, opts = {}) {
 
   if (opts.tacticalOverlay === false) ui.setTacticalOverlay(false);
   if (opts.screen) ui.openScreen(opts.screen);
+  // `panels: ['codex', 'hold']` — used by the probes to photograph a window, and by a
+  // future save file to restore whatever the player had open.
+  if (Array.isArray(opts.panels)) {
+    ui.panels.closeAll();
+    for (const id of opts.panels) {
+      const p = ui.panels.get(id);
+      if (p) { p.open = true; p.onOpen(); }
+    }
+  }
 
   return ui;
 }

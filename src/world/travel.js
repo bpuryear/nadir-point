@@ -633,10 +633,20 @@ export class TravelSystem {
     this.war?.materialise(poiId, ctx);
 
     const st = this.war?.poiState(poiId);
+    // A berth announces itself, because the whole sortie loop is the player knowing
+    // where the ways home are without having to open a screen to find out.
+    const berth = node.anchorage
+      ? (this.dockStatus(poiId).ok ? ' — BERTH AVAILABLE' : ' — BERTH CLOSED')
+      : '';
     this.bus.emit(EV.NOTIFY, {
-      text: `ARRIVED — ${node.name}${st?.contested ? ' — CONTESTED' : ''}`,
+      text: `ARRIVED — ${node.name}${st?.contested ? ' — CONTESTED' : ''}${berth}`,
       important: true,
     });
+    // `world/poi/index.js#enterPOI` emits POI_ENTERED when it builds an instance. When
+    // it cannot - no material registry, which is every headless run - nothing else
+    // does, and discovery, audio and the sortie ledger all listen for it. Emit exactly
+    // in the gap rather than doubling the event in the real game.
+    if (!instance) this.bus.emit(EV.POI_ENTERED, { id: poiId, node });
     return instance;
   }
 
