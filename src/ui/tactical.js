@@ -27,12 +27,28 @@
 import * as THREE from 'three';
 import { RANGE } from '../core/units.js';
 import { angleDelta, yawOf } from '../sim/physics.js';
+import { PART_CONSEQUENCE } from '../sim/subparts.js';
 import {
   C, F, TRACK, screenPointRing, fmtRange, fmtPct, smoothstep, arcUnion,
 } from './theme.js';
 
 const ARC_SEGS = 40;
 const RING_SEGS = 72;
+
+/**
+ * SALVAGE STATE → INK.
+ *
+ * Three words, one ink each, and they are the SAME three words `salvage.describeWrecks`
+ * uses after the hull is dead — so the player learns one vocabulary while shooting and
+ * reuses it while cutting, instead of learning two. Cyan is the salvage colour and it
+ * means exactly one thing in this interface; amber means "this is costing you something
+ * right now", which is precisely what a section falling to SCRAP is.
+ */
+const SALVAGE_INK = {
+  INTACT: C.salvage,
+  DAMAGED: C.salvageDim,
+  SCRAP: C.warnDim,
+};
 
 /**
  * Arc-centre bearings named the way hardpoints.js names them: +PI/2 is the PORT
@@ -67,10 +83,19 @@ export class TacticalOverlay {
     this._dash = [4, 5];
     this._rings = [];
     this._cov = [];
+    /** Preallocated sub-part rows for the second-tier ring. Never grows past 8. */
+    this._parts = [];
+    for (let i = 0; i < 8; i++) {
+      this._parts.push({ part: null, mount: null, x: 0, y: 0, ok: false, bears: false });
+    }
+    /** Reused salvage tally so the summary line allocates nothing. */
+    this._tally = { INTACT: 0, DAMAGED: 0, SCRAP: 0, modules: 0 };
   }
 
-  draw(P) {
+  /** Hit regions produced by the world layer this frame. Written by `draw`. */
+  draw(P, hit = null) {
     if (!this.enabled) return;
+    this._hit = hit;
     const world = this.world;
     const player = world.player;
     if (!player || player.dead) return;

@@ -36,6 +36,60 @@ import { buildPOIInstance } from './poi/index.js';
 export const LINK_RANGE = 620 * KM;
 
 /**
+ * TERRAIN IS A SENSOR PARTICIPANT.
+ *
+ * `src/world/celestials/` and `src/world/fields/` are ~2,600 lines of finished art that
+ * changed exactly zero gameplay numbers. This table is the fix, and it is the whole fix:
+ * every place in the system declares what its rock, dust, glare and wreckage do to
+ * SEEING and to BEING SEEN, and `discovery.js` and `travel.js` read it.
+ *
+ * Three numbers per terrain, all multipliers on an open-space baseline of 1:
+ *
+ *   signature  what YOU look like to somebody else. Below 1 you are hidden; above 1
+ *              you are lit up. Feeds `discovery.signatureMultiplier`, which feeds the
+ *              transit interception roll, so hiding is a plotting decision.
+ *   sensor     how far YOUR sensors reach here. Below 1 you are half blind.
+ *   clutter    0..1 how much this place slows CONTACT RESOLUTION. Clutter does not stop
+ *              you detecting something, it stops you identifying it - which is why a
+ *              graveyard is the worst place in the system to work out what just arrived.
+ *
+ * The four fingerprints are deliberately different, so "where do I sit" is a real
+ * question with four different right answers:
+ *
+ *   GAS GIANT   the best mask in the game and you can still see out. The ambush spot.
+ *   CORONA      hides you and blinds you equally. Nobody finds anybody at Perihelion.
+ *   BELT/NEBULA hide well, see poorly, and confuse classification. The escape route.
+ *   DEBRIS      barely hides you at all and wrecks identification. Reads as structure
+ *               on a bad sensor - The Lattice's blurb, made mechanical.
+ *   ANCHORAGE   the inversion, and the important one: the places that will service your
+ *               ship are the places you are MOST visible and they see furthest. Docking
+ *               is exposure, so the sortie has a cost at both ends.
+ *
+ * `reach` is how far the effect extends from the POI centre; between POIs the terrain
+ * is open space and every multiplier is 1. Nothing here is simulated volumetrically -
+ * see docs/design/sensor-terrain.md for what is abstracted and why.
+ */
+export const TERRAIN = {
+  open:      { id: 'open',      name: 'OPEN SPACE',          signature: 1.00, sensor: 1.00, clutter: 0.00, reach: 0 },
+  belt:      { id: 'belt',      name: 'ASTEROID BELT',       signature: 0.62, sensor: 0.55, clutter: 0.55, reach: 150 * KM },
+  nebula:    { id: 'nebula',    name: 'DUST NEBULA',         signature: 0.45, sensor: 0.50, clutter: 0.70, reach: 165 * KM },
+  gasgiant:  { id: 'gasgiant',  name: 'GAS GIANT SHADOW',    signature: 0.35, sensor: 0.72, clutter: 0.40, reach: 210 * KM },
+  corona:    { id: 'corona',    name: 'STELLAR CORONA',      signature: 0.40, sensor: 0.30, clutter: 0.85, reach: 190 * KM },
+  debris:    { id: 'debris',    name: 'DEBRIS FIELD',        signature: 0.75, sensor: 0.68, clutter: 0.80, reach: 140 * KM },
+  anchorage: { id: 'anchorage', name: 'PATROLLED ANCHORAGE', signature: 1.35, sensor: 1.15, clutter: 0.10, reach: 60 * KM },
+};
+
+/** Default terrain by POI kind. A place may override it with `terrain:` in the table. */
+const TERRAIN_BY_KIND = {
+  belt: 'belt',
+  giant: 'gasgiant',
+  star: 'corona',
+  graveyard: 'debris',
+  station: 'anchorage',
+  yard: 'anchorage',
+};
+
+/**
  * ANCHORAGES — the places that service a ship.
  *
  * `closest-comparables.md` §3.5 names this as the reason the map has no shape: repair,
@@ -167,6 +221,9 @@ const TABLE = [
     pos: [380, -60], control: -0.58, heat: 0.44, value: 0.50, sun: [274, 14],
     blurb: 'Ice and salt dust. The reason Concord can keep a fleet this far forward.',
     field: 'belt-ice',
+    // Not rock: a standing cloud of ice and salt fines. It masks better than a belt and
+    // blinds harder, which is precisely why a fleet can sit this far forward in it.
+    terrain: 'nebula',
   },
   {
     id: 'meridian-gate', name: 'Meridian Gate', kind: 'station', paletteId: 'station',
@@ -214,6 +271,9 @@ const TABLE = [
     pos: [-260, 540], control: 0.05, heat: 0.36, value: 0.42, sun: [190, 8],
     blurb: 'Rubble in a resonance, strung out in lines. Reads as structure on a bad sensor.',
     field: 'belt-dense',
+    // "Reads as structure on a bad sensor" is a classification failure, not a hiding
+    // place, so the Lattice takes the dust profile's clutter rather than the belt's.
+    terrain: 'nebula',
   },
   {
     id: 'deepwell', name: 'Deepwell', kind: 'graveyard', paletteId: 'graveyard',
@@ -256,6 +316,23 @@ export class POINode {
     this.initialControl = spec.control;
     this.initialHeat = spec.heat;
 
+    /**
+     * Service profile, or null for the nine POIs that are rock, wreckage and light.
+     * Merged from the kind default and the per-POI override so a reader can see the
+     * whole contract in one object and no caller has to know about the default.
+     */
+    this.anchorage = (spec.anchorage || ANCHORAGE_DEFAULTS[spec.kind])
+      ? { ...(ANCHORAGE_DEFAULTS[spec.kind] ?? {}), ...(spec.anchorage ?? {}), poiId: spec.id, kind: spec.kind }
+      : null;
+
+    /**
+     * SENSOR TERRAIN. What this place does to seeing and to being seen. Authored per
+     * POI where the blurb demands it, defaulted from `kind` otherwise, so a new POI is
+     * never silently sensor-neutral.
+     */
+    this.terrainId = spec.terrain ?? TERRAIN_BY_KIND[spec.kind] ?? 'open';
+    this.terrain = TERRAIN[this.terrainId] ?? TERRAIN.open;
+
     /** @type {POINode[]} filled by buildSystem() */
     this.neighbours = [];
   }
@@ -287,7 +364,61 @@ export class StarSystem {
     this.centre = new THREE.Vector3((minX + maxX) * 0.5, 0, (minZ + maxZ) * 0.5);
     this.span = Math.max(maxX - minX, maxZ - minZ);
 
+    /**
+     * ONE shared result object for `terrainAt`. Discovery samples terrain every second
+     * and the travel plotter samples it nine times per leg; neither may allocate. A
+     * caller that wants to keep a reading copies the four numbers out of it.
+     */
+    this._terrain = {
+      id: 'open', name: TERRAIN.open.name, poiId: null, weight: 0,
+      signature: 1, sensor: 1, clutter: 0,
+    };
+
     this._linkNeighbours();
+  }
+
+  /**
+   * Terrain at a world point: the strongest single influence, faded in by distance.
+   *
+   * Strongest-wins rather than summed, because two overlapping masks should not stack
+   * into a place where nobody can be seen at all - and because "which place am I hiding
+   * in" is a thing the player must be able to name.
+   *
+   * @param {number} x
+   * @param {number} z
+   * @param {Object} [out] destination; defaults to a shared scratch object
+   * @returns {{id:string,name:string,poiId:string|null,weight:number,
+   *            signature:number,sensor:number,clutter:number}}
+   */
+  terrainAt(x, z, out = this._terrain) {
+    let best = null;
+    let bestW = 0;
+    for (const n of this.nodes) {
+      const t = n.terrain;
+      if (t.reach <= n.radius) continue;
+      const dx = n.position.x - x;
+      const dz = n.position.z - z;
+      const d = Math.sqrt(dx * dx + dz * dz);
+      if (d >= t.reach) continue;
+      // Full strength inside the arrival boundary, smoothstepped to nothing at `reach`.
+      const lin = d <= n.radius ? 1 : 1 - (d - n.radius) / (t.reach - n.radius);
+      const w = lin * lin * (3 - 2 * lin);
+      if (w > bestW) { bestW = w; best = n; }
+    }
+    const t = best ? best.terrain : TERRAIN.open;
+    out.id = bestW > 0 ? t.id : 'open';
+    out.name = bestW > 0 ? t.name : TERRAIN.open.name;
+    out.poiId = bestW > 0 ? best.id : null;
+    out.weight = bestW;
+    out.signature = 1 + (t.signature - 1) * bestW;
+    out.sensor = 1 + (t.sensor - 1) * bestW;
+    out.clutter = t.clutter * bestW;
+    return out;
+  }
+
+  /** The terrain profile of a named POI, at full strength. Read-only. */
+  terrainOf(poiId) {
+    return this.byId.get(poiId)?.terrain ?? TERRAIN.open;
   }
 
   /**
@@ -312,6 +443,30 @@ export class StarSystem {
   }
 
   get(id) { return this.byId.get(id) ?? null; }
+
+  /** Every POI that can service a ship. Five of the fourteen. */
+  anchorages() {
+    if (!this._anchorages) this._anchorages = this.nodes.filter((n) => !!n.anchorage);
+    return this._anchorages;
+  }
+
+  isAnchorage(id) { return !!this.get(id)?.anchorage; }
+
+  /**
+   * Nearest berth to a point, optionally filtered - the recovery tender uses this with
+   * a "will they have me" predicate so a player who has burned both factions is towed
+   * to whoever is left rather than to the geometrically closest gun battery.
+   */
+  nearestAnchorage(x, z, accept = null) {
+    let best = null;
+    let bestD = Infinity;
+    for (const n of this.anchorages()) {
+      if (accept && !accept(n)) continue;
+      const d = Math.hypot(n.position.x - x, n.position.z - z);
+      if (d < bestD) { bestD = d; best = n; }
+    }
+    return best ? { node: best, distance: bestD } : null;
+  }
 
   /** Nearest node to a world point, and how far away it is. */
   nearest(x, z) {
