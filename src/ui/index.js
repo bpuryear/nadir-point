@@ -172,9 +172,10 @@ export class UILayer {
         : `${ship?.classDef?.name ?? 'CONTACT'} DISABLED — HULK ADRIFT`,
       { important: !!catastrophic });
     });
-    this._on(EV.TIME_SCALE_CHANGED, ({ scale }) => {
-      this.orderBar.say(scale === 0 ? 'SIMULATION HELD' : `TIME ×${scale}`, 'info');
-    });
+    // Deliberately NOT bound to the order bar. The time strip is already the readout
+    // for the time scale, and echoing it into the status line stacks two identical
+    // strings in the same column and pushes the last real order off the screen.
+    // EV.TIME_SCALE_CHANGED is a state change, not an order acknowledgement.
   }
 
   // =========================================================================

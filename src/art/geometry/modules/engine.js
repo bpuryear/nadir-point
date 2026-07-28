@@ -37,8 +37,7 @@ function buildThrusterUpgrade(ctx) {
 
   // The plug: fills the well exactly, so the hole reads as filled and not covered.
   b.add('hull', G.prism(WELL, -74, -2, { capFront: true, capBack: false }), null);
-  b.add('trim', G.dockingCollar({ radius: 46, innerRadius: 31, depth: 8, sides: 6, detail: D }),
-    { pos: [0, 0, -6], rot: AFT });
+  b.graft([0, 0, -6], AFT, 46);
 
   // Main bell, mouth well aft of the hull.
   b.add('greeble', G.thrusterBell({
@@ -102,8 +101,7 @@ function buildReactorUprate(ctx) {
   const D = b.detail, full = b.full;
 
   b.add('hull', G.prism(WELL, -70, -2, { capFront: true, capBack: false }), null);
-  b.add('trim', G.dockingCollar({ radius: 44, innerRadius: 29, depth: 8, sides: 6, detail: D }),
-    { pos: [0, 0, -6], rot: AFT });
+  b.graft([0, 0, -6], AFT, 44);
 
   // The core: a big faceted drum protruding aft.
   b.add('hull', G.pipeRun({ length: 128, radius: 50, sides: 8, axis: 'z', flanges: 0, detail: D }),
@@ -162,8 +160,7 @@ function buildJumpDrive(ctx) {
   const D = b.detail, full = b.full;
 
   b.add('hull', G.prism(WELL, -66, -2, { capFront: true, capBack: false }), null);
-  b.add('trim', G.dockingCollar({ radius: 44, innerRadius: 29, depth: 9, sides: 6, detail: D }),
-    { pos: [0, 0, -6], rot: AFT });
+  b.graft([0, 0, -6], AFT, 44);
 
   // Central spindle out to the ring plane.
   b.add('hull', G.hexStrut({ length: 118, radius: 26, radiusEnd: 17, axis: 'z', detail: D }),
@@ -237,8 +234,7 @@ function buildArmourBelt(ctx) {
 
   // Plug the well flush.
   b.add('hull', G.prism(WELL, -76, -4, { capFront: true, capBack: false }), null);
-  b.add('trim', G.dockingCollar({ radius: 42, innerRadius: 28, depth: 8, sides: 6, detail: D }),
-    { pos: [0, 0, -8], rot: AFT });
+  b.graft([0, 0, -8], AFT, 42);
 
   // The transom: a stepped armoured face, wider and taller than the engine block.
   b.add('plating', G.loft([
@@ -260,14 +256,24 @@ function buildArmourBelt(ctx) {
     }), { pos: [0, s * 92, -20], rot: [0, 0, HALF_PI] });
   }
 
-  // Four buttresses off the transom corners, which is what stops it reading flat.
+  // A SECOND, SQUARER STEP rather than four splayed buttresses.
+  //
+  // The buttresses that used to be here were four wedges canted out of the corners,
+  // which gave the module a spiky outline - and a spiky outline off a drum is
+  // exactly what the derelict flak cluster is, so in silhouette the two were the
+  // same object at two sizes. This is armour. Armour does not stick out, it SQUARES
+  // OFF: the stern is now a flat rectangular face inside a raised rectangular rim,
+  // and the read is "somebody welded a door over the back of the ship".
+  b.add('hull', G.loft([
+    { z: -150, points: G.rectProfile(302, 236) },
+    { z: -136, points: G.rectProfile(316, 248) },
+  ], { capFront: true, capBack: false }), null);
   if (full) {
+    // Corner cleats flush with the rim, not wedges cantilevered off it.
     for (const sx of [-1, 1]) {
       for (const sy of [-1, 1]) {
-        b.add('hull', aimed(
-          G.taperedWedge({ length: 76, width0: 40, height0: 40, width1: 14, height1: 14, detail: D }),
-          [sx * 0.62, sy * 0.5, -1], [sx * 128, sy * 74, -74],
-        ));
+        b.add('hull', G.panelledSlab({ width: 44, height: 44, depth: 26, detail: D }),
+          { pos: [sx * 136, sy * 102, -136] });
       }
     }
   }

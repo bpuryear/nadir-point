@@ -337,7 +337,9 @@ export class HUD {
       const def = hullRes?.hardpoints?.get(id)?.def;
       const mod = hp?.module?.def ?? hullRes?.hardpoints?.get(id)?.module ?? null;
 
-      const pulse = critical ? 0.55 + 0.45 * Math.sin(P.t * 6.2) : 1;
+      // A critical mount pulses, but never below three quarters. A warning that is
+      // invisible at the trough of its own animation is not a warning.
+      const pulse = critical ? 0.78 + 0.22 * Math.sin(P.t * 6.2) : 1;
       const nameCol = breached ? C.warn : critical ? C.warn : mod ? C.ink : C.inkGhost;
 
       P.label(MOUNT_LABEL[id] ?? id, x, cy + 8, { color: breached || critical ? C.warnDim : C.inkFaint });
@@ -475,7 +477,9 @@ export class HUD {
       P.pips(x + 100, cy - 1, Math.max(1, rep.total), rep.bearing,
         { size: 5, gap: 3, color: bearing ? C.friendly : C.warn, empty: C.inkGhost });
 
-      const advice = this.ui.bearingAdvice(player, target, rep);
+      // Clipped to the space left by the pip row. An advice string that grows into
+      // its own readout is worse than one that ends in an ellipsis.
+      const advice = clip(P, this.ui.bearingAdvice(player, target, rep), F.microBold, w - 132);
       P.text(advice, x + w, cy + 6, {
         font: F.microBold, color: bearing ? C.friendlyDim : C.warn, align: 'right', track: TRACK.label,
       });

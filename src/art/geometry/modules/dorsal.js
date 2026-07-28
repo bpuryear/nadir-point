@@ -37,8 +37,7 @@ function buildRailBattery(ctx) {
   const D = b.detail, full = b.full;
 
   // Barbette ring at the mount plane.
-  b.add('trim', G.dockingCollar({ radius: 64, innerRadius: 44, depth: 14, sides: 8, detail: D }),
-    { pos: [0, 0, 0], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, 0, 0], [-HALF_PI, 0, 0], 64);
   b.add('dark', G.pipeRun({ length: 20, radius: 58, sides: 8, axis: 'y', caps: false, detail: D }),
     { pos: [0, -2, 0] });
 
@@ -117,8 +116,7 @@ function buildSensorMast(ctx) {
 
   b.add('hull', G.panelledSlab({ width: 92, height: 26, depth: 92, chamfer: 10, detail: D }),
     { pos: [0, 10, 0] });
-  b.add('trim', G.dockingCollar({ radius: 40, innerRadius: 26, depth: 8, sides: 6, detail: D }),
-    { pos: [0, 22, 0], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, 22, 0], [-HALF_PI, 0, 0], 40);
 
   // The mast.
   b.add('greeble', G.antennaMast({
@@ -184,8 +182,7 @@ function buildMissileCells(ctx) {
   // The raft, overhanging the plinth to both sides.
   b.add('hull', G.panelledSlab({ width: 196, height: 24, depth: 178, chamfer: 10, detail: D }),
     { pos: [0, 10, 0] });
-  b.add('trim', G.dockingCollar({ radius: 42, innerRadius: 28, depth: 8, sides: 6, detail: D }),
-    { pos: [0, -8, 0], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, -8, 0], [-HALF_PI, 0, 0], 42);
 
   // Six cells. Open at the top; you can see down into them.
   const cells = full
@@ -250,8 +247,7 @@ function buildPDRing(ctx) {
   const D = b.detail, full = b.full;
 
   b.add('hull', G.mountPad({ radius: 76, height: 16, sides: 8, detail: D }), { pos: [0, 0, 0] });
-  b.add('trim', G.dockingCollar({ radius: 72, innerRadius: 58, depth: 10, sides: 8, detail: D }),
-    { pos: [0, 16, 0], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, 16, 0], [-HALF_PI, 0, 0], 72);
 
   // Four mounts. Not at 90 degree intervals — offset so the ring has a front.
   const mounts = full ? [0.35, 1.72, 3.30, 4.75] : [0.35, 3.30];
@@ -315,8 +311,7 @@ function buildShieldPylons(ctx) {
   // Base drum, eight sided and canted 6 degrees off the deck plane.
   b.add('hull', G.pipeRun({ length: 34, radius: 62, sides: 6, axis: 'y', flanges: 0, detail: D }),
     { pos: [0, 0, 0], rot: [0.06, 0, -0.06] });
-  b.add('trim', G.dockingCollar({ radius: 46, innerRadius: 30, depth: 9, sides: 6, detail: D }),
-    { pos: [0, 34, 0], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, 34, 0], [-HALF_PI, 0, 0], 46);
 
   // Three pylons. 0, 133 and 242 degrees, three different lengths, three different
   // splay angles. Nothing here agrees with anything else, on purpose.

@@ -13,6 +13,16 @@
  *    is drawn along and the same vector the gas giant's terminator is computed from.
  *    A second "just to lift that side a bit" key is how a scene stops reading.
  *
+ * 1b. A RIM, and it tracks the camera. This is the one light here that is not
+ *    physical, and it earns its place: in vacuum, against a starfield, a grey hull
+ *    with no rim has no silhouette — the moment the key is on the far side, the
+ *    outline dissolves into black. Every reference frame worth copying puts a
+ *    cold or warm kicker along the upper edge of the hull. It sits BEHIND the
+ *    subject from the camera's point of view, tilted up and away from the key, so
+ *    the band it lights is the silhouette rather than a second broad light.
+ *    Because the camera moves, the light has to move with it or the rim wanders
+ *    off the edge it exists to describe.
+ *
  * 2. IBL, generated at runtime. Metal with no environment is black, and a scene lit
  *    only by directionals has flat, dead shadow sides. The environment here is a
  *    PMREM cube built from an actual generated SCENE — sky gradient, the sun disc at
@@ -37,9 +47,13 @@
  *    translate) while the god-ray pass projects with the MAIN camera; without that
  *    tracking the shafts point somewhere the sun is not.
  *
- * SHADOWS are configured for a 1.4 km ship: a 2048 map over a 6.8 km ortho box is
- * 3.3 m per texel, which resolves a cruiser's sponsons and its shadow across a debris
- * field without the peter-panning a looser box gives.
+ * SHADOWS are configured for a 1.4 km ship. The box is deliberately only a little
+ * larger than the hull plus its escorts, because the normal-offset bias scales with
+ * texel size and the bias is what decides whether self-shadowing exists at all: a
+ * 6.8 km box at 2048 gave 3.3 m texels and a 13 m normal offset, which is a fifth of
+ * the truss height — every contact shadow under the ventral truss and the dorsal
+ * overhang was being pushed clean off the geometry that cast it. Halving the box
+ * quarters the bias and the mass cues come back.
  */
 
 import * as THREE from 'three';
@@ -47,8 +61,30 @@ import { getPOIPalette, NEUTRAL, mix, shade } from '../../art/palette.js';
 import { CELESTIAL_SPECS } from '../celestials/index.js';
 import { markCelestial, col } from '../celestials/common.js';
 
-/** Rec.709 relative luminance of a linear THREE.Color. */
-const luminance = (c) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+/** Brightest channel of a linear THREE.Color. */
+const peak = (c) => Math.max(c.r, c.g, c.b);
+
+/**
+ * STATED STRENGTH -> three.js INTENSITY, AND WHY IT IS PEAK AND NOT LUMINANCE.
+ *
+ * The palette states fill / bounce / rim as the peak channel of the irradiance they
+ * should contribute, so `hexColor * returned` has its brightest channel equal to
+ * `stated`. That is the whole reason the terminator exists.
+ *
+ * The previous version normalised by LUMINANCE instead, reasoning that a stated 6:1
+ * key:fill ratio should survive three's colour x intensity model. It does — in
+ * luminance. But these fills are saturated by design: giant-orbit's planetshine
+ * 0x3f63b4 has Y=0.134 and a blue channel of 0.45, so dividing by luminance
+ * multiplied it by 6.2 and handed three a fill light of intensity 10.0 against a key
+ * of 9.5. In the channel that actually carried it, the "6:1 fill" was 1.45:1. Every
+ * face of the player cruiser then returned the same value regardless of which way it
+ * pointed, the hull rendered as saturated cobalt with no light direction, and the
+ * frame lost the two-temperature read this whole file exists to produce.
+ *
+ * Peak normalisation keeps the hue and keeps the ratio. It is the boring answer and
+ * it is the correct one.
+ */
+const statedToIntensity = (color, stated) => stated / Math.max(1e-3, peak(color));
 
 const ENV_R = 60;           // radius the env-scene props sit at
 const KEY_DISTANCE = 14000; // metres; only affects the shadow camera placement
@@ -241,7 +277,7 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
 
   const sunDir = (opts.sunDir ?? spec.sunDir).clone().normalize();
 
-  const shadowRadius = opts.shadowRadius ?? 3400;
+  const shadowRadius = opts.shadowRadius ?? 1750;
   const shadowMapSize = opts.shadowMapSize ?? 2048;
 
   // --- 1. the key ----------------------------------------------------------
@@ -257,12 +293,16 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
   key.shadow.camera.right = shadowRadius;
   key.shadow.camera.top = shadowRadius;
   key.shadow.camera.bottom = -shadowRadius;
-  // At ~3 m per shadow texel a constant depth bias cannot cover both a flat plate
-  // and a hull at a grazing angle to the light, so most of the work is done by the
-  // normal offset — which is in METRES here, because the world is in metres. A
-  // number tuned on a 1 m test scene is four orders of magnitude too small.
-  key.shadow.bias = -0.0006;
-  key.shadow.normalBias = Math.max(6, shadowRadius / 260);
+  // A constant depth bias cannot cover both a flat plate and a hull at a grazing
+  // angle to the light, so most of the work is done by the normal offset — which is
+  // in METRES here, because the world is in metres. It is therefore tied to the
+  // TEXEL SIZE and nothing else: about 1.4 texels is the smallest offset that kills
+  // acne on this content, and anything much larger detaches contact shadows from the
+  // geometry that casts them. At 1750 m / 2048 that is ~2.4 m, against the 13 m the
+  // old `shadowRadius / 260` produced.
+  const texelM = (shadowRadius * 2) / shadowMapSize;
+  key.shadow.bias = -0.0004;
+  key.shadow.normalBias = Math.max(1.2, texelM * 1.4);
   key.shadow.camera.updateProjectionMatrix();
   scene.add(key);
   scene.add(key.target);
@@ -286,45 +326,68 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
       ? spec.giant.direction.clone().normalize()
       : new THREE.Vector3(-sunDir.x, -Math.abs(sunDir.y) * 0.55 - 0.25, -sunDir.z).normalize());
   /**
-   * INTENSITY IS NOT THE SAME THING AS BRIGHTNESS.
+   * The fill's COLOUR is not the POI's identity colour, and the difference matters.
    *
-   * The palette states each light as a HUE plus a strength relative to the key —
-   * giant-orbit is key 3.4, fill 0.55, a textbook 6:1 ratio. Handing those numbers
-   * to three.js raw does not produce a 6:1 ratio, because three multiplies colour by
-   * intensity and the two colours have wildly different luminance: the cream key
-   * (0xfff0d8) is Y=0.88, the planetshine blue (0x3f63b4) is Y=0.13. The stated 6:1
-   * silently becomes 41:1 and every shadow side in the POI goes to flat black.
-   *
-   * So the rig normalises by luminance. `pal.fill.intensity / pal.key.intensity` is
-   * then the ratio you actually see, which is what the palette author meant.
+   * `pal.fill.color` is what the location is - the deep belt of the giant, the sick
+   * green of the nebula - and the celestial shaders derive from it. But the light
+   * arriving off a source thirty degrees across is the average of the whole disc,
+   * bright zones and cream storm included, not the colour of its darkest band. Used
+   * raw, a 0x3f63b4 belt turns every shadowed face on a neutral gunmetal hull into
+   * saturated primary blue, which is the plastic-model-kit read. `fill.broad` says
+   * how far to average towards neutral; the near-star's fill is nearly a point
+   * source at this distance and barely broadens at all.
    */
-  const keyY = luminance(col(pal.key.color));
-  const fillY = luminance(col(pal.fill.color));
+  const fillColor = col(mix(pal.fill.color, NEUTRAL.ice, pal.fill.broad ?? 0.32));
   const fillScale = opts.fillScale ?? 1;
-  const fillIntensity = pal.fill.intensity * (keyY / Math.max(1e-3, fillY)) * fillScale;
-  const fill = new THREE.DirectionalLight(col(pal.fill.color), fillIntensity);
+  const fillIntensity = statedToIntensity(fillColor, pal.fill.intensity * fillScale);
+  const fill = new THREE.DirectionalLight(fillColor, fillIntensity);
   fill.name = `poi-fill:${poiId}`;
   fill.position.copy(fillDir).multiplyScalar(KEY_DISTANCE);
   fill.castShadow = false;
   scene.add(fill);
   scene.add(fill.target);
 
+  // --- 1b. the rim / kicker ------------------------------------------------
+  /**
+   * Placed BEHIND the subject along the view axis, lifted, and pushed to the side
+   * AWAY from the key so it is describing a different edge than the key already
+   * describes. Surfaces facing away from the camera are the ones it lights, which
+   * on a solid hull means the band you can see is the silhouette itself.
+   *
+   * It is updated every frame from the camera in the render system at the bottom of
+   * this function. A rim anchored in world space is not a rim, it is a fourth key.
+   */
+  const rimSpec = pal.rim ?? { color: pal.accent, intensity: 0.9 };
+  const rimColor = col(rimSpec.color);
+  const rim = new THREE.DirectionalLight(
+    rimColor,
+    statedToIntensity(rimColor, rimSpec.intensity * (opts.rimScale ?? 1)),
+  );
+  rim.name = `poi-rim:${poiId}`;
+  rim.castShadow = false;
+  scene.add(rim);
+  scene.add(rim.target);
+
   // --- 4. hemisphere, NOT ambient -----------------------------------------
-  // Same luminance normalisation, then damped: a hemisphere term is the closest
-  // thing here to an ambient wash, so it is deliberately run under its nominal
-  // strength and left to do nothing but keep undersides off pure black.
-  const bounceY = luminance(col(pal.bounce.color));
+  // A hemisphere term is the closest thing here to an ambient wash, so it is stated
+  // low and left to do nothing but keep undersides off pure black. Anything more and
+  // it raises the black point everywhere, which is the mid-grey mush failure.
+  const bounceColor = col(pal.bounce.color);
   const ambient = new THREE.HemisphereLight(
-    col(pal.bounce.color),
+    bounceColor,
     col(shade(pal.shadow, 0.85)),
-    pal.bounce.intensity * (keyY / Math.max(1e-3, bounceY)) * (opts.bounceScale ?? 0.55),
+    statedToIntensity(bounceColor, pal.bounce.intensity * (opts.bounceScale ?? 1)),
   );
   ambient.name = `poi-bounce:${poiId}`;
   scene.add(ambient);
 
   // --- 2. IBL --------------------------------------------------------------
+  // The IBL's job is to give METAL something to reflect and to give the shadow side
+  // its directional variation. It is NOT a fill: run hot, a near-uniform irradiance
+  // over the whole sphere is indistinguishable from an AmbientLight and it flattens
+  // exactly the faces the key is trying to separate.
   const env = buildPOIEnvironment(poiId, renderer, { spec });
-  const envIntensity = opts.envIntensity ?? (pal.ibl.intensity ?? 1) * 0.85;
+  const envIntensity = opts.envIntensity ?? (pal.ibl.intensity ?? 1);
   if (env.texture) {
     scene.environment = env.texture;
     scene.environmentIntensity = envIntensity;
@@ -344,6 +407,7 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
     bloom: post.bloom.strength,
     godrays: post.godrayIntensity,
     vignette: post.grade.uniforms.vignette.value,
+    colorGrade: post.getColorGrade(),
   } : null;
 
   const keyProxy = new THREE.Object3D();
@@ -356,11 +420,19 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
     post.bloom.strength = grade.bloom ?? post.bloom.strength;
     post.godrayIntensity = grade.godrays ?? 0.4;
     post.grade.uniforms.vignette.value = grade.vignette ?? 0.42;
+    // One grade for everything in frame. Rocks, hull and sky are lit by the same rig
+    // but they do not share an albedo family, so without this the frame carries
+    // three unrelated temperatures. Cold in the toe, the key's cream in the shoulder.
+    post.setColorGrade({
+      lift: grade.lift, liftAmount: grade.liftAmount,
+      gain: grade.gain, gainAmount: grade.gainAmount,
+      saturation: grade.saturation,
+    });
     post.setKeyLight(keyProxy, col(pal.key.color));
   }
 
   /**
-   * Two jobs per frame, both about the fact that this rig lights a moving camera:
+   * Three jobs per frame, all about the fact that this rig lights a moving camera:
    *
    * 1. The god-ray proxy sits along the key direction FROM THE CAMERA, because the
    *    star it stands in for lives in the far scene (whose camera does not
@@ -374,9 +446,18 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
    *    camera ray's intersection with the combat plane — for a plane-locked RTS
    *    that is by definition where the action is — snapped to the shadow map's texel
    *    grid so the shadow edges do not crawl as the camera pans.
+   *
+   * 3. The rim goes BEHIND the focus point along the view axis, lifted, and rolled
+   *    towards whichever side the key is NOT on. Both of those matter: straight
+   *    behind and level, it lights the whole far side and reads as a second key;
+   *    on the key's side it just widens the key's terminator instead of drawing the
+   *    opposite edge.
    */
   const _fwd = new THREE.Vector3();
   const _focus = new THREE.Vector3();
+  const _rimDir = new THREE.Vector3();
+  const _side = new THREE.Vector3();
+  const _up = new THREE.Vector3(0, 1, 0);
   const texelWorld = (shadowRadius * 2) / shadowMapSize;
 
   const system = {
@@ -397,13 +478,30 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
       key.position.copy(_focus).addScaledVector(sunDir, KEY_DISTANCE);
       key.target.position.copy(_focus);
       key.target.updateMatrixWorld();
+
+      // Screen-right, then bias away from the key's screen side.
+      _side.crossVectors(_fwd, _up);
+      if (_side.lengthSq() < 1e-6) _side.set(1, 0, 0);
+      _side.normalize();
+      const keySide = _side.dot(sunDir);
+      _rimDir.copy(_fwd)
+        .addScaledVector(_up, 0.42)
+        .addScaledVector(_side, keySide > 0 ? -0.40 : 0.40)
+        .normalize();
+      rim.position.copy(_focus).addScaledVector(_rimDir, KEY_DISTANCE);
+      rim.target.position.copy(_focus);
+      rim.target.updateMatrixWorld();
     },
   };
+  // Run once immediately so a single-frame capture, or a probe that never starts the
+  // engine, still gets a placed rim rather than one sitting at the origin.
+  system.update();
   if (opts.trackCamera !== false) world.engine?.addRender(system);
 
   return {
     key,
     fill,
+    rim,
     ambient,
     envMap: env.texture,
     envIntensity,
@@ -421,9 +519,10 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
       keyProxy.position.copy(sunDir).multiplyScalar(PROXY_DISTANCE);
     },
     dispose() {
-      scene.remove(key, key.target, fill, fill.target, ambient, keyProxy);
+      scene.remove(key, key.target, fill, fill.target, rim, rim.target, ambient, keyProxy);
       key.dispose?.();
       fill.dispose?.();
+      rim.dispose?.();
       ambient.dispose?.();
       if (scene.environment === env.texture) scene.environment = null;
       scene.fog = previousFog;
@@ -433,6 +532,7 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
         post.bloom.strength = previousGrade.bloom;
         post.godrayIntensity = previousGrade.godrays;
         post.grade.uniforms.vignette.value = previousGrade.vignette;
+        post.setColorGrade(previousGrade.colorGrade);
       }
       const list = world.engine?.renderSystems;
       if (list) {

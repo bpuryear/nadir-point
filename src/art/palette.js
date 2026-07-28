@@ -50,6 +50,34 @@
  * intensity, and diffuse out = albedo/PI x irradiance x NdotL. A 0.18-albedo hull
  * needs irradiance around 8 to land mid-frame after ACES. Numbers around 1-3 are
  * the old pre-r155 convention and will render everything as sludge.
+ *
+ * HOW THE FOUR LIGHT TERMS ARE STATED, AND WHY IT IS NOT LUMINANCE
+ *
+ * `key.intensity` is absolute. `fill`, `bounce` and `rim` are stated as the PEAK
+ * CHANNEL of the irradiance they contribute, and the rig scales each colour so its
+ * brightest channel lands on that number (see world/lighting/poi.js). This matters
+ * because the fill colours here are deliberately saturated - planetshine is a
+ * strongly blue light. Normalising a saturated fill by LUMINANCE, which is what an
+ * earlier version of the rig did, silently multiplies its dominant channel by
+ * 1/luminance: the 0x3f63b4 planetshine has Y=0.134, so a "6:1" fill arrived with a
+ * blue channel two thirds as strong as the key's. That is exactly how a neutral
+ * gunmetal hull ends up rendering as saturated cobalt with no terminator, which is
+ * the single worst defect this file has ever caused. Peak-channel normalisation
+ * keeps the hue and keeps the ratio.
+ *
+ * The numbers below are calibrated so that, on a 0.16-albedo painted hull:
+ *   key face  ~0.78 in sRGB   (bright, with headroom - never clipped)
+ *   45 deg    ~0.62
+ *   shadow    ~0.25, and BLUE
+ * Three clean values plus a rim. If you raise the fill, you lose the terminator.
+ *
+ * `fill.broad` is how much the fill's colour averages towards neutral because the
+ * thing emitting it is an AREA thirty degrees across rather than a point. A gas
+ * giant's disc is banded - deep blue belts, white zones, a cream storm - so the
+ * light arriving from it is a pale blue, not the colour of its darkest belt. Using
+ * the belt colour raw is what turns a neutral gunmetal hull's shadow side into
+ * saturated primary blue. `fill.color` stays the location's identity colour, which
+ * is what the celestial shader and the ramp derive from; `broad` is only the light.
  */
 
 import * as THREE from 'three';
@@ -99,24 +127,42 @@ export const FACTION_PALETTES = {
     // Bare metal appears where the coating has worn off - the wear layer raises
     // metalness locally, which is what makes edge wear read as metal and not paint.
     surface: {
-      hull: { metalness: 0.22, roughness: 0.62, variance: 0.30 },
-      hullDark: { metalness: 0.30, roughness: 0.74, variance: 0.22 },
-      plating: { metalness: 0.30, roughness: 0.52, variance: 0.28 },
+      hull: { metalness: 0.22, roughness: 0.62, variance: 0.18 },
+      hullDark: { metalness: 0.30, roughness: 0.74, variance: 0.16 },
+      plating: { metalness: 0.26, roughness: 0.52, variance: 0.18 },
       greeble: { metalness: 0.86, roughness: 0.42, variance: 0.20 },
-      trim: { metalness: 0.10, roughness: 0.54, variance: 0.14 },
+      trim: { metalness: 0.10, roughness: 0.54, variance: 0.12 },
     },
 
     // --- plating layout ---
+    /**
+     * `tileM` is metres of hull per texture repeat, NOT plate size: a tile holds a
+     * dozen or so plates, so a 22 m tile is a ~6 m plate, which is what a yard
+     * actually welds. It was raised from 17 because at hero distance the seam
+     * DENSITY, not the plate size, is what made the hull read as masonry.
+     *
+     * `plateContrast` scales every albedo step this layer is allowed to make - the
+     * base/alt tone difference, the seam darkening and the recess darkening. At 1.0
+     * a hull reads as a brick wall from 400 m. Real plating is nearly one value
+     * with thin lines in it; the relief does the work, not the paint.
+     *
+     * `calm` is the fraction of the tile that is left as plain plate. Homeworld's
+     * hulls are roughly 60% calm, 30% medium, 10% dense; ours was 100% medium,
+     * which is why no part of the hull could ever earn the eye's attention.
+     */
     panel: {
-      tileM: 17,           // metres of hull one texture tile covers
-      minPanel: 0.155,     // smallest panel as a fraction of the tile
-      gap: 0.0105,         // seam width, fraction of the tile
+      tileM: 22,           // metres of hull one texture tile covers
+      minPanel: 0.165,     // smallest panel as a fraction of the tile
+      gap: 0.0095,         // seam width, fraction of the tile
       bevel: 0.012,
       recess: 0.20,        // chance a panel is set into the hull
       raise: 0.16,         // chance a panel stands proud
       rivets: 0.9,         // 0..1 how riveted the seams are
       skew: 0.0,           // non-orthogonal panel bias; humans build square
       splits: 4,
+      toneSpread: 0.07,
+      plateContrast: 0.42,
+      calm: 0.60,
     },
 
     // --- weathering ---
@@ -150,15 +196,15 @@ export const FACTION_PALETTES = {
     // structural members underneath (hullDark) are exposed alloy and read metallic,
     // which is the contrast the whole faction identity rests on.
     surface: {
-      hull: { metalness: 0.07, roughness: 0.30, variance: 0.12 },
-      hullDark: { metalness: 0.60, roughness: 0.38, variance: 0.14 },
-      plating: { metalness: 0.05, roughness: 0.21, variance: 0.09 },
+      hull: { metalness: 0.07, roughness: 0.30, variance: 0.10 },
+      hullDark: { metalness: 0.60, roughness: 0.38, variance: 0.12 },
+      plating: { metalness: 0.05, roughness: 0.21, variance: 0.08 },
       greeble: { metalness: 0.90, roughness: 0.28, variance: 0.15 },
       trim: { metalness: 0.16, roughness: 0.26, variance: 0.09 },
     },
 
     panel: {
-      tileM: 23,
+      tileM: 28,
       minPanel: 0.26,      // bigger, cleaner plates
       gap: 0.0062,
       bevel: 0.008,
@@ -167,6 +213,9 @@ export const FACTION_PALETTES = {
       rivets: 0.0,         // no rivets. Concord does not admit to fasteners.
       skew: 0.0,
       splits: 3,
+      toneSpread: 0.05,
+      plateContrast: 0.30, // ceramic is one value with a line in it
+      calm: 0.70,
     },
 
     wear: { edge: 0.30, streak: 0.26, grime: 0.20, pit: 0.05, oxide: 0x2b3038 },
@@ -198,23 +247,29 @@ export const FACTION_PALETTES = {
     // its own corrosion product, and rougher than anything a shipyard would sign
     // off on. The wide variance is doing real work - no two plates agree.
     surface: {
-      hull: { metalness: 0.46, roughness: 0.76, variance: 0.38 },
-      hullDark: { metalness: 0.34, roughness: 0.88, variance: 0.30 },
-      plating: { metalness: 0.54, roughness: 0.68, variance: 0.34 },
-      greeble: { metalness: 0.74, roughness: 0.60, variance: 0.28 },
-      trim: { metalness: 0.34, roughness: 0.62, variance: 0.22 },
+      hull: { metalness: 0.40, roughness: 0.76, variance: 0.26 },
+      hullDark: { metalness: 0.30, roughness: 0.88, variance: 0.22 },
+      plating: { metalness: 0.46, roughness: 0.68, variance: 0.24 },
+      greeble: { metalness: 0.74, roughness: 0.60, variance: 0.26 },
+      trim: { metalness: 0.34, roughness: 0.62, variance: 0.20 },
     },
 
+    // A 3.4 km hulk with one weave at one density has no scale hierarchy at all, so
+    // the tile is the largest in the game and the calm fraction is the highest: the
+    // asymmetric arcs and vanes are the read, not the surface.
     panel: {
-      tileM: 27,
-      minPanel: 0.13,
-      gap: 0.014,
+      tileM: 34,
+      minPanel: 0.15,
+      gap: 0.013,
       bevel: 0.020,
-      recess: 0.30,
-      raise: 0.22,
+      recess: 0.28,
+      raise: 0.20,
       rivets: 0.0,
       skew: 0.42,          // splits land off-centre and off-axis. Not human.
-      splits: 5,
+      splits: 4,
+      toneSpread: 0.08,
+      plateContrast: 0.52, // corrosion earns more variance than a painted hull
+      calm: 0.55,
     },
 
     wear: { edge: 0.62, streak: 0.58, grime: 0.86, pit: 0.85, oxide: 0x2f2a12 },
@@ -227,10 +282,16 @@ export const FACTION_PALETTES = {
     name: 'Nadir',
     blurb: 'Neutral gunmetal. Whatever you bolt on has to look like it belongs.',
 
-    base: 0x71777e,
-    baseAlt: 0x62686e,
-    baseDark: 0x32363b,
-    plating: 0x7e848b,
+    // Authored one stop darker than the obvious choice. A 0.44-sRGB grey lit
+    // correctly by a 13.5 key lands at 0.82 and the hull reads as white paper with
+    // a blue shadow, which is a plastic model kit, not a warship. At 0.37 the same
+    // light puts the lit deck at ~0.74, which leaves the running lights, the bare
+    // metal at plate edges and the rim somewhere to be brighter THAN, and a value
+    // is only bright relative to something.
+    base: 0x666d75,
+    baseAlt: 0x585f67,
+    baseDark: 0x2e323a,
+    plating: 0x727982,
     greeble: 0xa4aab0,
     trim: 0xa8a294,        // bone, not a hue. Reads as "unfactioned".
     glass: 0x090c10,
@@ -244,24 +305,36 @@ export const FACTION_PALETTES = {
 
     // Half-stripped gunmetal: more bare metal showing than either faction, because
     // this hull is repaired in the field with whatever is to hand.
+    /**
+     * The player hull was authored at metalness 0.40, which contradicts this file's
+     * own opening note that a painted warship plate is a dielectric at 0.1-0.3. At
+     * 0.40 more than half the surface response came from the environment rather than
+     * from the key, so faces pointing in completely different directions returned
+     * almost the same value and the hull had no readable light direction at all.
+     * Bare metal still appears - the wear layer raises metalness at plate edges,
+     * which is where a repaired hull actually shows metal.
+     */
     surface: {
-      hull: { metalness: 0.40, roughness: 0.52, variance: 0.24 },
-      hullDark: { metalness: 0.44, roughness: 0.66, variance: 0.20 },
-      plating: { metalness: 0.52, roughness: 0.44, variance: 0.22 },
-      greeble: { metalness: 0.90, roughness: 0.34, variance: 0.18 },
+      hull: { metalness: 0.18, roughness: 0.54, variance: 0.16 },
+      hullDark: { metalness: 0.28, roughness: 0.68, variance: 0.14 },
+      plating: { metalness: 0.24, roughness: 0.46, variance: 0.16 },
+      greeble: { metalness: 0.88, roughness: 0.36, variance: 0.18 },
       trim: { metalness: 0.12, roughness: 0.50, variance: 0.12 },
     },
 
     panel: {
-      tileM: 20,
-      minPanel: 0.185,
-      gap: 0.0085,
+      tileM: 26,
+      minPanel: 0.19,
+      gap: 0.0080,
       bevel: 0.010,
       recess: 0.16,
       raise: 0.12,
       rivets: 0.45,
       skew: 0.0,
       splits: 4,
+      toneSpread: 0.06,
+      plateContrast: 0.38,
+      calm: 0.62,
     },
 
     wear: { edge: 0.55, streak: 0.62, grime: 0.40, pit: 0.12, oxide: 0x2b2a24 },
@@ -286,79 +359,116 @@ export const POI_PALETTES = {
   'giant-orbit': {
     id: 'giant-orbit',
     name: 'Gas Giant Orbit',
-    key: { color: 0xfff0d8, intensity: 9.5, angularRadius: 0.009 },
-    fill: { color: 0x3f63b4, intensity: 1.50 },     // planetshine, enormous and blue
-    bounce: { color: 0x6f8ed8, intensity: 0.80 },
+    key: { color: 0xfff0d8, intensity: 13.5, angularRadius: 0.009 },
+    // Planetshine. Enormous and blue - but stated as a PEAK CHANNEL, so its blue
+    // lands 5-6 stops under the key's blue instead of matching it.
+    fill: { color: 0x3f63b4, intensity: 2.30, broad: 0.42 },
+    bounce: { color: 0x6f8ed8, intensity: 0.90 },
+    // The kicker. Tracks the camera, sits behind the subject, and is the only thing
+    // separating a grey hull from a black sky when the key is on the far side.
+    rim: { color: 0x8fb4ff, intensity: 1.25 },
     shadow: 0x050912,
     fog: { color: 0x16223c, density: 0.000012 },
     accent: 0x8fb4ff,
-    ibl: { zenith: 0x0a1024, horizon: 0x24406e, ground: 0x070b16, sun: 0xfff3e0, sunSize: 0.055, intensity: 0.85 },
-    grade: { exposure: 1.02, bloom: 0.62, godrays: 0.34, vignette: 0.42 },
+    ibl: { zenith: 0x0a1024, horizon: 0x24406e, ground: 0x070b16, sun: 0xfff3e0, sunSize: 0.055, intensity: 0.78 },
+    grade: {
+      exposure: 1.0, bloom: 0.42, godrays: 0.30, vignette: 0.44,
+      // Cold in the toe, cream in the shoulder. This is what puts the rocks, the
+      // hull and the giant on one grade instead of three.
+      lift: 0x35558c, gain: 0xffe8c8, liftAmount: 0.045, gainAmount: 0.30, saturation: 1.02,
+    },
   },
 
   belt: {
     id: 'belt',
     name: 'The Belt',
-    key: { color: 0xffe2b6, intensity: 8.0, angularRadius: 0.014 },
-    fill: { color: 0x6b5a44, intensity: 1.10 },     // dust bouncing off a million rocks
-    bounce: { color: 0x8a7350, intensity: 0.70 },
+    key: { color: 0xffe2b6, intensity: 10.5, angularRadius: 0.014 },
+    fill: { color: 0x6b5a44, intensity: 2.10, broad: 0.30 },  // dust bouncing off a million rocks
+    bounce: { color: 0x8a7350, intensity: 0.82 },
+    rim: { color: 0xd89a4a, intensity: 0.95 },
     shadow: 0x0a0806,
     fog: { color: 0x2a2018, density: 0.000042 },
     accent: 0xd89a4a,
-    ibl: { zenith: 0x0b0a08, horizon: 0x2e2418, ground: 0x100c08, sun: 0xffe6bc, sunSize: 0.07, intensity: 0.7 },
-    grade: { exposure: 1.0, bloom: 0.5, godrays: 0.55, vignette: 0.46 },
+    ibl: { zenith: 0x0b0a08, horizon: 0x2e2418, ground: 0x100c08, sun: 0xffe6bc, sunSize: 0.07, intensity: 0.66 },
+    grade: {
+      exposure: 1.0, bloom: 0.38, godrays: 0.48, vignette: 0.46,
+      lift: 0x6b5a44, gain: 0xffe8c8, liftAmount: 0.040, gainAmount: 0.26, saturation: 1.02,
+    },
   },
 
   graveyard: {
     id: 'graveyard',
     name: 'The Graveyard',
-    key: { color: 0xb6c6da, intensity: 5.5, angularRadius: 0.006 },
-    fill: { color: 0x1b2a3a, intensity: 0.85 },
-    bounce: { color: 0x2b3c4e, intensity: 0.50 },
+    key: { color: 0xb6c6da, intensity: 7.6, angularRadius: 0.006 },
+    // The nebula IS the fill here, and it is the only reason anything in this POI
+    // is visible at all. Stated brighter than it looks because the key is weak.
+    fill: { color: 0x4c6a4a, intensity: 1.55, broad: 0.34 },
+    bounce: { color: 0x2b3c4e, intensity: 0.78 },
+    // Sick derelict green off the nebula, and the strongest rim in the game: this
+    // location is defined as "everything is silhouette", and a silhouette with no
+    // rim is just black.
+    rim: { color: 0x8fb04a, intensity: 1.05 },
     shadow: 0x02040a,
     fog: { color: 0x0e1620, density: 0.000030 },
     accent: 0x8fb04a,                                // derelict light, leaking
-    ibl: { zenith: 0x03060c, horizon: 0x14202e, ground: 0x04070c, sun: 0xc2d2e4, sunSize: 0.035, intensity: 0.5 },
-    grade: { exposure: 0.96, bloom: 0.7, godrays: 0.24, vignette: 0.54 },
+    ibl: { zenith: 0x03060c, horizon: 0x14202e, ground: 0x04070c, sun: 0xc2d2e4, sunSize: 0.035, intensity: 0.62 },
+    grade: {
+      exposure: 1.0, bloom: 0.46, godrays: 0.22, vignette: 0.50,
+      // A dim frame needs MORE value separation, not less: lift the floor off zero
+      // so wreckage separates from the void instead of merging with it.
+      lift: 0x4c6a4a, gain: 0xdfeee0, liftAmount: 0.075, gainAmount: 0.16, saturation: 1.06,
+    },
   },
 
   yard: {
     id: 'yard',
     name: 'Fitting Yard',
-    key: { color: 0xffd9a0, intensity: 6.5, angularRadius: 0.02 },   // work lights, not a star
-    fill: { color: 0x2b3442, intensity: 1.40 },
-    bounce: { color: 0x4a5468, intensity: 0.80 },
+    key: { color: 0xffd9a0, intensity: 8.5, angularRadius: 0.02 },   // work lights, not a star
+    fill: { color: 0x2b3442, intensity: 2.10, broad: 0.38 },
+    bounce: { color: 0x4a5468, intensity: 0.82 },
+    rim: { color: 0xffa93c, intensity: 0.85 },
     shadow: 0x05070c,
     fog: { color: 0x1a212c, density: 0.000022 },
     accent: 0xffa93c,
-    ibl: { zenith: 0x060a12, horizon: 0x232c3a, ground: 0x0a0d14, sun: 0xffdcae, sunSize: 0.10, intensity: 0.8 },
-    grade: { exposure: 1.05, bloom: 0.58, godrays: 0.30, vignette: 0.38 },
+    ibl: { zenith: 0x060a12, horizon: 0x232c3a, ground: 0x0a0d14, sun: 0xffdcae, sunSize: 0.10, intensity: 0.72 },
+    grade: {
+      exposure: 1.0, bloom: 0.40, godrays: 0.28, vignette: 0.38,
+      lift: 0x3c5170, gain: 0xffe8c8, liftAmount: 0.042, gainAmount: 0.26, saturation: 1.02,
+    },
   },
 
   'near-star': {
     id: 'near-star',
     name: 'Near Star',
-    key: { color: 0xfff6ea, intensity: 20.0, angularRadius: 0.05 },  // brutal
-    fill: { color: 0x7a4226, intensity: 1.10 },
-    bounce: { color: 0xa85c2e, intensity: 0.65 },
+    key: { color: 0xfff6ea, intensity: 26.0, angularRadius: 0.05 },  // brutal
+    fill: { color: 0x7a4226, intensity: 1.90, broad: 0.16 },
+    bounce: { color: 0xa85c2e, intensity: 0.70 },
+    rim: { color: 0xff7a2a, intensity: 1.30 },
     shadow: 0x0c0603,
     fog: { color: 0x3c1e0e, density: 0.000055 },
     accent: 0xff7a2a,
-    ibl: { zenith: 0x120804, horizon: 0x5a2c12, ground: 0x1a0c05, sun: 0xfffaf0, sunSize: 0.16, intensity: 1.4 },
-    grade: { exposure: 0.88, bloom: 0.9, godrays: 0.72, vignette: 0.52 },
+    ibl: { zenith: 0x120804, horizon: 0x5a2c12, ground: 0x1a0c05, sun: 0xfffaf0, sunSize: 0.16, intensity: 1.05 },
+    grade: {
+      exposure: 0.86, bloom: 0.62, godrays: 0.66, vignette: 0.52,
+      lift: 0x7a4226, gain: 0xffe8c8, liftAmount: 0.036, gainAmount: 0.24, saturation: 1.0,
+    },
   },
 
   station: {
     id: 'station',
     name: 'Station Approach',
-    key: { color: 0xdce8f4, intensity: 7.5, angularRadius: 0.008 },
-    fill: { color: 0x27374e, intensity: 1.20 },
-    bounce: { color: 0x3c5170, intensity: 0.70 },
+    key: { color: 0xdce8f4, intensity: 9.5, angularRadius: 0.008 },
+    fill: { color: 0x27374e, intensity: 2.10, broad: 0.40 },
+    bounce: { color: 0x3c5170, intensity: 0.82 },
+    rim: { color: 0x59c8ff, intensity: 0.95 },
     shadow: 0x04070e,
     fog: { color: 0x141e2c, density: 0.000018 },
     accent: 0x59c8ff,
-    ibl: { zenith: 0x050912, horizon: 0x1c2c42, ground: 0x070b12, sun: 0xe6f0fa, sunSize: 0.04, intensity: 0.92 },
-    grade: { exposure: 1.0, bloom: 0.6, godrays: 0.22, vignette: 0.40 },
+    ibl: { zenith: 0x050912, horizon: 0x1c2c42, ground: 0x070b12, sun: 0xe6f0fa, sunSize: 0.04, intensity: 0.80 },
+    grade: {
+      exposure: 1.0, bloom: 0.42, godrays: 0.20, vignette: 0.40,
+      lift: 0x27374e, gain: 0xf0f6ff, liftAmount: 0.042, gainAmount: 0.20, saturation: 1.02,
+    },
   },
 };
 
@@ -400,6 +510,7 @@ const COLOR_KEYS = new Set([
   'ink', 'inkDark', 'hazardA', 'hazardB',
   'color', 'shadow', 'accent',
   'zenith', 'horizon', 'ground', 'sun',
+  'lift', 'gain',
   'void', 'spaceBlack', 'hostile', 'friendly', 'salvage', 'select', 'shieldHit',
   'scorchCore', 'scorchRim', 'ice', 'rock', 'rockDark', 'rockOre',
 ]);

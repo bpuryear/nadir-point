@@ -384,6 +384,10 @@ function destroyerParts({ lod }) {
     }
     B.add('core', 'hull', G.pipeRun({ length: 70, radius: 15, sides: 6, axis: 'z', detail: D }),
       { pos: [0, -6, -35] });
+    // The gantry beam over the waist. The hole and the thing bridging it are the
+    // class, so both survive to the far LOD.
+    B.add('core', 'hull', G.panelledSlab({ width: 13, height: 7, depth: 108, detail: D }),
+      { pos: [0, 77, 0] });
     B.add('core', 'hull', G.panelledSlab({ width: 30, height: 26, depth: 78, detail: D }),
       { pos: [DD_CITADEL_X, 34, -128] });
     return { buckets: B.list() };
@@ -434,6 +438,37 @@ function destroyerParts({ lod }) {
   B.add('core', 'dark', G.hullRibs({
     count: full ? 4 : 2, spacing: 24, span: 64, height: 5, thickness: 4, taper: 0.92, detail: D,
   }), { pos: [0, -2, 0] });
+
+  // THE GANTRY. A portal frame straight over the open waist: two legs off the
+  // citadel and aft-deck shoulders, a box beam across the top, and two diagonals.
+  //
+  // This is the committed structural difference between the Ardent and the Bulwark,
+  // and it exists because "long low hull, tall deckhouse, lattice mast, engine block
+  // with swept fins" described BOTH classes and the pair was the weakest on the
+  // silhouette sheet. A frigate is a hull with things on it. This is a hull with a
+  // hole through it and a bridge built over the hole - there is a rectangle of empty
+  // space in the middle of the profile that nothing else in the game produces, and
+  // it survives to any distance at which the ship is more than a few pixels.
+  {
+    const GY = 30, GTOP = 74, GZ = 47;
+    for (const s of [-1, 1]) {
+      B.add('core', 'dark', G.hexStrut({
+        length: GTOP - GY, radius: 4.5, axis: 'y', caps: false, detail: D,
+      }), { pos: [0, GY, s * GZ] });
+    }
+    B.add('core', 'dark', G.panelledSlab({ width: 13, height: 7, depth: GZ * 2 + 14, detail: D }),
+      { pos: [0, GTOP + 3, 0] });
+    if (full) {
+      // Diagonals into the frame corners: a portal with no bracing is a shape, a
+      // portal with bracing is a structure.
+      for (const s of [-1, 1]) {
+        const dy = GTOP - GY - 8, dz = s * (GZ - 6);
+        B.add('core', 'dark', G.hexStrut({
+          length: Math.hypot(dy, dz), radius: 3.0, axis: 'z', caps: false, detail: D,
+        }), { pos: [0, GY + 4, s * 6], rot: [Math.atan2(-dy, dz), 0, 0] });
+      }
+    }
+  }
 
   // The reactor. A drum you can see, aim at, and lose the whole prize with.
   B.add('reactor', 'greeble', G.pipeRun({
@@ -544,9 +579,15 @@ function strikeCraftParts() {
   }), { pos: [0, 0, -2] });
   B.add('core', 'hull', G.panelledSlab({ width: 3.6, height: 2.8, depth: 7, chamfer: 0.8, detail: D }),
     { pos: [0, 0, -5.5] });
+  // THE FIN, and it is the class read. A 5.2 m single tail on a 2.8 m deep body:
+  // taller than the fuselage it stands on, which is a thing no Concord hull does at
+  // any size. Bolt / Whipcord / Shrike used to be three flat deltas separated only
+  // by wing sweep and were genuinely unidentifiable on the silhouette sheet; the
+  // three now differ in topology - solid body with a tall fin, hole in the tail,
+  // forked nose - so each survives to three pixels.
   B.add('core', 'dark', G.radiatorFin({
-    chord: 4.2, span: 2.2, thickness: 0.4, sweep: -1.2, tipChord: 2.2, detail: D,
-  }), { pos: [0, 1.4, -7.4] });
+    chord: 5.4, span: 5.2, thickness: 0.4, sweep: -1.6, tipChord: 2.4, detail: D,
+  }), { pos: [0, 1.3, -7.4] });
   // Canopy, forward and offset - a Coalition pilot sits where the armour is thinnest.
   B.add('core', 'glass', G.panelledSlab({ width: 1.6, height: 1.0, depth: 2.4, detail: D }),
     { pos: [0, 1.7, 3.2] });

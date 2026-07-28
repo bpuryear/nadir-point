@@ -190,6 +190,33 @@ export function aimed(geo, dir, pos = [0, 0, 0]) {
 }
 
 /**
+ * THE CUT EDGE. An irregular hexagon in the XY plane, deliberately NOT concentric
+ * with the bolt ring it surrounds and with six unequal radii.
+ *
+ * This is the piece of the donor ship's own skin that came away with the module
+ * when the crew cut it free. It matters because "a piece of somebody else's warship
+ * welded onto yours" was, up to now, a claim the geometry never made: every module
+ * met the hull at a perfect hexagonal collar and stopped, so a Coalition gun and a
+ * derelict flak drum met the deck in exactly the same way and the foreign ones read
+ * as texture corruption rather than as salvage. A torch cut is off-centre and it is
+ * never round.
+ *
+ * Fixed radii, not RNG: a scale cue that changes between two builds of the same
+ * module is not a cue, and this file has no seeded stream of its own.
+ */
+const CUT_RADII = [1.44, 1.06, 1.32, 1.52, 1.10, 1.26];
+
+export function cutOutline(radius) {
+  const ox = radius * 0.17, oy = -radius * 0.10;
+  const pts = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + 0.37;
+    pts.push([ox + Math.cos(a) * radius * CUT_RADII[i], oy + Math.sin(a) * radius * CUT_RADII[i]]);
+  }
+  return pts;
+}
+
+/**
  * A closed ring band in the XY plane: outer wall, inner wall, two faces. This is
  * how the jump drive's field ring and the hangar's bay throats are built — a real
  * hole you can see through, for 8 triangles per side.
@@ -260,6 +287,47 @@ export class ModuleBuilder {
     let list = this._parts.get(s);
     if (!list) { list = []; this._parts.set(s, list); }
     list.push(xf ? { geo, ...xf } : { geo });
+    return this;
+  }
+
+  /**
+   * THE GRAFT. Every module's root, in one shared vocabulary, replacing the bare
+   * bolt ring each of them used to place by hand:
+   *
+   *   1. a CUT PLATE - the donor hull's own skin, torch-cut, off-centre, on the
+   *      `dark` surface so the ragged edge reads as a recess against the plating;
+   *   2. the BOLT RING, standing on the plate rather than on your deck;
+   *   3. two WELD BEADS across the join at angles that agree with nothing.
+   *
+   * The whole point is that a Coalition gun, a Concord fairing and a derelict flak
+   * drum all meet your hull the same way, because the crew that fitted them owned
+   * one cutting torch and one welder. Without it the foreign palettes read as a
+   * rendering artefact; with it they read as somebody's decision.
+   *
+   * `pos` and `rot` are exactly what the old dockingCollar call used, so the mount
+   * face is unchanged. `beads: 0` for a module with no triangles to spare.
+   *
+   * @param {number[]} pos    mount point in module space
+   * @param {number[]} rot    XYZ Euler that points the collar's +Z outward
+   * @param {number} radius   bolt-ring radius, metres
+   */
+  graft(pos, rot, radius, { beads = 2 } = {}) {
+    const D = this.detail;
+    const plateH = Math.max(4, radius * 0.14);
+    this.add('dark', G.prism(cutOutline(radius), 0, plateH), { pos, rot });
+    this.add('trim', G.place(G.dockingCollar({
+      radius: radius * 0.92, innerRadius: radius * 0.6, depth: 8, sides: 6, detail: D,
+    }), { pos: [0, 0, plateH] }), { pos, rot });
+    if (!this.full || beads <= 0) return this;
+    for (let i = 0; i < beads; i++) {
+      const a = 0.72 + i * 2.45;
+      const rr = radius * 1.15;
+      this.add('greeble', G.place(
+        G.prism(G.rectProfile(radius * 0.66, radius * 0.19), 0, plateH * 0.75,
+          { capFront: false, capBack: false }),
+        { rot: [0, 0, a], pos: [Math.cos(a) * rr, Math.sin(a) * rr, 0] },
+      ), { pos, rot });
+    }
     return this;
   }
 

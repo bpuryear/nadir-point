@@ -18,7 +18,6 @@
  * equivalent of an off-palette colour.
  */
 
-import { clamp } from './synth.js';
 import { noiseBurst, subThump, metalRing, chirp } from './parts.js';
 
 export class UIAudio {

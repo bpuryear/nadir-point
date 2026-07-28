@@ -145,7 +145,10 @@ class DriveVoice {
 
     this.handle.follow(spat, 0.10, t);
     // Idle is audible: a capital ship's plant never actually stops. 18% at rest.
-    const lvl = (0.18 + 0.82 * Math.pow(thr, 0.7)) * lerp(0.55, 1, this.small);
+    // The 0.42 is bed headroom - measured against the weapons and impacts in
+    // docs/probes/audio.png, this puts the drive about 9 dB under a cannon, which
+    // is where a continuous layer has to sit or it swallows the transients.
+    const lvl = 0.42 * (0.18 + 0.82 * Math.pow(thr, 0.7)) * lerp(0.55, 1, this.small);
     this.handle.setGain(lvl * spat.gain, 0.14, t);
 
     if (Math.abs(thr - this.throttle) > 0.01) {

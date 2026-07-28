@@ -518,8 +518,9 @@ function drawHeader(width, height, lines) {
   const c = ctx2d(canvas);
   c.fillStyle = css(INK.bg);
   c.fillRect(0, 0, width, height);
-  label(c, lines[0], 12, Math.round(height * 0.22), 4, INK.title, 1);
-  label(c, lines[1], width - 12, Math.round(height * 0.30), 2, INK.label, 1, 'right');
+  label(c, lines[0], 12, 10, 5, INK.title, 1);
+  label(c, lines[1], 12, 58, 2, INK.label, 1);
+  label(c, lines[2], 12, 78, 2, INK.label, 0.62);
   c.fillStyle = css(INK.frame, 1);
   c.fillRect(0, height - 2, width, 1);
   return canvas;
@@ -686,7 +687,7 @@ const PANEL_W = 3.44;
 const PANEL_H = 2.35;
 const GAP = 0.16;
 const STRIP_H = 1.95;
-const HEADER_H = 0.5;
+const HEADER_H = 0.53;
 const FOOTER_H = 0.62;
 
 export default {
@@ -750,10 +751,11 @@ export default {
     let top = totalH / 2;
     const gridTop = top - HEADER_H - GAP;
 
-    quad(scene, drawHeader(2048, 96, [
+    quad(scene, drawHeader(2048, 104, [
       'NADIR POINT / AUDIO',
-      `OFFLINE RENDER OF THE LIVE GRAPH AT ${SR / 1000}KHZ   /   AMBER: ENVELOPE DB   CYAN: SPECTRUM PER OCTAVE`
-      + '   /   BARS: UPPER POWER PER BAND, LOWER A-WEIGHTED   /   CTR: CENTROID RAW/A-WEIGHTED',
+      `EVERY INSTRUMENT RENDERED OFFLINE AT ${SR / 1000}KHZ THROUGH THE LIVE MIX - BUSES, FDN REVERB, LIMITER`,
+      'AMBER: PEAK ENVELOPE DB   CYAN: ENERGY PER OCTAVE   BARS: POWER PER BAND OVER A-WEIGHTED'
+      + '   CTR: SPECTRAL CENTROID RAW/A-WEIGHTED',
     ]), left, top, gridW, HEADER_H);
     top -= HEADER_H + GAP;
 
@@ -790,15 +792,42 @@ export default {
     });
     top -= STRIP_H + GAP;
 
+    // ---- reverb stability: a regression guard on a bug that shipped once ---
+    // The FDN's in-loop damping filter had a resonant peak (Web Audio's lowpass Q
+    // is in DECIBELS), which pushed the loop gain over one and turned the reverb
+    // into an oscillator. It presented as ambience beds that got LOUDER the longer
+    // you listened. This renders the longest space in the game - the graveyard -
+    // and fails if its tail is not monotonically dying.
+    let reverbTail = null;
+    if (!noAudio) {
+      const buf = await render({
+        seconds: 6, rng: rng.fork('reverb-stability'),
+        perform: ({ core, impacts }) => {
+          core.mixer.setSpace({ feedback: 0.70, damp: 2300, size: 1.9, wet: 1 }, 0, 0.001);
+          impacts.hull(CLOSE, { size: 1, severity: 1 });
+        },
+      });
+      const a = analyse(buf, 'reverb');
+      // Energy in the last third versus the peak. A decaying tail is far below it;
+      // a growing one is at or above it.
+      let lateMax = 0;
+      const from = Math.floor(a.env.length * 0.66);
+      for (let i = from; i < a.env.length; i++) if (a.env[i] > lateMax) lateMax = a.env[i];
+      reverbTail = { lateDb: dB(lateMax / Math.max(1e-9, a.peak)), tail: a.tail };
+    }
+
     // ---- contract self-test ---------------------------------------------
-    const selfTest = contractSelfTest(ctx);
+    const selfTest = contractSelfTest(ctx, reverbTail);
     const foot = [
       selfTest.ok
         ? `CONTRACT SELF-TEST PASSED - ${selfTest.checks} CHECKS`
         : `CONTRACT SELF-TEST FAILED - ${selfTest.fails.join(' / ')}`,
       noAudio
         ? 'WEB AUDIO UNAVAILABLE - STREAM NO-OPPED CLEANLY'
-        : `${analyses.length} INSTRUMENTS + ${strips.reduce((n, s) => n + s.traces.length, 0)} COMPARISON TRACES  /  OFFLINE RENDER ${Math.round(renderMs)}MS  /  ${selfTest.report}`,
+        : `${analyses.length} INSTRUMENTS + ${strips.reduce((n, s) => n + s.traces.length, 0)} COMPARISON TRACES`
+          + `  /  OFFLINE RENDER ${Math.round(renderMs)}MS`
+          + (reverbTail ? `  /  GRAVEYARD REVERB LATE ENERGY ${reverbTail.lateDb.toFixed(0)}DB - DECAYING` : '')
+          + `  /  ${selfTest.report}`,
     ];
     quad(scene, drawFooter(2048, 120, foot, selfTest.ok), left, top, gridW, FOOTER_H);
 
@@ -882,10 +911,41 @@ export default {
  * this proves the promises. A failure here is a console.error, which makes
  * tools/probe.mjs exit non-zero.
  */
-function contractSelfTest(ctx) {
+function contractSelfTest(ctx, reverbTail) {
   const fails = [];
   let checks = 0;
   const check = (name, ok) => { checks++; if (!ok) fails.push(name); };
+
+  // The FDN must decay. See the note at the call site.
+  if (reverbTail) {
+    check(`the reverb decays rather than oscillating (late energy ${reverbTail.lateDb.toFixed(0)} dB)`,
+      reverbTail.lateDb < -30);
+  }
+
+  // With no Web Audio at all the whole stream must be inert, not merely quiet.
+  {
+    const Saved = globalThis.AudioContext;
+    const SavedWk = globalThis.webkitAudioContext;
+    let inertOk = false;
+    try {
+      delete globalThis.AudioContext;
+      delete globalThis.webkitAudioContext;
+      const e = new AudioEngine({});
+      inertOk = e.unavailable === true
+        && e.unlock() === false
+        && e.ctx === null
+        && e.voice('weapons', { gain: 1, pan: 0, cutoff: 19000, audible: true }) === null
+        && e.sustain('engines', { gain: 1, pan: 0, cutoff: 19000, audible: true }) === null;
+      e.setTimeScale(4);
+      e.setListener(null, 4000);
+      e.sweep(0);
+      e.dispose();
+    } catch { inertOk = false; } finally {
+      if (Saved) globalThis.AudioContext = Saved;
+      if (SavedWk) globalThis.webkitAudioContext = SavedWk;
+    }
+    check('with no AudioContext the stream is inert and throws nothing', inertOk);
+  }
 
   // A world with nothing in it - exactly the state bootGame calls installAudio in.
   const engine = new Engine();

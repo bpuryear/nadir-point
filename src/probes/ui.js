@@ -106,6 +106,18 @@ export default {
     const label = document.getElementById('label');
     if (label) label.style.display = 'none';
 
+    /**
+     * Hand the event loop back.
+     *
+     * Building a cruiser, four faction hulls, five modules and their texture bakes,
+     * then stepping the simulation eighty times, is well over ten seconds of solid
+     * synchronous work on a software rasteriser. A main thread blocked that long
+     * stops answering the dev server's HMR socket, which then decides the page has
+     * died and reloads it - mid-setup, and the harness reports a boot failure that
+     * has nothing to do with the code under test.
+     */
+    const breathe = () => new Promise((resolve) => setTimeout(resolve, 0));
+
     // ---- materials, sky, light -------------------------------------------
     const registry = createMaterialRegistry({
       renderer: renderer.renderer,
@@ -118,13 +130,28 @@ export default {
     scene.background = null;
     far.background = new THREE.Color().setHex(NEUTRAL.void, THREE.SRGBColorSpace);
 
-    const sky = buildCelestials(S.poi, { rng: world.rng.fork('ui-sky'), far });
+    // The refit bay drops the gas giant. A planet filling a third of the frame is
+    // beautiful and it sits directly behind the panel columns, where it destroys the
+    // value separation the interface depends on. The POI's LIGHTING is untouched -
+    // only the hero body is suppressed, so the hull keeps its warm work lights over
+    // a near-black field.
+    const sky = buildCelestials(S.poi, {
+      rng: world.rng.fork('ui-sky'), far,
+      overrides: screenName === 'refit' ? { giant: null } : {},
+    });
     engine.addRender({ name: 'probe-sky', order: 60, update: () => sky.update(renderer.farCamera) });
 
     const rig = buildPOILighting(S.poi, {
       rng: world.rng.fork('ui-rig'), materials: registry, palette: registry.palette,
       faction: 'player', lod: 0,
-    }, world, { shadows: true, fog: true, shadowRadius: 2600, shadowMapSize: 1024 });
+    }, world, {
+      shadows: true, fog: true, shadowRadius: 2600, shadowMapSize: 1024,
+      // The refit bay is lit like a dock at night: one hard warm key, almost no fill,
+      // and a shadow side that goes to black. The POI's own fill is tuned for flying
+      // through the place, not for standing a hull in front of a panel column.
+      fillScale: screenName === 'refit' ? 0.5 : 1,
+      bounceScale: screenName === 'refit' ? 0.30 : 0.55,
+    });
     if (rig?.keyProxy) renderer.post.setKeyLight(rig.keyProxy, rig.keyColor ?? null);
     registry.applyEnvironment(scene, S.poi, 0.9);
 
@@ -142,6 +169,7 @@ export default {
     });
     world.hullResult = hull;
     hull.lod.autoUpdate = true;
+    await breathe();
 
     const player = new Ship({
       classDef: playerClass(hull),
@@ -186,6 +214,7 @@ export default {
         const u = stock(moduleId, 1);
         const res = refit.install(mount, u);
         if (!res.ok) console.warn(`[probe:ui] could not fit ${moduleId} on ${mount}: ${res.reason}`);
+        await breathe();
       }
     } else {
       // A first-hour hull: one salvaged cannon and nothing else.
@@ -201,7 +230,9 @@ export default {
     world.materials.exotic = locked ? 0 : 3;
 
     // ---- hostiles ---------------------------------------------------------
+    await breathe();
     const enemies = spawnEnemies(world, registry, screenName);
+    await breathe();
     const target = enemies[0] ?? null;
     if (target) {
       // A fight already in progress: the target has lost a battery and is holed.
@@ -234,8 +265,12 @@ export default {
     // ---- settle the simulation -------------------------------------------
     // Real weapon world-positions, real traverse, real shield and power state come
     // from stepping the engine, not from assignment.
+    await breathe();
     player.body.desiredHeading = player.heading;
-    for (let i = 0; i < 60; i++) engine.stepOnce();
+    for (let i = 0; i < 60; i++) {
+      engine.stepOnce();
+      if (i % 20 === 19) await breathe();
+    }
 
     // Turn the hull so the arc edge cuts through the target - see the function.
     if (target && !locked) {
@@ -271,16 +306,28 @@ export default {
     ui.orderBar.say('SUBSYSTEM LOCK — REACTOR DRUM · 92% ACCURACY', 'info');
 
     if (screenName === 'refit') {
+      // Structure first: a breached mount cannot take a part, so leaving starboard
+      // wrecked would put the whole diff column in "—" and demonstrate nothing.
+      // Repairing it here also exercises the repair path and spends real alloy.
+      const rep = refit.repairHardpoint('starboard');
       ui.openScreen('refit');
-      ui.refit.selectedMount = 'starboard';
-      const first = world.inventory.find((i) => getModule(i.moduleId)?.hardpoint === 'port');
+      // The decision on the plate is a SWAP, not a fill: barrier pylons onto the
+      // dorsal bed, which means giving up the 306-degree rail battery for a shield.
+      // That is the shape of every real refit choice - something for something - and
+      // it exercises the diff in both directions at once.
+      const first = world.inventory.find((i) => i.moduleId === 'dorsal_shield_pylons')
+        ?? world.inventory.find((i) => getModule(i.moduleId)?.hardpoint === 'dorsal');
+      // selectItem jumps the mount to the first one the part fits, so the mount is
+      // forced afterwards, not before.
       if (first) ui.refit.selectItem(first.uid);
+      ui.refit.selectedMount = 'dorsal';
       ui.refit.yaw = S.pose.yaw;
       ui.refit.pitch = S.pose.pitch;
       ui.refit.distance = S.pose.distance;
       // Prewarm the whole hold before the shot so the readout reports a real cache.
-      for (let i = 0; i < 12; i++) ui.refit._prewarmStep();
-      ui.notify('SALVAGE HOLD 4/8', { important: false });
+      for (let i = 0; i < 12; i++) { ui.refit._prewarmStep(); await breathe(); }
+      if (rep.ok) ui.notify(`STARBOARD SPONSON REBUILT — ${rep.cost} ALLOY`, { important: true });
+      ui.notify(`SALVAGE HOLD ${world.inventory.length}/${salvage.cargoCapacity}`, { important: false });
     } else {
       seedMarkers(ui, world, player, target, pose);
       ui.notify('CONTACT RESOLVED — CONCORD PICKET', { important: true });
@@ -299,7 +346,20 @@ export default {
     ctx.screenName = screenName;
     ctx.hold = makeHold(ui, screenName);
 
+    // Hold the simulation for the plate.
+    //
+    // The harness settles for ninety frames before it shoots, and on a software
+    // rasteriser those are ninety seconds of world time: the cut finishes, the hull
+    // turns off the bearing the arc search chose, the target drifts out of range and
+    // the composed frame is gone. Pausing also puts the interface in the state the
+    // controls spec says it must survive - at pause `fixedUpdate` never runs, so
+    // everything still moving in this frame is proof that the UI animates on the
+    // render path and not on the simulation.
+    if (screenName !== 'refit') engine.setTimeScaleIndex(0);
+
+    await breathe();
     report({ world, ui, combat, player, target, registry, screenName, renderer });
+    await breathe();
 
     ctx.dispose = () => { ui.dispose(); sky.dispose(); rig.dispose(); registry.dispose(); };
   },
@@ -659,16 +719,22 @@ function report({ world, ui, combat, player, target, registry, screenName, rende
     // graph keeps the previous fit as its ghost and the strip keeps the measurement.
     const spare = world.inventory.find((i) => getModule(i.moduleId)?.hardpoint === 'port');
     if (spare) {
-      r.selectedMount = 'starboard';
       r.selectItem(spare.uid);
+      r.selectedMount = 'starboard';
       const before = performance.now();
       r.install();
       console.log(`  LIVE INSTALL  ${(performance.now() - before).toFixed(2)} ms wall `
-        + `(RefitSystem.install measured ${r.lastInstall ? r.lastInstall.ms.toFixed(2) : '?'} ms)`);
+        + `(RefitSystem.install measured ${r.lastInstall ? r.lastInstall.ms.toFixed(2) : '?'} ms)`
+        + `  ok=${!!r.lastInstall}`);
       r.uninstall('starboard');
-      const again = world.inventory.find((i) => getModule(i.moduleId)?.hardpoint === 'port');
+      // Put the plate back the way it wants to be photographed: the barrier pylons
+      // selected against the occupied dorsal bed.
+      const again = world.inventory.find((i) => i.moduleId === 'dorsal_shield_pylons')
+        ?? world.inventory.find((i) => getModule(i.moduleId)?.hardpoint === 'dorsal');
       if (again) r.selectItem(again.uid);
-      r.selectedMount = 'starboard';
+      r.selectedMount = 'dorsal';
+      r._remeasureIfPending();
+      ui.orderBar.say('ENTER TO FIT · THIS SWAP COSTS THE DORSAL BATTERY', 'info');
     }
   }
 

@@ -41,7 +41,7 @@ import * as THREE from 'three';
 import { HARDPOINTS, getModule } from '../core/contracts.js';
 import { POWER_CHANNELS } from '../core/contracts.js';
 import {
-  C, F, TRACK, factionInk, fmtMass, fmtPct, fmtRange, smootherstep, arcUnion,
+  C, F, TRACK, factionInk, fmtMass, fmtPct, fmtRange, smootherstep, arcCoverage,
 } from './theme.js';
 import { InventoryPanel } from './inventory.js';
 
@@ -148,8 +148,26 @@ export class RefitScreen {
     }
   }
 
+  /**
+   * The outline walk is thousands of matrix multiplies and it does NOT belong on the
+   * click. `RefitSystem.install` is the part that has to be instant, because it is
+   * what changes the ship; the outline graph is a secondary readout and nobody can
+   * tell that it caught up one frame later. Measuring it here keeps the frame that
+   * carries the click honest.
+   */
+  _remeasureIfPending() {
+    if (!this._pendingProfile) return;
+    this._pendingProfile = false;
+    const t0 = performance.now();
+    this.prevProfile = this.profile;
+    this.profile = this._measureOutline();
+    this._profileAt = this.ui.time;
+    if (this.lastInstall) this.lastInstall.outlineMs = performance.now() - t0;
+  }
+
   update(dt) {
     if (!this.active) return;
+    this._remeasureIfPending();
     this._prewarmStep();
     this._driveCamera(dt);
 
@@ -226,10 +244,8 @@ export class RefitScreen {
       this.ui.orderBar.say(`CANNOT INSTALL — ${(res?.reason ?? 'unknown').toUpperCase()}`, 'error');
       return;
     }
-    this.prevProfile = this.profile;
-    this.profile = this._measureOutline();
-    this._profileAt = this.ui.time;
-    this.lastInstall = { ms, worstFrameMs: 0, framesLeft: 12, module: res.module?.name ?? '' };
+    this._pendingProfile = true;
+    this.lastInstall = { ms, worstFrameMs: 0, outlineMs: 0, framesLeft: 12, module: res.module?.name ?? '' };
     this.selectedUid = null;
     this._queuePrewarm();
     this.ui.orderBar.say(`INSTALLED ${(res.module?.name ?? '').toUpperCase()} · ${ms.toFixed(1)} MS`, 'good');
@@ -243,9 +259,7 @@ export class RefitScreen {
       this.ui.orderBar.say(`CANNOT REMOVE — ${(res?.reason ?? 'unknown').toUpperCase()}`, 'error');
       return;
     }
-    this.prevProfile = this.profile;
-    this.profile = this._measureOutline();
-    this._profileAt = this.ui.time;
+    this._pendingProfile = true;
     this._queuePrewarm();
     this.ui.orderBar.say('PART RETURNED TO HOLD', 'good');
   }
@@ -422,7 +436,11 @@ export class RefitScreen {
 
     // Utility mounts declare a full circle and are not weapons; counting them would
     // report total coverage on a hull that cannot answer its own starboard quarter.
-    out.coverage = arcUnion(out.arcs.filter((a) => a.width < Math.PI * 1.98));
+    out.firing = out.arcs.filter((a) => a.width < Math.PI * 1.98);
+    const cov = arcCoverage(out.firing);
+    out.coverage = cov.union;
+    out.doubled = cov.doubled;
+    out.maxDepth = cov.max;
     out.power = (player.power?.baseOutput ?? 100) + out.powerBonus;
     out.accel = (player.classDef?.accel ?? 6) * out.thrustMul;
     out.turnRate = (player.classDef?.turnRate ?? 0.085) * out.turnMul;
@@ -673,6 +691,7 @@ export class RefitScreen {
       ['MOUNTS', `${now.filled}/6`, after ? `${after.filled}/6` : null],
       ['WEAPONS', String(now.weapons), after ? String(after.weapons) : null],
       ['ARC', `${Math.round(now.coverage * 180 / Math.PI)}°`, after ? `${Math.round(after.coverage * 180 / Math.PI)}°` : null],
+      ['ARC ×2', `${Math.round(now.doubled * 180 / Math.PI)}°`, after ? `${Math.round(after.doubled * 180 / Math.PI)}°` : null],
       ['REACTOR', `${now.power.toFixed(0)} PU`, after ? `${after.power.toFixed(0)} PU` : null],
       ['THRUST', `${now.accel.toFixed(2)} M/S²`, after ? `${after.accel.toFixed(2)} M/S²` : null],
       ['TURN', `${now.turnRate.toFixed(3)} R/S`, after ? `${after.turnRate.toFixed(3)} R/S` : null],
@@ -695,55 +714,57 @@ export class RefitScreen {
     return cy;
   }
 
+  /**
+   * The arc rose, drawn as CONCENTRIC BANDS - one ring per mount, not one pie.
+   *
+   * A filled pie answers "can anything shoot that way", which on a hull with a
+   * 306-degree dorsal bed is always yes and therefore never changes. Bands answer
+   * "how many mounts answer that bearing", which is what a broadside is, and which
+   * moves the moment a part goes on. The candidate's band is drawn on the outside in
+   * the highlight colour, so what the player is about to gain is a new ring.
+   */
   _drawArcRose(P, cx, cy, R, now, after, cand) {
     const c = P.ctx;
+    const arcs = now.firing ?? [];
+    const added = after ? (after.firing ?? []).filter((a) => a.mount === this.selectedMount) : [];
+    // A swap can COST an arc, and that is the more important half of the decision.
+    const removed = after
+      ? arcs.filter((a) => a.mount === this.selectedMount
+        && !added.some((b) => Math.abs(b.centre - a.centre) < 1e-6 && Math.abs(b.width - a.width) < 1e-6))
+      : [];
+    const kept = arcs.filter((a) => !removed.includes(a));
+    const bands = kept.length + added.length + removed.length;
+    const bandW = Math.max(3.5, Math.min(7, (R - 12) / Math.max(1, bands)));
+
     c.beginPath();
     c.arc(cx, cy, R, 0, Math.PI * 2);
     c.strokeStyle = C.ruleDim;
     c.lineWidth = 1;
     c.stroke();
 
-    for (const a of now.arcs) {
+    const band = (a, i, color, weight) => {
+      const r = R - 4 - i * bandW;
+      if (r < 6) return;
       const a0 = -Math.PI * 0.5 + a.centre - a.width * 0.5;
       const a1 = -Math.PI * 0.5 + a.centre + a.width * 0.5;
       c.beginPath();
-      c.moveTo(cx, cy);
-      c.arc(cx, cy, R - 3, a0, a1);
-      c.closePath();
-      c.fillStyle = C.inkGhost;
-      c.fill();
-      c.beginPath();
-      c.arc(cx, cy, R - 3, a0, a1);
-      c.strokeStyle = C.inkFaint;
-      c.lineWidth = 1;
+      c.arc(cx, cy, r, a0, a1);
+      c.strokeStyle = color;
+      c.lineWidth = weight;
       c.stroke();
-    }
+    };
 
-    // Only the arcs the candidate ADDS, so the highlight is the change itself.
-    if (after && cand?.def?.weapon) {
-      for (const a of after.arcs) {
-        if (a.mount !== this.selectedMount) continue;
-        const a0 = -Math.PI * 0.5 + a.centre - a.width * 0.5;
-        const a1 = -Math.PI * 0.5 + a.centre + a.width * 0.5;
-        c.save();
-        c.beginPath();
-        c.moveTo(cx, cy);
-        c.arc(cx, cy, R - 3, a0, a1);
-        c.closePath();
-        c.clip();
-        P.hatch(cx - R, cy - R, R * 2, R * 2, C.select, { spacing: 5, weight: 1 });
-        c.restore();
-        c.beginPath();
-        c.arc(cx, cy, R - 3, a0, a1);
-        c.strokeStyle = C.select;
-        c.lineWidth = 1.5;
-        c.stroke();
-      }
-    }
+    added.forEach((a, i) => band(a, i, C.select, bandW - 1.2));
+    removed.forEach((a, i) => band(a, i + added.length, C.warn, bandW - 1.2));
+    kept.forEach((a, i) => band(a, i + added.length + removed.length, C.inkFaint, bandW - 1.6));
 
     P.rule(cx, cy - R - 5, P.hair, 9, C.ink);
     P.label('BOW', cx, cy - R - 9, { color: C.inkFaint, align: 'center' });
-    P.label('ARCS', cx, cy + R + 14, { color: C.inkGhost, align: 'center' });
+    const delta = added.length - removed.length;
+    const tag = !after ? 'ARCS' : delta > 0 ? `ARCS +${delta}` : delta < 0 ? `ARCS ${delta}` : 'ARCS ±0';
+    P.label(tag, cx, cy + R + 14, {
+      color: delta > 0 ? C.select : delta < 0 ? C.warn : C.inkGhost, align: 'center',
+    });
   }
 
   // --- silhouette ----------------------------------------------------------
@@ -793,9 +814,12 @@ export class RefitScreen {
       if (!p) return;
       const span = Math.max(1e-3, p.zMax - p.zMin);
       const scaleZ = w / span;
-      // Both graphs share one vertical scale so the two views are comparable.
-      const extent = Math.max(p.beam * 0.5, Math.max(Math.abs(p.top), Math.abs(p.bottom)), 1);
-      const scaleY = (h * 0.46) / extent;
+      // Both graphs share ONE vertical scale, so beam and height are comparable
+      // between the two views rather than each being normalised to its own extreme -
+      // which would hide exactly the thing the player is looking for, that a module
+      // made the ship taller but not wider.
+      const extent = Math.max(p.beam * 0.5, Math.abs(p.top), Math.abs(p.bottom), 1);
+      const scaleY = (h * 0.47) / extent;
       c.globalAlpha = alpha;
       c.beginPath();
       // Bow to the LEFT: the Homeworld ship-portrait convention.
@@ -831,14 +855,14 @@ export class RefitScreen {
     const cand = this.candidate();
     const player = this.world.player;
     const hp = player?.hardpoints?.get(this.selectedMount);
-    const buttons = [];
-    buttons.push({
-      action: 'install', label: 'FIT PART  ⏎',
-      on: !!cand && (cand.check.ok || !!cand.check.occupied),
-    });
-    buttons.push({ action: 'remove', label: 'REMOVE  ⌫', on: !!hp?.module });
-    buttons.push({ action: 'scrap', label: 'SCRAP  X', on: !!this.selectedUid });
-    buttons.push({ action: 'repair', label: 'REPAIR  R', on: !!hp && hp.structureHP < hp.maxStructureHP });
+    // Key hints are spelled out. A ⏎ or a ⌫ is a font gamble, and a control the
+    // player cannot find is the same as a control that is not there.
+    const buttons = [
+      { action: 'install', key: 'ENTER', label: 'FIT PART', on: !!cand && (cand.check.ok || !!cand.check.occupied) },
+      { action: 'remove', key: 'BKSP', label: 'REMOVE', on: !!hp?.module },
+      { action: 'scrap', key: 'X', label: 'SCRAP', on: !!this.selectedUid },
+      { action: 'repair', key: 'R', label: 'REPAIR', on: !!hp && hp.structureHP < hp.maxStructureHP },
+    ];
 
     P.label('ACTIONS', x, y, { color: C.inkDim });
     P.hline(x, y + 5, w, C.rule);
@@ -856,6 +880,9 @@ export class RefitScreen {
       }
       P.text(b.label, bx + 10, by + 15, {
         font: F.microBold, color: b.on ? C.ink : C.inkGhost, track: TRACK.label,
+      });
+      P.text(b.key, bx + bw - 8, by + 15, {
+        font: F.micro, color: b.on ? C.inkFaint : C.inkGhost, align: 'right',
       });
       if (b.on) hit?.push({ kind: 'action', action: b.action, x: bx, y: by, w: bw, h: 22 });
     }
@@ -899,8 +926,10 @@ export class RefitScreen {
       // and a frame time measured there means nothing (ARCHITECTURE.md, tooling).
       const bad = li.ms > 16.7;
       P.text(`${li.ms.toFixed(1)} MS`, x, y + 18, { font: F.midBold, color: bad ? C.warn : C.friendly });
-      P.text(`NEXT FRAME ${li.worstFrameMs.toFixed(0)} MS`, x + 82, y + 18,
+      P.text(`OUTLINE +${li.outlineMs.toFixed(1)} MS DEFERRED`, x + 82, y + 12,
         { font: F.micro, color: C.inkFaint, track: TRACK.label });
+      P.text(`NEXT FRAME ${li.worstFrameMs.toFixed(0)} MS`, x + 82, y + 23,
+        { font: F.micro, color: C.inkGhost, track: TRACK.label });
     } else {
       P.text('—', x, y + 18, { font: F.midBold, color: C.inkGhost });
     }

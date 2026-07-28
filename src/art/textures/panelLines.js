@@ -63,10 +63,21 @@ export function panelLayout(rng, opts = {}) {
     const canSplitX = w > o.minPanel * 2;
     const canSplitY = h > o.minPanel * 2;
 
-    // Stop deterministically on size, probabilistically on depth. The probabilistic
-    // stop is what produces neighbouring plates of genuinely different sizes.
+    /**
+     * Stop deterministically on size, probabilistically on depth. The probabilistic
+     * stop is what produces neighbouring plates of genuinely different sizes.
+     *
+     * The stop chance used to be a flat 0.16 and only from depth 2, which meant
+     * almost every subtree ran to full depth and the tile came out as a nearly
+     * uniform grid of similar cells - the bathroom-tile read. Stopping early, and
+     * far more often, leaves a couple of quarter-tile plates untouched, and those
+     * big calm plates are what the dense corners are supposed to contrast against.
+     * The reference hulls are roughly 60% calm, 30% medium, 10% dense; a uniform
+     * grid is 100% medium and has no hierarchy at all.
+     */
+    const stopChance = depth <= 1 ? 0.16 : depth === 2 ? 0.34 : 0.44;
     const forcedStop = (!canSplitX && !canSplitY) || depth >= o.splits;
-    if (forcedStop || (depth >= 2 && rng.next() < 0.16)) {
+    if (forcedStop || (depth >= 1 && rng.next() < stopChance)) {
       leaves.push(makeLeaf(rng, x0, y0, x1, y1, depth, o));
       return;
     }
@@ -126,7 +137,12 @@ function makeLeaf(rng, x0, y0, x1, y1, depth, o) {
 
   // Derelict plates get a chamfered corner. Cheap to rasterise, and it is the
   // single strongest "no human drew this" signal available in a rectangle.
-  if (o.skew > 0 && rng.next() < o.skew) {
+  //
+  // At the full skew probability nearly half the plates were chamfered, and a field
+  // of half-chamfered rectangles resolves into a regular diamond basketweave - the
+  // one pattern that is MORE machine-made than a plain grid. Applied to a minority
+  // of plates it does what it was for: it breaks the grid instead of replacing it.
+  if (o.skew > 0 && rng.next() < o.skew * 0.45) {
     leaf.cut = {
       corner: rng.int(0, 3),
       amount: Math.min(x1 - x0, y1 - y0) * (0.25 + rng.next() * 0.45),

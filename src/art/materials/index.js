@@ -62,15 +62,28 @@ export const MATERIAL_KEYS = [
 
 const quantize = (v, step) => Math.round(v / step) * step;
 
-/** Hull-ish keys share one normalisation and one build path. */
+/**
+ * Hull-ish keys share one normalisation and one build path.
+ *
+ * `normalScale` and `envMapIntensity` are both down across the board from where
+ * they were authored, and for the same reason: between them they were overriding
+ * the key light. A normal scale of 1.0 on a tile whose relief is a plate seam turns
+ * a flat armour belt into an embossed pattern that shades independently of the hull
+ * face it sits on, and an envMapIntensity above 1 on a surface that is 20-40% metal
+ * means a good fraction of the response comes from a nearly uniform environment
+ * rather than from a direction. Both flatten the terminator, which is the one thing
+ * this project cannot afford to lose.
+ */
 const HULL_VARIANTS = {
-  hull: { variant: 'hull', normalScale: 1.0, envMapIntensity: 1.15 },
-  hullDark: { variant: 'hullDark', normalScale: 0.9, envMapIntensity: 0.8 },
-  plating: { variant: 'plating', normalScale: 1.0, envMapIntensity: 1.2 },
-  greeble: { variant: 'greeble', normalScale: 1.15, envMapIntensity: 1.35 },
-  trim: { variant: 'trim', normalScale: 0.7, envMapIntensity: 0.9 },
-  derelictHull: { variant: 'derelictHull', normalScale: 1.3, envMapIntensity: 0.85 },
-  debris: { variant: 'debris', normalScale: 1.0, envMapIntensity: 1.0 },
+  hull: { variant: 'hull', normalScale: 0.62, envMapIntensity: 0.70 },
+  hullDark: { variant: 'hullDark', normalScale: 0.58, envMapIntensity: 0.55 },
+  plating: { variant: 'plating', normalScale: 0.62, envMapIntensity: 0.75 },
+  // Greeble is genuinely bare hardware, so it keeps a strong relief and a real
+  // environment response. It is the frequency contrast against the calm hull.
+  greeble: { variant: 'greeble', normalScale: 1.0, envMapIntensity: 1.10 },
+  trim: { variant: 'trim', normalScale: 0.45, envMapIntensity: 0.60 },
+  derelictHull: { variant: 'derelictHull', normalScale: 0.80, envMapIntensity: 0.60 },
+  debris: { variant: 'debris', normalScale: 0.75, envMapIntensity: 0.70 },
 };
 
 /**
@@ -216,14 +229,38 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
       return m;
     },
 
+    /**
+     * A lit panel or, when instanced, a lamp.
+     *
+     * The instanced variant gets a soft radial falloff and additive blending,
+     * because every instanced use of this key in the game is a camera-facing quad
+     * standing in for a point of light - running lights along a spine, station
+     * beacons. Rendered as a bare untextured quad it is a hard-edged square that
+     * aliases badly at distance and reads as a machine-made strip rather than as a
+     * ship's lighting; running lights are the game's only real scale cue and they
+     * have to survive being looked at. Non-instanced uses are flat emissive FACES
+     * and must stay opaque, so they are left alone.
+     */
     emissive: (o) => {
-      const m = new THREE.MeshBasicMaterial({
+      if (o.instanced) {
+        const glow = textures.get('glow', { faction: o.faction, size: 128, falloff: 2.6 });
+        return new THREE.MeshBasicMaterial({
+          map: glow.texture,
+          color: emissiveColor(o.color, o.intensity, 'materials.emissive'),
+          transparent: true,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          toneMapped: true,
+          fog: false,
+          vertexColors: o.vertexColors,
+        });
+      }
+      return new THREE.MeshBasicMaterial({
         color: emissiveColor(o.color, o.intensity, 'materials.emissive'),
         toneMapped: true,
         fog: false,
         vertexColors: o.vertexColors,
       });
-      return m;
     },
 
     engineGlow: (o) => {
@@ -261,8 +298,10 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
         roughness: 0.055,
         // Canopy glass is nothing but reflection. With a dark environment the only
         // things it shows are the sun and whatever is nearby, so the env has to be
-        // pushed hard or the canopy is a black hole in the hull.
-        envMapIntensity: 3.4,
+        // pushed or the canopy is a black hole in the hull - but not so far that a
+        // window becomes the most saturated thing on the ship. At 3.4 against a blue
+        // POI environment every canopy on the cruiser rendered as primary cobalt.
+        envMapIntensity: 2.2,
         flatShading: o.flatShading,
         side: THREE.FrontSide,
       });

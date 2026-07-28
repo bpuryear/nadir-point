@@ -18,7 +18,7 @@
  * how it gets verified without ears.
  */
 
-import { clamp, gain as mkGain, biquad, osc, bufferSource, startAt, stopAt, percEnv } from './synth.js';
+import { clamp } from './synth.js';
 import { noiseBurst, subThump, metalRing, chirp } from './parts.js';
 
 const GATE = { hull: 0.018, shield: 0.028, subsystem: 0.05, breach: 0.1 };
@@ -101,22 +101,22 @@ export class ImpactAudio {
     // The ring. Four inharmonic partials at very high Q, decaying for most of a
     // second. This is the entire identity of the sound.
     metalRing(A, d, t, {
-      freqs: [642 * k, 971 * k, 1489 * k, 2216 * k], q: 27, peak: 0.60 * sev,
+      freqs: [642 * k, 971 * k, 1489 * k, 2216 * k], q: 27, peak: 1.15 * sev,
       tau: 0.40, exciteMs: 2.4, spread: 0.78,
     });
     metalRing(A, d, t + 0.03, {
-      freqs: [1187 * k, 1823 * k, 3040 * k], q: 34, peak: 0.26 * sev,
+      freqs: [1187 * k, 1823 * k, 3040 * k], q: 34, peak: 0.48 * sev,
       tau: 0.40, exciteMs: 3.5, spread: 0.7,
     });
     // Field bloom: a narrow band of noise swelling and dying, no transient.
     noiseBurst(A, d, t + 0.005, {
       buffer: 'white', type: 'bandpass', freq: 1750 * k, sweepTo: 900 * k, q: 4.5,
-      peak: 0.24 * sev, attack: 0.02, tau: 0.22,
+      peak: 0.40 * sev, attack: 0.02, tau: 0.22,
     });
     // A token amount of low end so it still connects to the hull. Deliberately
     // tiny - one fifth of what a hull hit puts down there.
     subThump(A, d, t, {
-      f0: 108, f1: 78, sweepTime: 0.05, peak: 0.13 * sev, attack: 0.006, tau: 0.055,
+      f0: 108, f1: 78, sweepTime: 0.05, peak: 0.20 * sev, attack: 0.006, tau: 0.055,
     });
     return true;
   }

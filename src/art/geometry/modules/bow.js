@@ -37,8 +37,7 @@ function buildSiegeLance(ctx) {
   // Breech block, sat over the pad and reaching back onto the casemate deck.
   b.add('hull', G.panelledSlab({ width: 98, height: 76, depth: 150, chamfer: 22, detail: D }),
     { pos: [0, 30, -22] });
-  b.add('trim', G.dockingCollar({ radius: 44, innerRadius: 28, depth: 9, sides: 6, detail: D }),
-    { pos: [0, -6, -22], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, -6, -22], [-HALF_PI, 0, 0], 44);
 
   // The tube. One long hex run; the whole module is really this shape.
   b.add('plating', G.hexStrut({ length: 300, radius: 17, axis: 'z', detail: D }),
@@ -119,9 +118,16 @@ function buildBreachingProw(ctx) {
     { pos: [0, 6, -18] });
 
   // The ram itself: tipped nose-down so it hangs under the prow.
+  //
+  // The droop used to be 0.30 rad and the tip finished at roughly the height it
+  // started; against the torpedo battery - the other Coalition bow module, also a
+  // big block with things sticking forward out of it - the two were hard to tell
+  // apart. 0.46 rad puts the tip 120 m BELOW the mount plane, so this module's
+  // whole read is that the bow of the ship now points DOWN, and the torpedo block's
+  // is that it points UP. Opposite signs, one glance.
   b.add('plating', G.taperedWedge({
-    length: 210, width0: 116, height0: 70, width1: 34, height1: 18, shear: -12, chamfer: 8, detail: D,
-  }), { pos: [0, -4, 22], rot: [0.30, 0, 0] });
+    length: 232, width0: 116, height0: 70, width1: 34, height1: 18, shear: -12, chamfer: 8, detail: D,
+  }), { pos: [0, 2, 16], rot: [0.46, 0, 0] });
 
   // Teeth along the leading edge. Three, uneven — a cutter that has been re-welded.
   if (full) {
@@ -129,7 +135,7 @@ function buildBreachingProw(ctx) {
     for (const [x, dz] of teeth) {
       b.add('greeble', G.taperedWedge({
         length: 46, width0: 20, height0: 20, width1: 4, height1: 5, detail: D,
-      }), { pos: [x, -66 + dz * 0.4, 184 + dz], rot: [0.34, 0, 0] });
+      }), { pos: [x, -104 + dz * 0.4, 210 + dz], rot: [0.46, 0, 0] });
     }
   }
 
@@ -151,11 +157,10 @@ function buildBreachingProw(ctx) {
     }
   }
 
-  b.add('trim', G.dockingCollar({ radius: 42, innerRadius: 27, depth: 8, sides: 6, detail: D }),
-    { pos: [0, -22, -18], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, -22, -18], [-HALF_PI, 0, 0], 42);
 
-  // Lights down the ram's upper spine.
-  b.lightRun([0, 30, 40], [0, -10, 190], [0, 1, 0], { max: 8 });
+  // Lights down the ram's upper spine, following the droop.
+  b.lightRun([0, 24, 40], [0, -76, 200], [0, 1, 0], { max: 8 });
 
   return b.finish('bow_breaching_prow');
 }
@@ -197,8 +202,7 @@ function buildMiningArray(ctx) {
   // Backplate: an eight-sided drum rather than a box. Not a human shape.
   b.add('hull', G.pipeRun({ length: 54, radius: 44, sides: 6, axis: 'z', flanges: 0, detail: D }),
     { pos: [0, 16, -30] });
-  b.add('trim', G.dockingCollar({ radius: 40, innerRadius: 26, depth: 8, sides: 6, detail: D }),
-    { pos: [0, -6, -14], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, -6, -14], [-HALF_PI, 0, 0], 40);
 
   // Three arms at 0, 128 and 235 degrees around the axis — deliberately not thirds.
   const arms = [
@@ -274,21 +278,28 @@ function buildTorpedoTubes(ctx) {
 
   b.add('hull', G.panelledSlab({ width: 118, height: 88, depth: 148, chamfer: 16, detail: D }),
     { pos: [0, 30, 26] });
-  b.add('trim', G.dockingCollar({ radius: 44, innerRadius: 29, depth: 8, sides: 6, detail: D }),
-    { pos: [0, -14, 10], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, -14, 10], [-HALF_PI, 0, 0], 44);
 
   // Four tubes, standing a long way clear of the block. The upper pair is stepped
   // 40 m further forward and 56 m higher: that step is the entire reason this reads
   // as a stack of tubes instead of as a box with dark spots painted on it.
-  const tubes = [[-32, 2, 178], [32, 2, 178], [-32, 58, 218], [32, 58, 218]];
+  // The step is now 88 m, not 56. Together with the breaching prow's steeper droop
+  // this is the pair's separation: that module's mass goes DOWN and forward of the
+  // bow, this one's goes UP and forward of it. At a glance, in silhouette, from any
+  // angle, one is a beak and one is a staircase.
+  const tubes = [[-32, 2, 178], [32, 2, 178], [-32, 90, 224], [32, 90, 224]];
   for (const [x, y, z] of tubes) {
     b.add('plating', G.hexStrut({ length: 96, radius: 25, axis: 'z', caps: false, detail: D }),
       { pos: [x, y, z - 96] });
     b.add('dark', throat({ width: 34, height: 34, depth: 52, detail: D }), { pos: [x, y, z] });
   }
   // Mantlet the upper pair grows out of, so the step has something to stand on.
-  b.add('plating', G.panelledSlab({ width: 104, height: 30, depth: 44, chamfer: 8, detail: D }),
-    { pos: [0, 58, 122] });
+  b.add('plating', G.panelledSlab({ width: 104, height: 42, depth: 52, chamfer: 8, detail: D }),
+    { pos: [0, 84, 126] });
+  // Hoist tower behind the upper tubes: the tallest thing on the bow, and the
+  // reason the block reads as a stack rather than as a wide box.
+  b.add('hull', G.panelledSlab({ width: 58, height: 74, depth: 62, chamfer: 10, detail: D }),
+    { pos: [0, 96, 34] });
 
   // Magazine drum: starboard flank only.
   b.add('greeble', G.pipeRun({ length: 156, radius: 27, sides: 6, axis: 'z', flanges: full ? 2 : 0, detail: D }),
@@ -340,8 +351,7 @@ function buildProwSpike(ctx) {
 
   b.add('hull', G.panelledSlab({ width: 76, height: 42, depth: 74, chamfer: 12, detail: D }),
     { pos: [0, 14, -8] });
-  b.add('trim', G.dockingCollar({ radius: 38, innerRadius: 24, depth: 8, sides: 6, detail: D }),
-    { pos: [0, -8, -8], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, -8, -8], [-HALF_PI, 0, 0], 38);
 
   // The boom.
   b.add('greeble', G.hexStrut({ length: 236, radius: 8, radiusEnd: 2.2, axis: 'z', detail: D }),

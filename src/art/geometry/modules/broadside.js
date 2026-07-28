@@ -42,8 +42,7 @@ function buildCannonBank(ctx) {
     { pos: [-26, 16, 0] });
   b.add('plating', G.panelledSlab({ width: 56, height: 34, depth: 126, chamfer: 10, detail: D }),
     { pos: [-84, 26, -4] });
-  b.add('trim', G.dockingCollar({ radius: 34, innerRadius: 22, depth: 8, sides: 6, detail: D }),
-    { pos: [0, -4, 0], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, -4, 0], [-HALF_PI, 0, 0], 34);
 
   // Four barrels. Evenly spaced, because Coalition gunnery is a production line.
   const rows = full ? [-54, -18, 18, 54] : [-42, 30];
@@ -101,8 +100,7 @@ function buildBeamArray(ctx) {
   b.add('hull', G.taperedWedge({
     length: 124, width0: 168, height0: 52, width1: 84, height1: 30, chamfer: 10, detail: D,
   }), { pos: [-4, 20, 0], rot: OUTBOARD });
-  b.add('trim', G.dockingCollar({ radius: 34, innerRadius: 22, depth: 8, sides: 6, detail: D }),
-    { pos: [0, -4, 0], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, -4, 0], [-HALF_PI, 0, 0], 34);
 
   // Three emitter rods, staggered fore-aft and in height so they never read as a
   // grille. The middle one is longest.
@@ -160,18 +158,23 @@ function buildFlakCluster(ctx) {
   const b = new ModuleBuilder(ctx, 'derelict');
   const D = b.detail, full = b.full;
 
-  b.add('trim', G.dockingCollar({ radius: 34, innerRadius: 22, depth: 8, sides: 6, detail: D }),
-    { pos: [0, -4, 0], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, -4, 0], [-HALF_PI, 0, 0], 34);
   b.add('hull', G.panelledSlab({ width: 74, height: 30, depth: 132, chamfer: 10, detail: D }),
     { pos: [-24, 12, 0] });
   // The drum, canted out and up.
   b.add('hull', G.pipeRun({ length: 76, radius: 40, sides: 6, axis: 'x', flanges: 0, detail: D }),
     { pos: [-116, 42, 0], rot: [0, 0, 0.22] });
 
-  // Six barrels. Splayed across a 130 degree fan, three lengths.
+  // Six barrels. Splayed across a 150 degree fan, three lengths, and LONG.
+  //
+  // At 52-66 m the barrels barely cleared the drum and the module's outline was a
+  // lumpy box - which is also what the Coalition stern armour was. The fan is the
+  // whole class read, so it has to be the dominant thing in the outline: these run
+  // out to 104 m, nearly the width of the shelf they sit on, and no two adjacent
+  // barrels are the same length. Spiky where every other broadside is flat.
   const guns = full
-    ? [[-0.9, 0.34, 58], [-0.35, -0.18, 66], [0.12, 0.42, 52], [0.62, -0.08, 66], [1.05, 0.26, 52], [-1.35, -0.3, 58]]
-    : [[-0.6, 0.2, 62], [0.5, 0.1, 62]];
+    ? [[-0.98, 0.34, 88], [-0.40, -0.18, 104], [0.14, 0.44, 72], [0.68, -0.08, 98], [1.18, 0.26, 78], [-1.52, -0.3, 84]]
+    : [[-0.6, 0.2, 92], [0.5, 0.1, 92]];
   for (const [yaw, pitch, len] of guns) {
     // Outboard (-X) swung by `yaw` in the horizontal and lifted by `pitch`.
     b.add('greeble', aimed(barrel({ length: len, radius: 7, brake: false, detail: D }),
@@ -226,8 +229,7 @@ function buildBroadsideBattery(ctx) {
   // Extended shelf, overhanging outboard and running past both ends of the sponson.
   b.add('hull', G.panelledSlab({ width: 132, height: 34, depth: 254, chamfer: 14, detail: D }),
     { pos: [-52, 14, 0] });
-  b.add('trim', G.dockingCollar({ radius: 36, innerRadius: 23, depth: 8, sides: 6, detail: D }),
-    { pos: [0, -6, 0], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, -6, 0], [-HALF_PI, 0, 0], 36);
 
   // Two turrets. The forward one is superfiring on a barbette - the height step is
   // what makes this read as a battery rather than as two boxes.
@@ -252,8 +254,10 @@ function buildBroadsideBattery(ctx) {
 
   // Armour belt along the outboard edge of the shelf.
   if (full) {
+    // Two long plates, not three short ones. A calm 100 m plate with one big seam
+    // in it reads at 1400 m scale; three 70 m plates read as tiling.
     b.add('plating', G.armourBelt({
-      length: 236, height: 40, thickness: 12, plates: 3, gap: 18, chamfer: 8, detail: D,
+      length: 236, height: 40, thickness: 12, plates: 2, gap: 26, chamfer: 8, detail: D,
     }), { pos: [-118, 12, 0] });
     // Two struts back into the sponson, because a shelf this long has to be carried.
     for (const dz of [-96, 96]) {
@@ -302,8 +306,7 @@ function buildGaussOutrigger(ctx) {
 
   b.add('hull', G.panelledSlab({ width: 74, height: 30, depth: 196, chamfer: 10, detail: D }),
     { pos: [-22, 12, 0] });
-  b.add('trim', G.dockingCollar({ radius: 34, innerRadius: 22, depth: 8, sides: 6, detail: D }),
-    { pos: [0, -4, 0], rot: [-HALF_PI, 0, 0] });
+  b.graft([0, -4, 0], [-HALF_PI, 0, 0], 34);
 
   // Two A-frame pylons standing up and outboard. Different heights - the forward
   // one carries the muzzle end and is taller.

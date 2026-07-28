@@ -25,6 +25,7 @@
 import { clamp, lerp, gain as mkGain, biquad, osc, bufferSource, shaper, startAt } from './synth.js';
 import { noiseBurst, subThump, metalRing, chirp } from './parts.js';
 
+
 const MATERIAL = {
   coalition: { band: 380, q: 1.5, tone: 196, am: 13, amDepth: 0.55, sub: 0.50, slag: 0.28, drive: 2.9, ring: 0.06, ringF: 720 },
   concord: { band: 980, q: 2.3, tone: 344, am: 22, amDepth: 0.32, sub: 0.20, slag: 0.15, drive: 1.4, ring: 0.20, ringF: 1520 },
@@ -117,7 +118,7 @@ export class SalvageAudio {
       handle.sources.push(n);
     }
 
-    handle.setGain(0.85 * spat.gain, 0.09);
+    handle.setGain(1.15 * spat.gain, 0.09);
     this.cut = { handle, mat, band, slagG, toneG, faction, base: mat.band };
     this.progress = 0;
 
@@ -140,7 +141,7 @@ export class SalvageAudio {
     const t = when ?? A.ctx.currentTime;
     this.progress = clamp(progress, 0, 1);
     c.handle.follow(spat, 0.12, t);
-    c.handle.setGain(0.85 * spat.gain, 0.12, t);
+    c.handle.setGain(1.15 * spat.gain, 0.12, t);
     // Breaking through: the band opens and the slag comes up.
     c.band.frequency.setTargetAtTime(c.base * lerp(1, 1.55, this.progress) * A.pitch, t, 0.3);
     c.slagG.gain.setTargetAtTime(c.mat.slag * 0.30 * lerp(1, 2.1, this.progress), t, 0.3);

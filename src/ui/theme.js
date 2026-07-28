@@ -615,18 +615,40 @@ const EMPTY_DASH = [];
  * fly a frigate through. Sampled rather than swept because arcs wrap.
  */
 export function arcUnion(arcs, samples = 360) {
-  if (!arcs || !arcs.length) return 0;
+  return arcCoverage(arcs, samples).union;
+}
+
+/**
+ * Coverage AND depth.
+ *
+ * Union alone is a blunt instrument on this hull: the dorsal bed is 306 degrees on
+ * its own, so a player who bolts a battery onto a bare sponson sees the union move
+ * by nothing and concludes the module did nothing. What actually changed is how many
+ * mounts can answer that bearing at once, which is what a broadside IS. `doubled` is
+ * the share of the circle two or more mounts cover, and it is the number that moves.
+ *
+ * @returns {{union:number, doubled:number, max:number}} radians, radians, count
+ */
+export function arcCoverage(arcs, samples = 360) {
+  if (!arcs || !arcs.length) return { union: 0, doubled: 0, max: 0 };
   let hit = 0;
+  let deep = 0;
+  let max = 0;
   for (let i = 0; i < samples; i++) {
     const a = (i / samples) * Math.PI * 2;
+    let n = 0;
     for (const arc of arcs) {
       let d = (a - arc.centre) % (Math.PI * 2);
       if (d > Math.PI) d -= Math.PI * 2;
       if (d <= -Math.PI) d += Math.PI * 2;
-      if (Math.abs(d) <= arc.width * 0.5) { hit++; break; }
+      if (Math.abs(d) <= arc.width * 0.5) n++;
     }
+    if (n > 0) hit++;
+    if (n > 1) deep++;
+    if (n > max) max = n;
   }
-  return (hit / samples) * Math.PI * 2;
+  const k = (Math.PI * 2) / samples;
+  return { union: hit * k, doubled: deep * k, max };
 }
 
 /** Frame-rate independent damping, the same form the camera stream uses. */

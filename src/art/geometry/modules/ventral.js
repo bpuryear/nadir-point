@@ -77,14 +77,14 @@ function buildHangarDeck(ctx) {
   b.add('glass', G.panelledSlab({ width: 6, height: 12, depth: 44, detail: D }), { pos: [-127, -46, 96] });
 
   // Structure carrying the deck up to the mount.
-  b.add('trim', G.dockingCollar({ radius: 48, innerRadius: 32, depth: 10, sides: 6, detail: D }),
-    { pos: [0, 0, 0], rot: [HALF_PI, 0, 0] });
+  b.graft([0, 0, 0], [HALF_PI, 0, 0], 48);
   if (full) {
-    for (const s of [-1, 1]) {
-      for (const dz of [-140, 130]) {
-        b.add('greeble', G.hexStrut({ length: 30, radius: 10, axis: 'y', detail: D }),
-          { pos: [s * 54, -34, dz] });
-      }
+    // Two hangers, not four. A symmetric 2x2 grid of identical posts is machine
+    // rhythm; a forward-port and an aft-starboard pair is what a deck that was cut
+    // out of somebody else's carrier actually ends up hanging from.
+    for (const [x, dz] of [[-54, 130], [54, -140]]) {
+      b.add('greeble', G.hexStrut({ length: 30, radius: 10, axis: 'y', detail: D }),
+        { pos: [x, -34, dz] });
     }
     // Deck ribs visible under the overhang.
     b.add('greeble', G.hullRibs({
@@ -132,8 +132,7 @@ function buildSalvageTractor(ctx) {
 
   b.add('hull', G.pipeRun({ length: 46, radius: 48, sides: 6, axis: 'y', flanges: 0, detail: D }),
     { pos: [0, -46, 0] });
-  b.add('trim', G.dockingCollar({ radius: 42, innerRadius: 27, depth: 9, sides: 6, detail: D }),
-    { pos: [0, 0, 0], rot: [HALF_PI, 0, 0] });
+  b.graft([0, 0, 0], [HALF_PI, 0, 0], 42);
 
   // Three arms, splayed down and forward, none the same length.
   const arms = [
@@ -209,8 +208,7 @@ function buildCargoExpansion(ctx) {
   // Cradle beam the pods hang off.
   b.add('hull', G.panelledSlab({ width: 168, height: 24, depth: 268, chamfer: 8, detail: D }),
     { pos: [0, -26, 0] });
-  b.add('trim', G.dockingCollar({ radius: 40, innerRadius: 26, depth: 8, sides: 6, detail: D }),
-    { pos: [0, 0, 0], rot: [HALF_PI, 0, 0] });
+  b.graft([0, 0, 0], [HALF_PI, 0, 0], 40);
 
   // Two matched cylindrical pods...
   for (const s of [-1, 1]) {
@@ -265,8 +263,7 @@ function buildRepairBay(ctx) {
   const b = new ModuleBuilder(ctx, 'coalition');
   const D = b.detail, full = b.full;
 
-  b.add('trim', G.dockingCollar({ radius: 42, innerRadius: 28, depth: 8, sides: 6, detail: D }),
-    { pos: [0, 0, 0], rot: [HALF_PI, 0, 0] });
+  b.graft([0, 0, 0], [HALF_PI, 0, 0], 42);
   b.add('hull', G.panelledSlab({ width: 120, height: 26, depth: 210, chamfer: 8, detail: D }),
     { pos: [0, -22, 0] });
 
@@ -333,8 +330,7 @@ function buildDroneBay(ctx) {
   const b = new ModuleBuilder(ctx, 'derelict');
   const D = b.detail, full = b.full;
 
-  b.add('trim', G.dockingCollar({ radius: 44, innerRadius: 29, depth: 9, sides: 6, detail: D }),
-    { pos: [0, 0, 0], rot: [HALF_PI, 0, 0] });
+  b.graft([0, 0, 0], [HALF_PI, 0, 0], 44);
   // Neck through the cradle, then the drum below it.
   b.add('hull', G.hexStrut({ length: 66, radius: 44, radiusEnd: 62, axis: 'y', detail: D }),
     { pos: [0, -66, 0], rot: [Math.PI, 0, 0] });

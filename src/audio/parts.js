@@ -251,12 +251,10 @@ export function chirp(A, dest, t0, {
   const total = dur + tau * DECAY_TAUS * S;
 
   const g = mkGain(ctx, 0);
-  let head = g;
   if (lowpass !== null) {
     const f = biquad(ctx, 'lowpass', lowpass * P, q);
     g.connect(f);
     f.connect(dest);
-    head = g;
   } else {
     g.connect(dest);
   }

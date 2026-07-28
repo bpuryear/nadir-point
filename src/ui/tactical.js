@@ -157,14 +157,18 @@ export class TacticalOverlay {
       if (allOk && fillA > 0) {
         P.polyline(this._arc, count, { stroke: null, close: true, fill: wedgeFill(bearing, fillA) });
       }
-      P.ctx.globalAlpha = bearing ? 0.9 : 0.7;
+      // The outer arc is the graphic. The two radial limits are drawn dashed and
+      // faint: at this scale they are hundreds of pixels long, and solid they read as
+      // two lines slashed across the frame rather than as the edges of a wedge.
+      P.ctx.globalAlpha = bearing ? 0.72 : 0.5;
       P.polyline(this._arc, count, {
         stroke, weight: bearing ? 1.3 : 1, close: false, dash: a.online ? null : this._dash,
       });
       if (this._arc[0].ok) {
+        P.ctx.globalAlpha = bearing ? 0.4 : 0.28;
         const first = this._arc[1], last = this._arc[n + 1];
-        if (first.ok) P.leader(this._arc[0].x, this._arc[0].y, first.x, first.y, stroke, 1);
-        if (last.ok) P.leader(this._arc[0].x, this._arc[0].y, last.x, last.y, stroke, 1);
+        if (first.ok) P.leader(this._arc[0].x, this._arc[0].y, first.x, first.y, stroke, 1, this._dash);
+        if (last.ok) P.leader(this._arc[0].x, this._arc[0].y, last.x, last.y, stroke, 1, this._dash);
       }
       P.ctx.globalAlpha = 1;
 
@@ -182,8 +186,8 @@ export class TacticalOverlay {
       // Label sits on the near rose, where the eye already is, and yields to
       // anything the frame has already reserved.
       const mid = a.centre;
-      if (proj.point(ox + Math.sin(mid) * near * 0.86, 0, oz + Math.cos(mid) * near * 0.86, this._pt)
-        && this._pt.x > 8 && this._pt.x < P.w - 8 && this._pt.y > 20 && this._pt.y < P.h - 20) {
+      if (proj.point(ox + Math.sin(mid) * near * 0.84, 0, oz + Math.cos(mid) * near * 0.84, this._pt)
+        && this._pt.x > 130 && this._pt.x < P.w - 130 && this._pt.y > 40 && this._pt.y < P.h - 40) {
         P.textIfClear(`${a.type.toUpperCase()} ${fmtRange(a.range)}`, this._pt.x, this._pt.y, {
           font: F.micro, color: bearing ? C.hostile : C.inkFaint,
           align: 'center', track: TRACK.label,
@@ -201,26 +205,31 @@ export class TacticalOverlay {
     rings.length = 0;
     const seen = new Set();
     for (const m of player.weapons ?? []) {
-      if (!m.online) continue;
+      // Point defence and the salvage cutter are not engagement envelopes. A mining
+      // ring at 1.8 km next to a tractor ring at 2.4 km is two labels for one fact.
+      if (!m.online || m.def.type === 'pd' || m.def.type === 'mining') continue;
       const r = Math.round(m.def.range);
       if (seen.has(r)) continue;
       seen.add(r);
       rings.push({ r, label: m.def.type.toUpperCase() });
     }
+    rings.sort((a, b) => a.r - b.r);
     const salvage = this.world.systems?.salvage;
     if (salvage) {
       const r = Math.round(RANGE.salvageBeam * (1 + (salvage.tractorRating ?? 0) * 0.4));
-      if (!seen.has(r)) rings.push({ r, label: 'TRACTOR', salvage: true });
+      rings.push({ r, label: 'TRACTOR', salvage: true, alwaysLabel: true });
     }
-    rings.sort((a, b) => a.r - b.r);
 
     const shown = rings.slice(0, 5);
     for (let k = 0; k < shown.length; k++) {
       const ring = shown[k];
       this._planeRing(P, player.position.x, player.position.z, ring.r,
         ring.salvage ? C.salvageGhost : C.inkGhost, 1, this._dash);
-      // Each ring takes its own sector of the circle for its label. Putting them all
-      // at the top of their ring stacks five readouts into one illegible block.
+      // Only the outermost weapon envelope and the tractor get a caption. The rest
+      // are already named by their arc wedge, and five captions round five ellipses
+      // is how a tactical display becomes wallpaper.
+      const isOuter = k === shown.length - 1 || (k === shown.length - 2 && shown[shown.length - 1].salvage);
+      if (!ring.alwaysLabel && !isOuter) continue;
       const start = Math.round(((k * 2 + 1) / (shown.length * 2)) * RING_SEGS);
       for (let step = 0; step < RING_SEGS; step++) {
         const i = (start + (step % 2 ? -1 : 1) * Math.ceil(step / 2) + RING_SEGS * 2) % RING_SEGS;

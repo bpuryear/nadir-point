@@ -22,7 +22,9 @@
  * they take longer to finish, and both of those are visible on the probe plot.
  */
 
-import { clamp, gain as mkGain, biquad, osc, bufferSource, shaper, fmVoice, ringMod, percEnv, sweep, startAt, stopAt } from './synth.js';
+import {
+  clamp, gain as mkGain, biquad, osc, bufferSource, fmVoice, ringMod, percEnv, sweep, startAt, stopAt,
+} from './synth.js';
 import { noiseBurst, subThump, metalRing, chirp } from './parts.js';
 
 /** Reference radius: a destroyer. Everything is expressed relative to this. */

@@ -63,13 +63,12 @@ function mountKey(ship, mount) {
   return id;
 }
 
-/** Projectile kinds from `sim/combat.js` mapped onto the instruments here. */
-const KIND_TO_TYPE = {
-  slug: 'cannon', shell: 'cannon', railslug: 'rail',
-  missile: 'missile', flak: 'flak', pdslug: 'pd',
-};
-
-/** How hard an impact of each kind hits. Point defence should barely register. */
+/**
+ * How hard an impact of each kind hits. Keyed by BOTH the weapon types in
+ * `WEAPON_TYPES` and the projectile kinds in `sim/combat.js#PROJECTILE_KINDS`,
+ * because `EV.PROJECTILE_IMPACT` carries whichever of the two the shot came from -
+ * a hitscan beam reports 'beam', a shell reports 'shell'.
+ */
 const IMPACT_SEVERITY = {
   pd: 0.22, pdslug: 0.22, flak: 0.38, cannon: 0.7, slug: 0.62, shell: 0.72,
   rail: 1.0, railslug: 1.0, missile: 0.95, beam: 0.45, lance: 0.8, mining: 0.3,
@@ -79,6 +78,7 @@ const IMPACT_SEVERITY = {
  * @param {import('../core/world.js').World} world
  * @param {Object} [opts]
  * @param {boolean} [opts.autoGesture]  install window gesture listeners (default true)
+ * @param {boolean} [opts.prepare]      pre-generate noise textures at install (default true)
  * @param {string}  [opts.poi]          ambience bed to use before a POI is entered
  * @param {number}  [opts.volume]       0..1.5 master trim
  * @returns {Object} the audio facade, also parked on `world.systems.audio`
@@ -241,8 +241,12 @@ export function installAudio(world, opts = {}) {
   on(EV.SALVAGE_CUT_STOP, () => salvage.stopCut(0.2));
   on(EV.SALVAGE_TOW_START, ({ section }) => {
     const spat = at(section?.worldPosition);
+    // Read the material BEFORE stopping - stopCut() clears the record, and a
+    // section coming free off a Concord hull has to sound like ceramic, not like
+    // whatever the default happened to be.
+    const faction = salvage.cut?.faction ?? 'player';
     salvage.stopCut(0.10);
-    salvage.sectionFree(spat, salvage.cut?.faction ?? 'player');
+    salvage.sectionFree(spat, faction);
   });
   on(EV.SALVAGE_ACQUIRED, ({ kind }) => salvage.acquired(core.here(), { module: kind === 'module' }));
 
@@ -331,6 +335,15 @@ export function installAudio(world, opts = {}) {
   eng.add(simSystem);
   eng.addRender(renderSystem);
 
+  // Generate the noise textures NOW, during boot, with no AudioContext in sight.
+  // This is a few hundred milliseconds of DSP and it has to happen somewhere; the
+  // only wrong place is inside the gesture handler, which is where it was until it
+  // was measured costing 312 ms on the player's first click.
+  if (opts.prepare !== false) {
+    core.prepare();
+    ambience.prebake(defaultBed);
+  }
+
   if (opts.autoGesture !== false) core.attachGestures(globalThis);
 
   const api = {
@@ -346,6 +359,13 @@ export function installAudio(world, opts = {}) {
 
     /** Force a specific ambience bed. Used by the probe and by the POI stream. */
     setPOI(id) { return ambience.enter(id); },
+
+    /**
+     * Generate a bed's samples before the player gets there. The travel layer
+     * should call this when a course is committed - it is the difference between
+     * arriving at a point of interest and hitching on arrival at one.
+     */
+    prebakePOI(id) { return ambience.prebake(id); },
 
     report() {
       return {

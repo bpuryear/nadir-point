@@ -157,9 +157,9 @@ function hulkParts({ lod }) {
   //    human eye can assign to it. One horn is half the length of the others.
   // =========================================================================
   B.add('core', 'plating', G.loft([
-    { z: 1400, points: G.ngonProfile(190, 10, PI / 10) },
-    { z: 1520, points: G.ngonProfile(212, 10, PI / 10) },
-    { z: 1660, points: G.ngonProfile(96, 10, PI / 10) },
+    { z: 1400, points: G.ngonProfile(190, 7, PI / 7) },
+    { z: 1520, points: G.ngonProfile(212, 7, PI / 7) },
+    { z: 1660, points: G.ngonProfile(96, 7, PI / 7) },
   ]));
   for (let i = 0; i < 5; i++) {
     const a = twistAt(1400) + (i / 5) * TAU;
@@ -214,7 +214,16 @@ function hulkParts({ lod }) {
   {
     const parts = [];
     const chord = 2 * RING.radius * Math.sin(PI / RING.sectors) * 1.02;
-    const prof = G.ngonProfile(RING.section, 5, PI / 5);
+    // A TRIANGULAR section, not a pentagonal one.
+    //
+    // Every structural class on this object used to be built out of the same 5-gon,
+    // so a 1400 m ring and a 200 m spine had facets of wildly different sizes
+    // carrying identical surface frequency, and the thing had no scale hierarchy at
+    // any distance. One primitive per class - 5 for the spine, 3 for the ring, 7 for
+    // the crown, flat plates for the vanes - means facet size tracks feature size,
+    // which is the geometry half of the fix. The other half is the surface map's
+    // density, which materials owns.
+    const prof = G.ngonProfile(RING.section * 1.25, 3, PI / 3);
     for (let i = 0; i < RING.sectors; i++) {
       if (RING.missing.includes(i)) continue;
       if (!full && i % 2) continue;         // half the sectors past LOD0

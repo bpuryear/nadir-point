@@ -166,14 +166,16 @@ export class PowerPanel {
     // --- lock ---------------------------------------------------------------
     if (!unlocked) {
       P.hatch(x - 14, y - 12, w + 28, h + 24, C.inkGhost, { spacing: 9, weight: 1 });
-      const bandY = y + Math.round(h * 0.5) - 12;
-      P.fill(x - 14, bandY, w + 28, 24, C.scrimHard);
+      // Both lines live INSIDE one opaque band. A caption hanging below the band sits
+      // on top of a channel row and reads as a rendering fault rather than as a lock.
+      const bandY = y + Math.round(h * 0.5) - 19;
+      P.fill(x - 14, bandY, w + 28, 40, C.scrimHard);
       P.hline(x - 14, bandY, w + 28, C.warnDim);
-      P.hline(x - 14, bandY + 23, w + 28, C.warnDim);
-      P.text('REACTOR GOVERNOR SEALED', x + w * 0.5, bandY + 11, {
+      P.hline(x - 14, bandY + 39, w + 28, C.warnDim);
+      P.text('REACTOR GOVERNOR SEALED', x + w * 0.5, bandY + 16, {
         font: F.microBold, color: C.warn, align: 'center', track: TRACK.head,
       });
-      P.text('INSTALL A REACTOR MODULE TO ROUTE POWER', x + w * 0.5, bandY + 34, {
+      P.text('INSTALL A REACTOR MODULE TO ROUTE POWER', x + w * 0.5, bandY + 30, {
         font: F.micro, color: C.inkFaint, align: 'center', track: TRACK.label,
       });
     }

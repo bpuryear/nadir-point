@@ -42,7 +42,8 @@
 
 import { RNG } from '../core/rng.js';
 import {
-  clamp, lerp, dbToGain, gain as mkGain, biquad, createFDN, createBufferBank, shaper, rampTo,
+  clamp, lerp, dbToGain, gain as mkGain, biquad, createFDN, createBufferBank,
+  generateBankData, bankFromData, shaper, rampTo, NOMINAL_RATE,
 } from './synth.js';
 
 export const BUSES = ['weapons', 'engines', 'impacts', 'ambience', 'ui'];
@@ -52,7 +53,7 @@ export const MIX = {
   master: 0.82,
   bus: {
     weapons: 0.60,
-    engines: 0.52,
+    engines: 0.46,
     impacts: 0.72,
     ambience: 0.44,
     ui: 0.50,
@@ -118,10 +119,14 @@ export class AudioMixer {
    * @param {RNG} opts.rng
    * @param {AudioNode} [opts.destination]
    */
-  constructor(ctx, { rng, destination = null } = {}) {
+  constructor(ctx, { rng, destination = null, bankData = null } = {}) {
     this.ctx = ctx;
     this.rng = rng ?? new RNG('audio');
-    this.buffers = createBufferBank(ctx, this.rng.fork('buffers'));
+    // Pre-generated data if the engine did its homework at install; otherwise
+    // generate now, which is what the probe does since it already has a context.
+    this.buffers = bankData
+      ? bankFromData(ctx, bankData)
+      : createBufferBank(ctx, this.rng.fork('buffers'));
 
     const out = destination ?? ctx.destination;
 
@@ -243,6 +248,9 @@ export class AudioEngine {
     /** @type {AudioMixer|null} */
     this.mixer = null;
     this.ready = false;
+    /** Noise textures, generated before the gesture. See `prepare()`. */
+    this._bankData = null;
+    this.prepareMs = 0;
     /** Set when the environment simply has no Web Audio. Never retried. */
     this.unavailable = typeof globalThis.AudioContext !== 'function'
       && typeof globalThis.webkitAudioContext !== 'function';
@@ -287,10 +295,34 @@ export class AudioEngine {
    * Bring the graph up inside a context we were handed. The probe uses this with an
    * OfflineAudioContext; `unlock()` uses it with a real one.
    */
+  /**
+   * Generate the noise textures without a context.
+   *
+   * THIS IS WHY IT EXISTS. Building the bank inside `unlock()` cost 312 ms of
+   * blocked main thread at the exact instant the player first clicked - nineteen
+   * dropped frames, on the click. The DSP does not actually need an AudioContext:
+   * it writes Float32Arrays. So it runs during boot, where a hitch is invisible,
+   * and the gesture is left with nothing but `createBuffer` memcpys.
+   *
+   * Idempotent and cheap to call twice.
+   */
+  prepare() {
+    if (this._bankData || this.unavailable) return this._bankData;
+    const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
+    this._bankData = generateBankData(this.rng.fork('buffers'), NOMINAL_RATE);
+    this.prepareMs = (typeof performance !== 'undefined' ? performance.now() : 0) - t0;
+    return this._bankData;
+  }
+
   attach(ctx, { destination = null } = {}) {
     if (this.mixer) return this.mixer;
     this.ctx = ctx;
-    this.mixer = new AudioMixer(ctx, { rng: this.rng.fork('mixer'), destination });
+    this.mixer = new AudioMixer(ctx, {
+      rng: this.rng.fork('mixer'), destination, bankData: this._bankData,
+    });
+    // The AudioBuffers own their samples now; the source arrays are 8 MB of dead
+    // weight from here on.
+    this._bankData = null;
     this.ready = true;
     this._applyMasterGain(0);
     return this.mixer;
@@ -505,6 +537,11 @@ export class AudioEngine {
     if (prev !== undefined && t - prev < minInterval * this.stretch) {
       this.stats.gated++;
       return false;
+    }
+    // Keys include mount identity, and mounts come and go over a long run, so the
+    // map would grow forever. Drop anything that has not fired in a minute.
+    if (this._gates.size > 192) {
+      for (const [k, when] of this._gates) if (t - when > 60) this._gates.delete(k);
     }
     this._gates.set(key, t);
     return true;

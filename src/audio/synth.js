@@ -238,55 +238,68 @@ export function crossfadeLoop(data, fadeN) {
 }
 
 /**
- * Build an AudioBuffer by filling each channel with a generator.
- * @param {BaseAudioContext} ctx
- * @param {number} seconds
- * @param {number} channels
- * @param {(sr:number, n:number, ch:number) => Float32Array} fill
+ * THE RATE THE TEXTURES ARE AUTHORED AT.
+ *
+ * Sample generation is the expensive part of this stream - a couple of hundred
+ * milliseconds of it - and it has to happen BEFORE the first user gesture, or the
+ * player's first click costs them twenty frames. But there is no AudioContext
+ * before that gesture, and therefore no known sample rate.
+ *
+ * So the textures are generated as plain Float32Arrays at this nominal rate during
+ * boot, and re-interpreted at whatever rate the context turns out to run at. On a
+ * 44.1 kHz device that stretches every bed by 9% and drops it 1.5 semitones, which
+ * for noise, rumble and debris is not merely acceptable - it is undetectable. It
+ * would matter for a tuned instrument; there are none here.
  */
-export function buildBuffer(ctx, seconds, channels, fill) {
-  const sr = ctx.sampleRate;
-  const n = Math.max(1, Math.floor(seconds * sr));
-  const buf = ctx.createBuffer(channels, n, sr);
-  for (let c = 0; c < channels; c++) buf.copyToChannel(fill(sr, n, c), c);
-  return buf;
-}
+export const NOMINAL_RATE = 48000;
 
 /**
- * Build a seamless looping AudioBuffer. The generator is asked for
- * `seconds + fadeSeconds` and the overlap is folded back in.
+ * Generate a seamless loop as raw channel data. `seconds + fadeSeconds` is
+ * generated and the overlap is folded back, so the result is exactly `seconds`.
  */
-export function loopBuffer(ctx, seconds, fadeSeconds, channels, fill) {
-  const sr = ctx.sampleRate;
+export function loopData(seconds, fadeSeconds, sr, channels, fill) {
   const nRaw = Math.max(2, Math.floor((seconds + fadeSeconds) * sr));
   const fadeN = Math.max(1, Math.floor(fadeSeconds * sr));
   const chans = [];
   for (let c = 0; c < channels; c++) chans.push(crossfadeLoop(fill(sr, nRaw, c), fadeN));
-  const buf = ctx.createBuffer(channels, chans[0].length, sr);
-  for (let c = 0; c < channels; c++) buf.copyToChannel(chans[c], c);
+  return chans;
+}
+
+/** Wrap raw channel data as an AudioBuffer at the context's rate. A memcpy. */
+export function dataToBuffer(ctx, chans) {
+  const buf = ctx.createBuffer(chans.length, chans[0].length, ctx.sampleRate);
+  for (let c = 0; c < chans.length; c++) buf.copyToChannel(chans[c], c);
   return buf;
 }
 
+/** Build a seamless looping AudioBuffer directly. */
+export function loopBuffer(ctx, seconds, fadeSeconds, channels, fill) {
+  return dataToBuffer(ctx, loopData(seconds, fadeSeconds, ctx.sampleRate, channels, fill));
+}
+
 /**
- * The shared noise bank. Built once per context, from one forked RNG, so a seeded
- * run has byte-identical noise. Everything percussive in the game reads out of
- * these at a random offset rather than generating fresh noise per shot.
+ * The shared noise bank, as raw data. One forked RNG, so a seeded run has
+ * byte-identical noise. Everything percussive in the game reads out of these at a
+ * random offset rather than generating fresh noise per shot.
+ *
+ * Call this at install; call `bankFromData` at unlock.
  */
-export function createBufferBank(ctx, rng) {
-  const bank = {
+export function generateBankData(rng, sr = NOMINAL_RATE) {
+  const L = (seconds, fade, fill) => loopData(seconds, fade, sr, 2, fill);
+  return {
     /** Broadband. Cracks, transients, hiss. */
-    white: loopBuffer(ctx, 2.0, 0.05, 2, (sr, n, c) => genWhite(n, rng.fork(`white${c}`))),
+    white: L(2.0, 0.05, (sr2, n, c) => genWhite(n, rng.fork(`white${c}`))),
     /** Air and roar. */
-    pink: loopBuffer(ctx, 4.0, 0.25, 2, (sr, n, c) => genPink(n, rng.fork(`pink${c}`))),
+    pink: L(4.0, 0.25, (sr2, n, c) => genPink(n, rng.fork(`pink${c}`))),
     /** Mass. Drive beds, detonation tails. */
-    brown: loopBuffer(ctx, 4.0, 0.4, 2, (sr, n, c) => {
+    brown: L(4.0, 0.4, (sr2, n, c) => {
       const d = genBrown(n, rng.fork(`brown${c}`));
       normalise(d, 0.95);
       return d;
     }),
     /** Coarse metallic grind - salvage cutting, hull failure. */
-    grind: loopBuffer(ctx, 3.0, 0.25, 2, (sr, n, c) => {
-      const d = genGrains(n, sr, rng.fork(`grind${c}`), {
+    grind: L(2.6, 0.25, (sr2, n, c) => {
+      const d = genGrains(n, sr2, rng.fork(`grind${c}`), {
         grainsPerSec: 420, grainMs: 22, jitterMs: 14,
         fLo: 120, fHi: 2600, noisiness: 0.55, decay: 2.6,
       });
@@ -294,8 +307,8 @@ export function createBufferBank(ctx, rng) {
       return d;
     }),
     /** Fine sparkle - electrical arcing, containment failure shimmer. */
-    sparkle: loopBuffer(ctx, 2.0, 0.15, 2, (sr, n, c) => {
-      const d = genGrains(n, sr, rng.fork(`sparkle${c}`), {
+    sparkle: L(1.6, 0.15, (sr2, n, c) => {
+      const d = genGrains(n, sr2, rng.fork(`sparkle${c}`), {
         grainsPerSec: 900, grainMs: 5, jitterMs: 4,
         fLo: 1800, fHi: 11000, noisiness: 0.3, decay: 5.5,
       });
@@ -303,15 +316,26 @@ export function createBufferBank(ctx, rng) {
       return d;
     }),
     /** Debris impacting debris, out in the dark. */
-    debris: loopBuffer(ctx, 8.0, 0.5, 2, (sr, n, c) => {
-      const d = genTicks(n, sr, rng.fork(`debris${c}`), {
+    debris: L(6.0, 0.5, (sr2, n, c) => {
+      const d = genTicks(n, sr2, rng.fork(`debris${c}`), {
         ticksPerSec: 5.5, fLo: 380, fHi: 4800, ringMsLo: 10, ringMsHi: 110,
       });
       normalise(d, 0.85);
       return d;
     }),
   };
+}
+
+/** Turn generated bank data into AudioBuffers. Pure memcpy; safe on a gesture. */
+export function bankFromData(ctx, data) {
+  const bank = {};
+  for (const key of Object.keys(data)) bank[key] = dataToBuffer(ctx, data[key]);
   return bank;
+}
+
+/** Generate and wrap in one call. Used by the probe, which has a context already. */
+export function createBufferBank(ctx, rng) {
+  return bankFromData(ctx, generateBankData(rng, ctx.sampleRate));
 }
 
 // ---------------------------------------------------------------------------

@@ -105,6 +105,13 @@ const BLADE_STATIONS = [
   [700, 58, -34, -128, 12, 8, 8],
 ];
 
+/** Far-LOD proxy for the blade. See the LOD2 branch in hullParts() for why. */
+const BLADE_LOD2 = [
+  [300, 62, 12, -74, 14, 6, 6],
+  [620, 82, -8, -158, 14, 8, 8],
+  [700, 58, -20, -128, 12, 8, 8],
+];
+
 /**
  * The prow casemate: a plated armour house over the forward deck. Before this
  * existed the silhouette's forward third was a featureless sliver, which is the
@@ -239,18 +246,40 @@ export function hullParts({ rng, lod = 0 }) {
     const hull = G.loft(toStations(decimate(HULL_STATIONS, 2)));
     B.add('core', 'hull', hull);
     B.add('core', 'hull', G.loft(toStations(decimate(ENGINE_STATIONS, 3))));
-    B.add('core', 'hull', G.loft(toStations(decimate(BLADE_STATIONS, 3))));
-    // Tower, cradle and sponsons as single blocks - outline, not detail. Each one
-    // deliberately overlaps the spine so the proxy never separates into fragments
-    // at the switch distance, which is the classic way an LOD2 gives itself away.
+    // The cutter blade needs its OWN far-LOD table, not a decimation of the LOD0
+    // one. The real blade's top edge sits exactly on the keel line, so a two-station
+    // decimation of it touches the hull without ever entering it and the bow reads
+    // as a loose plank floating under the nose. These stations lift the top edge
+    // 40-70 m up INTO the hull; the bottom edge, which is the whole silhouette, is
+    // untouched.
+    B.add('core', 'hull', G.loft(toStations(BLADE_LOD2)));
+
+    // Tower, cradle and sponsons as single blocks - outline, not detail.
+    //
+    // THE RULE THAT MAKES LOD2 HOLD TOGETHER, and the previous pass broke it:
+    // every proxy must have at least a THIRD of its own depth buried inside the
+    // spine, and must never present a section larger than the spine it hangs off.
+    // A block that merely touches the hull reads as a detached slab floating
+    // alongside it the moment the shading flattens out at range, which is exactly
+    // what docs/probes/cruiser-lod2.png was showing.
+
+    // Bridge tower. Root plane at y = -36, i.e. 100 m down inside a hull whose
+    // section here runs -64..58: the block emerges from the deck, it does not sit
+    // on it. Narrower than the hull beam so the spine still reads as the widest
+    // thing amidships.
     B.add('core', 'hull', G.taperedWedge({
-      length: 440, width0: 150, height0: 170, width1: 104, height1: 110, shear: 16, detail: D,
-    }), { pos: [TOWER_X, 84, -250] });
-    B.add('core', 'hull', G.panelledSlab({ width: 226, height: 170, depth: 530, detail: D }),
-      { pos: [0, -108, -6] });
+      length: 440, width0: 128, height0: 200, width1: 92, height1: 128, shear: 22, detail: D,
+    }), { pos: [TOWER_X, 64, -250] });
+
+    // Salvage cradle. Wider than the hull beam - that overhang is the plan-view
+    // read and it survives to the far LOD - but its top face is at y = +4, so
+    // 68 m of it is inside the keel and the two masses share a volume.
+    B.add('core', 'hull', G.panelledSlab({ width: 244, height: 176, depth: 520, detail: D }),
+      { pos: [0, -84, -6] });
+
     for (const s of [-1, 1]) {
-      B.add('core', 'hull', G.panelledSlab({ width: 110, height: 30, depth: 220, detail: D }),
-        { pos: [s * 136, 8, 48] });
+      B.add('core', 'hull', G.panelledSlab({ width: 130, height: 34, depth: 220, detail: D }),
+        { pos: [s * 142, 8, 48] });
     }
     mass('hull', hull);
     return { buckets: B.list(), lights: [], masses, detail: D };
@@ -267,11 +296,18 @@ export function hullParts({ rng, lod = 0 }) {
   B.add('core', 'hull', hullGeo);
   mass('spine', hullGeo);
 
-  // Flank armour: three separate plates a side, gaps and all. This is where the key
-  // light catches - bright plating against the darker hull below it.
+  // Flank armour: TWO long plates a side with one wide gap, not three short ones.
+  //
+  // DENSITY HIERARCHY. Three 200 m plates at 40 m spacing put a seam every quarter
+  // of the midships flank, and combined with the plate texture the whole side of the
+  // ship became one frequency - the classic tiling read. Two 320 m plates give the
+  // flank a large calm surface with a single deliberate break in it, which is what
+  // makes the greebled bands (the ribbed hull section, the mounts, the truss) read
+  // as dense by comparison. Calm surface is not absence of detail; it is what the
+  // detail is measured against.
   for (const s of [-1, 1]) {
     B.add('core', 'plating', G.armourBelt({
-      length: 700, height: 50, thickness: 12, plates: full ? 3 : 2, gap: 40, chamfer: 8, detail: D,
+      length: 700, height: 50, thickness: 12, plates: 2, gap: 60, chamfer: 8, detail: D,
     }), { pos: [s * 114, -6, -60] });
   }
 
@@ -348,6 +384,20 @@ export function hullParts({ rng, lod = 0 }) {
     }
   }
 
+  // BRIDGE WINGS. The tower is 144 m across inside a 232 m beam, so from directly
+  // above it disappeared into the hull outline entirely and the top-down audit read
+  // as one undifferentiated blob (see docs/probes/cruiser-silhouette-top.png before
+  // this). These two shelves overhang the flanks - 46 m to port, 22 m to starboard,
+  // because the tower is already 16 m to port and pretending otherwise would be a
+  // second lie - and they are the only thing on the dorsal that breaks the plan
+  // outline. They also give the profile a horizontal at bridge-deck height.
+  if (D >= G.DETAIL.MID) {
+    B.add('dorsal', 'hull', G.panelledSlab({ width: 72, height: 14, depth: 58, detail: D }),
+      { pos: [-124, 176, -20] });
+    B.add('dorsal', 'hull', G.panelledSlab({ width: 80, height: 14, depth: 44, detail: D }),
+      { pos: [96, 176, -4] });
+  }
+
   // Sensor mast. The tallest thing on the ship: it fixes "up" from any angle.
   B.add('dorsal', 'greeble', G.antennaMast({
     height: 118, radius: 8, tipRadius: 3.5, spars: 3, sparSpan: 34, detail: D,
@@ -373,18 +423,53 @@ export function hullParts({ rng, lod = 0 }) {
   //    swallow a hulk. This is the single strongest "what does this ship do" cue.
   // =========================================================================
   {
-    const legZ = full ? [235, 80, -80, -235] : [200, -200];
-    for (const z of legZ) {
+    // EXPOSED STRUCTURE, NOT A ROAD BRIDGE. The first pass was four identical
+    // rectangular legs at even spacing carrying a flat deck, which is a highway
+    // overpass; a spacecraft's open frame is irregularly spaced, changes section
+    // where the load changes, and is triangulated. Three things fixed here:
+    //
+    //   UNEVEN STATIONS. The forward pair straddles the grapple throat and the
+    //   aft pair is bunched back toward the reactor bulkhead, so no two bays are
+    //   the same length.
+    //   VARYING SECTION. Forward legs are deep plate frames (thin across, long
+    //   fore-and-aft); the aft ones are narrow posts. The truss visibly carries
+    //   more where the hulk's mass would sit.
+    //   TRIANGULATION. Diagonal braces from rail to keel. A rectangular frame
+    //   with no diagonal is a frame that cannot take a shear load, and the eye
+    //   knows it even when the player could not say why.
+    //
+    // RAIL_X is OUTBOARD of the hull's 114-116 m half-beam on purpose: 24 m of
+    // overhang is what makes the cradle a readable mass in the top-down
+    // silhouette instead of a shape hidden under the keel.
+    const RAIL_X = 138;
+    const RAIL_Y = -186;
+    /** [z, halfWidth across X, depth along Z] - no two alike. */
+    const LEGS = full
+      ? [[272, 13, 54], [118, 17, 30], [-52, 15, 44], [-226, 11, 62]]
+      : [[228, 15, 46], [-160, 13, 52]];
+    for (const [z, hw, depth] of LEGS) {
       for (const s of [-1, 1]) {
-        B.add('core', 'hullDark', G.panelledSlab({ width: 30, height: 132, depth: 38, detail: D }),
-          { pos: [s * 100, -124, z] });
+        B.add('core', 'hullDark', G.panelledSlab({ width: hw * 2, height: 128, depth, detail: D }),
+          { pos: [s * RAIL_X, RAIL_Y + 62, z] });
       }
     }
     for (const s of [-1, 1]) {
-      B.add('core', 'hullDark', G.panelledSlab({ width: 36, height: 24, depth: 530, detail: D }),
-        { pos: [s * 100, -190, -6] });
+      B.add('core', 'hullDark', G.panelledSlab({ width: 40, height: 26, depth: 590, detail: D }),
+        { pos: [s * RAIL_X, RAIL_Y, -6] });
     }
     if (full) {
+      // Diagonals, in the ZY plane on each rail. Not mirrored fore-and-aft: the
+      // forward bay is braced one way and the aft bay the other, which is how a
+      // real frame ends up when it is braced against one dominant load path.
+      for (const s of [-1, 1]) {
+        for (const [z0, z1] of [[272, 118], [-52, -226]]) {
+          const dz = z1 - z0, dy = 118;
+          const len = Math.hypot(dy, dz);
+          B.add('core', 'greeble', G.hexStrut({
+            length: len, radius: 8, axis: 'z', caps: false, detail: D,
+          }), { pos: [s * RAIL_X, RAIL_Y + 8, z0], rot: [Math.atan2(-dy, dz), 0, 0] });
+        }
+      }
       B.add('core', 'greeble', G.hullRibs({
         count: 3, spacing: 150, span: 178, height: 16, thickness: 14, taper: 0.9, detail: D,
       }), { pos: [0, -58, -6] });
@@ -394,7 +479,7 @@ export function hullParts({ rng, lod = 0 }) {
           { pos: [s * 52, -76, 30] });
       }
     }
-    const cradle = new THREE.Box3(new THREE.Vector3(-136, -202, -272), new THREE.Vector3(136, -58, 272));
+    const cradle = new THREE.Box3(new THREE.Vector3(-158, -202, -300), new THREE.Vector3(158, -58, 300));
     mass('salvage-cradle', cradle);
   }
 
@@ -414,10 +499,11 @@ export function hullParts({ rng, lod = 0 }) {
     }), { pos: [s * 112, -22, 48], rot: [0, s * Math.PI * 0.5, 0] });
 
     if (full) {
-      for (const dz of [-58, 128]) {
-        B.add('core', 'greeble', G.hexStrut({ length: 54, radius: 7, axis: 'y', detail: D }),
-          { pos: [s * 184, 20, 48 + dz] });
-      }
+      // One stanchion a side, not two. The pair read as an evenly-spaced railing
+      // post - machine rhythm - and the triangles are better spent on the ventral
+      // truss's diagonals, which carry an actual structural read.
+      B.add('core', 'greeble', G.hexStrut({ length: 54, radius: 7, axis: 'y', detail: D }),
+        { pos: [s * 184, 20, -10] });
       B.add('core', 'greeble', G.panelledSlab({ width: 14, height: 11, depth: 200, detail: D }),
         { pos: [s * 184, 72, 48] });
     }
@@ -464,12 +550,11 @@ export function hullParts({ rng, lod = 0 }) {
     B.add('engine', 'greeble', G.thrusterBell({
       throat: 24, mouth: 36, length: 66, sides: 8, collar: false, detail: D,
     }), { pos: [s * 110, 26, -634] });
-    if (full) {
-      B.add('engine', 'greeble', G.thrusterBell({
-        throat: 13, mouth: 20, length: 34, sides: 6, collar: false, inner: false, detail: D,
-      }), { pos: [s * 110, -50, -666] });
-    }
   }
+  // The second, smaller pair of bells that used to sit at [+-110, -50, -666] is
+  // gone. Four bells in a symmetric grid read as a finished drive array, which is
+  // the opposite of what the empty well next to them is saying, and the triangles
+  // now pay for the ventral truss's bracing.
 
   for (const s of [-1, 1]) {
     B.addRaw('engine', 'engineGlow', glowDisc(34), { pos: [s * 110, 26, -697], rot: [0, Math.PI, 0] });

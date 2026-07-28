@@ -90,14 +90,16 @@ export class InventoryPanel {
       const tier = def?.tier ?? 1;
       P.pips(x + w - 3 - tier * 7, cy + 6, 3, tier, { size: 4, gap: 3, color: C.ink, empty: C.inkGhost });
 
+      // Line two is a fixed four-column grid, because a variable-width faction name
+      // followed by a variable-width mass will always eventually collide with the
+      // condition bar, and the day it does is the day the hold becomes unreadable.
       P.text(fi.name.toUpperCase(), x + 9, cy + 26, { font: F.micro, color: fi.hue, track: TRACK.label });
-      P.label(`${def?.hardpoint ?? '?'} · ${fmtMass(def?.mass ?? 0)}`, x + 78, cy + 26, { color: C.inkFaint });
+      P.label(def?.hardpoint ?? '?', x + 84, cy + 26, { color: C.inkFaint });
+      P.text(fmtMass(def?.mass ?? 0), x + 168, cy + 26, { font: F.micro, color: C.inkFaint, align: 'right' });
 
-      // Condition and the scrap price, on one line, both always visible.
       const cond = item.condition ?? 1;
-      P.label('COND', x + w - 148, cy + 26, { color: C.inkGhost });
-      P.bar(x + w - 116, cy + 20, 46, 4, cond, { color: cond < 0.5 ? C.warn : C.inkDim, track: C.inkGhost });
-      P.text(fmtPct(cond), x + w - 64, cy + 26, { font: F.micro, color: C.inkFaint, align: 'right' });
+      P.bar(x + 178, cy + 20, 40, 4, cond, { color: cond < 0.5 ? C.warn : C.inkDim, track: C.inkGhost });
+      P.text(fmtPct(cond), x + 250, cy + 26, { font: F.micro, color: C.inkFaint, align: 'right' });
 
       const v = scrapValue(item);
       P.text(`↓${v.alloy} AL`, x + w, cy + 26, { font: F.micro, color: C.salvageDim, align: 'right' });

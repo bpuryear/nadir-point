@@ -308,6 +308,7 @@ export default {
     const GAP = 260;
     const total = widths.reduce((a, b) => a + b, 0) + GAP * (widths.length - 1);
     const placed = Object.create(null);
+    const placedObjects = Object.create(null);
     let x = -total * 0.5;
     for (let i = 0; i < LINEUP.length; i++) {
       const id = LINEUP[i];
@@ -323,12 +324,15 @@ export default {
       }
       obj.position.set(x, 0, 0);
       placed[id] = x;
+      placedObjects[id] = obj;
       scene.add(obj);
       x += widths[i] * 0.5 + GAP;
     }
 
     // A view named after a class frames that class alone; anything else uses the
     // named presets. One rule, so every hull can be looked at without new code.
+    ctx.subjects = Object.values(placedObjects);
+
     let view = VIEWS[viewName];
     if (!view && byId(viewName)) {
       const def = byId(viewName);
@@ -344,13 +348,27 @@ export default {
     pose.target.set(...(view.target ?? [0, 0, 0]));
     ctx.spin = params.get('spin') === '1';
 
+    // FRAMING. The lineup used to be posed by a hand-tuned distance, and the row's
+    // left end - the 1400 m cruiser ruler, by a factor of three the largest object
+    // in the shot - ran off the bottom of the frame AND sat under the readout, so
+    // the first subject in the sheet could not be evaluated at all. A review frame
+    // whose subject is cropped is a review frame that proves nothing, so the pose is
+    // now derived from the subjects' real bounds rather than guessed.
+    // Only for the whole-row views; a view named after one class is meant to frame
+    // that class and nothing else.
+    if (!params.get('dist') && VIEWS[viewName] && ctx.subjects?.length) {
+      fitToSubjects(camera, pose, ctx.subjects, { margin: 1.16 });
+    }
+
     const worst = table.filter((t) => t.over).map((t) => t.id);
     label(ctx, [
       `FACTION SHIPS — view=${viewName} lod=${lodWant}`,
       `running lights every ${SCALE.runningLightSpacingM} m on every hull`,
       ...table.map((t) => `${t.id.padEnd(24)} ${String(t.measured).padStart(6)} m  ${String(t.tris).padStart(5)}/${t.budget} tris  ${t.draws} draws`),
       worst.length ? `OVER BUDGET: ${worst.join(', ')}` : 'all classes inside budget',
-    ]);
+      '',
+      'left-hand block is the 1400 m CRUISER RULER, not a hull. See cruiserReference().',
+    ], { align: 'right' });
 
     console.log('[probe:ships] materials outside registry:', registry.auditScene(scene));
     console.log('[probe:ships] off-palette colours:', registry.paletteAudit().foreign);
@@ -361,10 +379,58 @@ export default {
   },
 };
 
-function label(ctx, lines) {
+function label(ctx, lines, { align = 'left' } = {}) {
   const el = document.getElementById('label');
   if (!el) return;
   el.textContent = lines.join('\n');
   el.style.whiteSpace = 'pre';
+  // The readout goes on the side of the frame the subjects are NOT on. In the
+  // lineup the row runs small-on-the-right, so a right-anchored block sits over
+  // empty sky; left-anchored it sat on top of the biggest object in the shot.
+  if (align === 'right') {
+    el.style.left = 'auto';
+    el.style.right = '12px';
+    el.style.textAlign = 'right';
+  } else {
+    el.style.left = '12px';
+    el.style.right = 'auto';
+    el.style.textAlign = 'left';
+  }
   void ctx;
+}
+
+/**
+ * Point the pose at the subjects' real bounds and back off far enough that all of
+ * them fit, with margin. Works off the camera basis implied by the pose, so it is
+ * correct at any yaw/pitch and does not care which axis the row was laid along.
+ */
+function fitToSubjects(camera, pose, objects, { margin = 1.15 } = {}) {
+  const box = new THREE.Box3();
+  for (const o of objects) box.expandByObject(o);
+  if (box.isEmpty()) return;
+
+  const centre = box.getCenter(new THREE.Vector3());
+  const p = pose.pitch, y = pose.yaw;
+  // Camera sits at target + (sin y, tan-ish, cos y) * d and looks back at it.
+  const fwd = new THREE.Vector3(
+    -Math.cos(p) * Math.sin(y), -Math.sin(p), -Math.cos(p) * Math.cos(y),
+  ).normalize();
+  const right = new THREE.Vector3(Math.cos(y), 0, -Math.sin(y)).normalize();
+  const up = new THREE.Vector3().crossVectors(right, fwd).normalize();
+
+  let hr = 0, hu = 0, hf = 0;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < 8; i++) {
+    v.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z)
+      .sub(centre);
+    hr = Math.max(hr, Math.abs(v.dot(right)));
+    hu = Math.max(hu, Math.abs(v.dot(up)));
+    hf = Math.max(hf, Math.abs(v.dot(fwd)));
+  }
+
+  const tanV = Math.tan((camera.fov * Math.PI) / 180 * 0.5);
+  const tanH = tanV * camera.aspect;
+  const d = Math.max(hu / tanV, hr / tanH) * margin + hf;
+  pose.target.copy(centre);
+  pose.distance = d;
 }

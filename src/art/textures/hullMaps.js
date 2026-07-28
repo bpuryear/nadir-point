@@ -39,10 +39,39 @@ export const HULL_MAP_DEFAULTS = {
   wear: 0.45,
   tier: 1,
   markings: true,
-  normalStrength: 0.85,
+  /**
+   * Relief, not paint, is what a plate seam is. This was 0.85 and the resulting
+   * normal map was strong enough that at hero distance the eye read the tile as an
+   * embossed surface pattern rather than as flat plating with lines in it.
+   */
+  normalStrength: 0.52,
   /** Multiplies the faction's plate size. 1 = plates are the real-world size. */
   scale: 1,
 };
+
+/**
+ * DETAIL HIERARCHY.
+ *
+ * Reference warship hulls are roughly 60% calm plate, 30% medium, 10% dense, and it
+ * is the calm 60% that makes the dense 10% worth looking at. This tile was 100%
+ * medium: greeble, wear and seams at one density over every square metre, which is
+ * why a 1.4 km hull, a 400 m derelict and a 40 m module all carried an identical
+ * surface and none of them had a scale.
+ *
+ * `busyField` is a low-frequency mask built at 2 cells over the tile - so its
+ * features are half a tile across, i.e. tens of metres of hull - which gates the
+ * mechanical and weathering layers. Below `calm` it is zero and the plate is bare;
+ * above it, it ramps to a dense band. The bands land on structure because the same
+ * field is what the streaks and grime already key off.
+ */
+function busyField(fbm, calm) {
+  const n = fbm.length;
+  const out = new Float32Array(n);
+  const lo = saturate01(calm);
+  const hi = Math.min(1, lo + 0.30);
+  for (let i = 0; i < n; i++) out[i] = smoothstep(lo, hi, fbm[i]);
+  return out;
+}
 
 /** Which palette entries and surface spec each material variant pulls from. */
 function variantSpec(pal, variant) {
@@ -90,14 +119,30 @@ export function hullMaps(opts = {}) {
   };
   const panel = panelField(rng.fork(`panel:${o.variant}`), panelOpts);
 
+  // --- density hierarchy ----------------------------------------------------
+  // Built before the mechanical layer because everything below is gated by it.
+  const calm = pal.panel.calm ?? 0.55;
+  const busy = busyField(
+    fbmField(rng.fork(`density:${o.variant}`), size, { baseCells: 2, octaves: 3, gain: 0.55 }),
+    calm,
+  );
+
   // --- mechanical layer -----------------------------------------------------
+  // Density is raised because the field now removes most of it again: the same
+  // number of features end up in the frame, concentrated into bands instead of
+  // spread evenly, which is the difference between "a vent run" and "noise".
   const greeb = greebleMap({
     rng: rng.fork(`greeble:${o.variant}`),
     size,
-    density: spec.greeble * (0.7 + tier * 0.25),
+    density: spec.greeble * (0.7 + tier * 0.25) * 1.35,
     scale: 0.85 + tier * 0.12,
     amplitude: 1,
   });
+  for (let i = 0; i < n; i++) {
+    const g = busy[i];
+    greeb.mask[i] *= g;
+    greeb.height[i] = 0.5 + (greeb.height[i] - 0.5) * g;
+  }
 
   // --- weathering -----------------------------------------------------------
   const amount = saturate01(o.wear * spec.wearMul);
@@ -111,6 +156,15 @@ export function hullMaps(opts = {}) {
     grime: pal.wear.grime,
     pit: o.variant === 'derelictHull' ? pal.wear.pit : pal.wear.pit * 0.35,
   });
+  // Streaks and grime are also part of the detail budget, so they live in the same
+  // bands as the greeble rather than covering the whole hull evenly. Edge wear is
+  // NOT gated: it is caused by the plate layout and it has to follow it everywhere,
+  // or plate edges stop reading as plate edges.
+  for (let i = 0; i < n; i++) {
+    const g = 0.28 + 0.72 * busy[i];
+    wr.streak[i] *= g;
+    wr.grime[i] *= g;
+  }
 
   // --- albedo ---------------------------------------------------------------
   const [br, bg, bb] = hexBytes(spec.base);
@@ -120,9 +174,25 @@ export function hullMaps(opts = {}) {
   const [dr, dg, db] = hexBytes(pal.baseDark);
   const spread = Math.max(1e-4, panelOpts.toneSpread ?? 0.1);
 
+  /**
+   * THE SINGLE NUMBER THAT DECIDED WHETHER THIS READ AS PLATING OR AS MASONRY.
+   *
+   * Three separate terms below darken the albedo per plate: the base/alt tone step,
+   * the seam, and the recess "cavity". At full strength a recessed plate came out at
+   * 55% of its neighbour's albedo with a 45% dark border around it, and on a 1.4 km
+   * hull carrying seventy repeats of that the eye stopped seeing a ship and started
+   * seeing a brick wall. Real plating is very nearly one value with thin lines in
+   * it; the relief and the light do the work, not the paint. `plateContrast` scales
+   * all three together so the relationship between them stays intact.
+   */
+  const contrast = pal.panel.plateContrast ?? 0.45;
+  const seamK = 0.55 * contrast;
+  const cavityK = 0.45 * contrast;
+
   const bytes = new Uint8ClampedArray(n * 4);
   for (let i = 0; i < n; i++) {
-    const t = saturate01((panel.tone[i] - (1 - spread)) / (2 * spread));
+    const t0 = saturate01((panel.tone[i] - (1 - spread)) / (2 * spread));
+    const t = 0.5 + (t0 - 0.5) * contrast;
     let r = lerp(br, ar, t), g = lerp(bg, ag, t), b = lerp(bb, ab, t);
 
     // Greeble is a different part with a different finish, not the same paint.
@@ -149,8 +219,8 @@ export function hullMaps(opts = {}) {
 
     // Seams are dark because there is a hole there; do not rely on AO alone,
     // which under a hard key with almost no ambient contributes nothing.
-    const seamDark = 1 - panel.edge[i] * 0.55 * smoothstep(0.0, 0.35, 1 - panel.height[i]);
-    const cavity = 0.55 + 0.45 * smoothstep(0.02, 0.5, panel.height[i]);
+    const seamDark = 1 - panel.edge[i] * seamK * smoothstep(0.0, 0.35, 1 - panel.height[i]);
+    const cavity = (1 - cavityK) + cavityK * smoothstep(0.02, 0.5, panel.height[i]);
 
     const o4 = i * 4;
     bytes[o4] = r * seamDark * cavity;
@@ -243,8 +313,14 @@ function stampMarkings(ctx, size, panel, pal, faction, rng, tier) {
   const px = plate.x0 * size, py = plate.y0 * size;
   const pw = (plate.x1 - plate.x0) * size, ph = (plate.y1 - plate.y0) * size;
 
+  // Alpha is low on purpose. This is a TILING map, so whatever is stamped here
+  // repeats every `tileM` metres - fifty times along a cruiser. A hull number the
+  // eye can actually read would therefore appear fifty times, which is worse than
+  // no hull number at all. Real one-off markings need a decal mesh placed by the
+  // geometry stream against `materials.get('decal')`; what lives here is the faint
+  // stencilling that survives repetition.
   ctx.save();
-  ctx.globalAlpha = 0.62;
+  ctx.globalAlpha = 0.34;
   if (rng.bool(0.55)) {
     const code = hullCode(rng, faction);
     const cell = Math.max(2, Math.min(ph * 0.13 / 7, pw * 0.40 / (code.length * 6)));
@@ -261,7 +337,7 @@ function stampMarkings(ctx, size, panel, pal, faction, rng, tier) {
     const sx = strip.x0 * size, sy = strip.y0 * size;
     const sw = (strip.x1 - strip.x0) * size, sh = (strip.y1 - strip.y0) * size;
     ctx.save();
-    ctx.globalAlpha = 0.55;
+    ctx.globalAlpha = 0.30;
     hazardStripes(ctx, sx + sw * 0.12, sy + sh * 0.36, sw * 0.76, sh * 0.26, {
       a: pal.marking.hazardA, b: pal.marking.hazardB, period: Math.max(4, sh * 0.16),
     });
@@ -301,7 +377,11 @@ export function rockMaps(opts = {}) {
     h[i] = lump[i] * 0.55 + fine[i] * 0.22 + cb * 0.34 + cs * 0.14;
     // Albedo variation in rock comes from composition, not from the shape. Baking
     // a lighting term into the albedo is what makes procedural rock look like clay.
-    const shade = saturate01(0.30 + lump[i] * 0.55 + fine[i] * 0.30);
+    // The range is deliberately low and wide rather than high and narrow: at
+    // 0.30-1.15 (clamped) most of a rock sat at full tint, so a field of asteroids
+    // was a field of flat warm-brown blobs brighter than the ship they surrounded,
+    // and nothing in the frame shared a grade with anything else.
+    const shade = saturate01(0.16 + lump[i] * 0.46 + fine[i] * 0.24);
     const v = saturate01(veins[i] * veins[i] * 1.8) * oreAmount;
     const o4 = i * 4;
     bytes[o4] = lerp(lerp(dr2, tr, shade), er, v);

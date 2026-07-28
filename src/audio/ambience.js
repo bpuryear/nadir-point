@@ -29,7 +29,7 @@
 
 import {
   clamp, lerp, gain as mkGain, biquad, osc, bufferSource, startAt,
-  loopBuffer, genBrown, genTicks, genGroans, normalise,
+  loopData, dataToBuffer, genBrown, genTicks, genGroans, normalise, NOMINAL_RATE,
 } from './synth.js';
 
 /**
@@ -88,8 +88,8 @@ export function bedIdFor(idOrKind) {
  * with occasional flares folded on top. All of it is in the buffer, so the run-time
  * cost is one AudioBufferSourceNode.
  */
-function bakeStar(ctx, rng) {
-  return loopBuffer(ctx, 19, 2.5, 2, (sr, n, c) => {
+function bakeStar(rng, sr) {
+  return loopData(16, 2.5, sr, 2, (sr2, n, c) => {
     const r = rng.fork(`star${c}`);
     const d = genBrown(n, r);
     const ph1 = r.next() * Math.PI * 2;
@@ -97,10 +97,10 @@ function bakeStar(ctx, rng) {
     // Flares: fast rise, long fall, a few per loop.
     const flares = [];
     for (let i = 0; i < 3; i++) {
-      flares.push({ at: r.next() * n, rise: (0.35 + r.next() * 0.5) * sr, fall: (3 + r.next() * 4) * sr, amp: 0.5 + r.next() });
+      flares.push({ at: r.next() * n, rise: (0.35 + r.next() * 0.5) * sr2, fall: (3 + r.next() * 4) * sr2, amp: 0.5 + r.next() });
     }
     for (let i = 0; i < n; i++) {
-      const t = i / sr;
+      const t = i / sr2;
       let env = 0.46 + 0.32 * Math.sin(2 * Math.PI * 0.055 * t + ph1)
         + 0.18 * Math.sin(2 * Math.PI * 0.021 * t + ph2);
       for (const f of flares) {
@@ -118,9 +118,9 @@ function bakeStar(ctx, rng) {
 }
 
 /** Rock knocking on rock. Sparse, irregular, and never quite rhythmic. */
-function bakeBelt(ctx, rng) {
-  return loopBuffer(ctx, 23, 1.5, 2, (sr, n, c) => {
-    const d = genTicks(n, sr, rng.fork(`belt${c}`), {
+function bakeBelt(rng, sr) {
+  return loopData(19, 1.5, sr, 2, (sr2, n, c) => {
+    const d = genTicks(n, sr2, rng.fork(`belt${c}`), {
       ticksPerSec: 2.1, fLo: 260, fHi: 3400, ringMsLo: 18, ringMsHi: 210, partials: 3,
     });
     normalise(d, 0.9);
@@ -132,13 +132,13 @@ function bakeBelt(ctx, rng) {
  * A dead fleet settling. Five events in twenty-six seconds; the rest is nothing.
  * The gaps are the content.
  */
-function bakeGraveyard(ctx, rng) {
-  return loopBuffer(ctx, 26, 3.0, 2, (sr, n, c) => {
-    const d = genGroans(n, sr, rng.fork(`grave${c}`), {
+function bakeGraveyard(rng, sr) {
+  return loopData(22, 3.0, sr, 2, (sr2, n, c) => {
+    const d = genGroans(n, sr2, rng.fork(`grave${c}`), {
       events: 5, fLo: 24, fHi: 84, durLo: 3.2, durHi: 8.5,
     });
     // A very occasional far-off tick, so the silence has a floor to sit on.
-    const t = genTicks(n, sr, rng.fork(`graveTick${c}`), {
+    const t = genTicks(n, sr2, rng.fork(`graveTick${c}`), {
       ticksPerSec: 0.34, fLo: 180, fHi: 900, ringMsLo: 60, ringMsHi: 420, amp: 0.5,
     });
     for (let i = 0; i < n; i++) d[i] += t[i] * 0.30;
@@ -148,13 +148,13 @@ function bakeGraveyard(ctx, rng) {
 }
 
 /** Planetary magnetosphere: a bed that swells on a very long period. */
-function bakeGiant(ctx, rng) {
-  return loopBuffer(ctx, 17, 2.0, 2, (sr, n, c) => {
+function bakeGiant(rng, sr) {
+  return loopData(14, 2.0, sr, 2, (sr2, n, c) => {
     const r = rng.fork(`giant${c}`);
     const d = genBrown(n, r);
     const ph = r.next() * Math.PI * 2;
     for (let i = 0; i < n; i++) {
-      const t = i / sr;
+      const t = i / sr2;
       d[i] *= 0.5 + 0.5 * Math.sin(2 * Math.PI * 0.037 * t + ph);
     }
     normalise(d, 0.92);
@@ -163,9 +163,9 @@ function bakeGiant(ctx, rng) {
 }
 
 /** Gantry work: heavier, slower clanks than the belt's rock. */
-function bakeYard(ctx, rng) {
-  return loopBuffer(ctx, 19, 1.5, 2, (sr, n, c) => {
-    const d = genTicks(n, sr, rng.fork(`yard${c}`), {
+function bakeYard(rng, sr) {
+  return loopData(16, 1.5, sr, 2, (sr2, n, c) => {
+    const d = genTicks(n, sr2, rng.fork(`yard${c}`), {
       ticksPerSec: 1.05, fLo: 120, fHi: 1100, ringMsLo: 45, ringMsHi: 480, partials: 3,
     });
     normalise(d, 0.9);
@@ -337,7 +337,23 @@ export class AmbienceAudio {
     this.audio = audio;
     this.current = null;
     this.currentId = null;
+    /** bedId -> raw channel data, generated without a context. */
+    this._data = new Map();
+    /** bedId -> AudioBuffer, wrapped on first use. */
     this._baked = new Map();
+  }
+
+  /**
+   * Generate a bed's samples ahead of time. Baking a graveyard on POI entry cost
+   * about a hundred milliseconds of blocked main thread; doing it during boot or
+   * during a transit burn costs nothing anybody can see. No context required.
+   */
+  prebake(idOrKind, sr = NOMINAL_RATE) {
+    const bedId = bedIdFor(idOrKind);
+    if (this._data.has(bedId)) return bedId;
+    const bake = BAKERS[bedId];
+    this._data.set(bedId, bake ? bake(this.audio.rng.fork(`bed:${bedId}`), sr) : null);
+    return bedId;
   }
 
   /** Enter a point of interest. Crossfades; safe to call with the same id twice. */
@@ -350,9 +366,12 @@ export class AmbienceAudio {
     const prev = this.current;
     let baked = this._baked.get(bedId);
     if (baked === undefined) {
-      const bake = BAKERS[bedId];
-      baked = bake ? bake(A.ctx, A.rng.fork(`bed:${bedId}`)) : null;
+      this.prebake(bedId);
+      const data = this._data.get(bedId);
+      baked = data ? dataToBuffer(A.ctx, data) : null;
       this._baked.set(bedId, baked);
+      // The AudioBuffer owns the samples now.
+      this._data.set(bedId, null);
     }
 
     const bed = new Bed(A, bedId, baked);

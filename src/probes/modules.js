@@ -236,6 +236,29 @@ export default {
     pose.target.set(view.target[0], view.target[1], view.target[2]);
     ctx.spin = false;
 
+    // FRAMING. Every set's distance used to be a hand-tuned constant, and the fifth
+    // subject in the port and ventral rows ran off the right-hand edge - so the last
+    // item in each sheet could not be critiqued at all. The row's extent is known
+    // exactly (it is `spacing` times the column count), so back the camera off until
+    // it fits instead of guessing. Only ever increases the distance: a set that
+    // already fits keeps its authored framing.
+    {
+      const cols = groups.length > 1
+        ? Math.max(...groups.map((g) => modulesForHardpoint(g).length))
+        : (view.cols ?? modulesForHardpoint(groups[0]).length);
+      const rowsN = groups.length > 1
+        ? groups.length
+        : Math.ceil(modulesForHardpoint(groups[0]).length / cols);
+      // Half-extent of a single cell's content: a bare module is a few hundred
+      // metres across, a whole cruiser is 1400 long by 525 tall.
+      const cell = bare ? 260 : 760;
+      const halfW = ((cols - 1) / 2) * view.spacing + cell;
+      const halfH = ((rowsN - 1) / 2) * (view.rowGap ?? 0) + (bare ? cell : 300);
+      const tanV = Math.tan((ctx.camera.fov * Math.PI) / 180 * 0.5);
+      const tanH = tanV * ctx.camera.aspect;
+      pose.distance = Math.max(view.dist, (halfW / tanH) * 1.06, (halfH / tanV) * 1.06);
+    }
+
     // ---- audit -------------------------------------------------------------
     const report = auditModules((def, l) => ({
       rng: world.rng.fork(`audit:${def.id}:${l}`),

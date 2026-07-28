@@ -249,7 +249,7 @@ export class WeaponAudio {
       const fall = 1 - i * 0.09;
       noiseBurst(A, d, at, {
         buffer: 'white', type: 'bandpass', freq: (1500 + i * 90) * k, q: 1.3 * v.q,
-        peak: 0.92 * fall, attack: 0.0008, tau: 0.016,
+        peak: 1.25 * fall, attack: 0.0008, tau: 0.016,
       });
       subThump(A, d, at, {
         f0: 92 * k, f1: 44 * k, sweepTime: 0.05, peak: 0.17 * fall, tau: 0.038,
@@ -258,7 +258,7 @@ export class WeaponAudio {
     // Airburst shrapnel: the reason flak sounds like weather rather than gunfire.
     noiseBurst(A, d, t + 0.11 * S, {
       buffer: 'debris', type: 'highpass', freq: 820 * k, q: 0.7,
-      peak: 0.30, attack: 0.02, tau: 0.24,
+      peak: 0.42, attack: 0.02, tau: 0.24,
     });
     noiseBurst(A, d, t + 0.09 * S, {
       buffer: 'brown', type: 'lowpass', freq: 300 * k, q: 1.0,
@@ -333,10 +333,10 @@ export class WeaponAudio {
     // running a hair apart, and it is the single detail that stops a sustained
     // tone sounding like a test signal.
     const spec = type === 'lance'
-      ? { f: 112, beat: 1.05, band: 640, q: 2.6, sub: 41, subLvl: 0.45, drive: 3.2, noise: 0.16, am: 0, level: 1.55 }
+      ? { f: 112, beat: 1.05, band: 640, q: 2.6, sub: 41, subLvl: 0.45, drive: 3.2, noise: 0.16, am: 0, level: 1.00 }
       : type === 'mining'
-        ? { f: 186, beat: 3.1, band: 820, q: 3.4, sub: 62, subLvl: 0.18, drive: 2.2, noise: 0.42, am: 26, level: 1.25 }
-        : { f: 268, beat: 1.9, band: 1180, q: 2.1, sub: 67, subLvl: 0.20, drive: 1.6, noise: 0.22, am: 0, level: 1.50 };
+        ? { f: 186, beat: 3.1, band: 820, q: 3.4, sub: 62, subLvl: 0.18, drive: 2.2, noise: 0.42, am: 26, level: 0.80 }
+        : { f: 268, beat: 1.9, band: 1180, q: 2.1, sub: 67, subLvl: 0.20, drive: 1.6, noise: 0.22, am: 0, level: 0.95 };
 
     const k = v.f / Math.pow(size, 0.35);
 
@@ -381,12 +381,12 @@ export class WeaponAudio {
     if (spec.am > 0) {
       const am = osc(ctx, 'square', spec.am * A.pitch);
       const amG = mkGain(ctx, 0.42);
-      const amBias = mkGain(ctx, 1);
-      // Drive the body's own gain: bias 1 plus a +/-0.42 square = a 58% duty chop.
+      // Drive the body's own gain: its value of 1 plus a +/-0.42 square is a chop
+      // between 58% and 142%, which is a tool biting rather than a tremolo.
       am.connect(amG);
       amG.connect(body.gain);
       startAt(am, t);
-      handle.sources.push(am, amBias);
+      handle.sources.push(am);
     }
 
     handle.setGain(spec.level * spat.gain, 0.045);
