@@ -31,10 +31,19 @@
 
 import * as THREE from 'three';
 import * as G from '../greeble.js';
-import { BUDGET } from '../../../core/units.js';
+import { BUDGET, SCALE_CUE } from '../../../core/units.js';
 
-/** Module running lights. Half the hull's 40 m. Constant. See the header. */
-export const MODULE_LIGHT_SPACING_M = 20;
+/**
+ * Module running lights, at the SAME spacing as every hull in the game.
+ *
+ * This was 20 m - deliberately half the hull's 40 m, so a salvaged module carried a
+ * different rhythm from the ship it was bolted to. That is a nice idea and it breaks
+ * the scale cue: a player who has learned "one beacon is 40 m" and then counts beacons
+ * along a module reads it as twice its real length. Two rhythms on one silhouette do
+ * not communicate two things, they stop communicating anything. Faction identity is
+ * carried by hue, structure and material instead, where it costs nothing.
+ */
+export const MODULE_LIGHT_SPACING_M = SCALE_CUE.runningLightSpacingM;
 /** Lamp face size, metres. Constant too — a lamp that scales is a lamp that lies. */
 export const MODULE_LIGHT_SIZE_M = 4.6;
 /** Hard ceiling from units.js. Every module declares this as its triBudget. */

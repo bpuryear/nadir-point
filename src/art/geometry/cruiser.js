@@ -47,11 +47,16 @@
 import * as THREE from 'three';
 import * as G from './greeble.js';
 import { CRUISER_HARDPOINTS, CRUISER_ANCHORS, createSockets } from './hardpoints.js';
+import { SCALE_CUE } from '../../core/units.js';
 
 export const CRUISER_LENGTH = 1400;
 
-/** Mandatory scale cue. Do not change this per-ship; see runningLights.js. */
-export const RUNNING_LIGHT_AXIS_SPACING_M = 40;
+/**
+ * Mandatory scale cue, owned by core/units.js#SCALE_CUE so that hulls, modules and
+ * faction ships cannot drift apart. Never override this per-ship - see the rationale
+ * in units.js.
+ */
+export const RUNNING_LIGHT_AXIS_SPACING_M = SCALE_CUE.runningLightSpacingM;
 
 // ---------------------------------------------------------------------------
 // The lines. Every number below is metres in ship space: +Z forward, +Y up,

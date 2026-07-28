@@ -1,17 +1,37 @@
 [
   {
-    "id": "wide",
-    "description": "Maximum tactical zoom. Cruiser as a speck against the celestial. Tests scale cues and atmospheric perspective.",
-    "settle": 90
-  },
-  {
     "id": "close",
     "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity.",
-    "settle": 90
+    "settle": 100,
+    "settleAfterSetup": 60,
+    "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 2.35; t.pitchOffset = t._pitchTarget = 0.18; t.zoomT = t._zoomTTarget = 0.02;"
   },
   {
-    "id": "silhouette",
-    "description": "Cruiser against the bright celestial, key light behind. Tests whether modules read from silhouette alone.",
-    "settle": 90
+    "id": "three-quarter",
+    "description": "Mid tactical range, raking key. The everyday playing view.",
+    "settle": 100,
+    "settleAfterSetup": 60,
+    "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 0.9; t.pitchOffset = t._pitchTarget = 0.30; t.zoomT = t._zoomTTarget = 0.26;"
+  },
+  {
+    "id": "wide",
+    "description": "Maximum tactical zoom. Cruiser a bright speck against the gas giant. The shot that sells the game.",
+    "settle": 100,
+    "settleAfterSetup": 60,
+    "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 1.7; t.pitchOffset = t._pitchTarget = 0.22; t.zoomT = t._zoomTTarget = 0.86;"
+  },
+  {
+    "id": "cinematic",
+    "description": "Chase camera. Tests the cinematic framing and the sense of mass.",
+    "settle": 100,
+    "settleAfterSetup": 120,
+    "setup": "N.world.player.orderMove(new N.THREE.Vector3(9000, 0, 5000)); N.world.systems.cinematic.enter(N.world.player);"
+  },
+  {
+    "id": "engagement",
+    "description": "Cruiser under way with hostiles on the plane. Tests scale cues and the fight read.",
+    "settle": 100,
+    "settleAfterSetup": 180,
+    "setup": "const w = N.world; const t = w.systems.tactical; t.mode='LOCKED'; t.lockTarget = w.player; t.yaw = t._yawTarget = 0.4; t.pitchOffset = t._pitchTarget = 0.42; t.zoomT = t._zoomTTarget = 0.48; const foe = w.ships.find(s => s !== w.player && !s.dead); if (foe) { w.player.orderAttack(foe); foe.orderAttack(w.player); }"
   }
 ]

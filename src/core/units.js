@@ -22,6 +22,26 @@ export const HULL_LENGTH = {
 /** The combat plane. The cruiser is locked to y=0; everything else is not. */
 export const COMBAT_PLANE_Y = 0;
 
+/**
+ * Scale cues.
+ *
+ * Running lights only work as a scale cue if the spacing is ONE constant the player
+ * can learn and then apply to anything on screen. Three different spacings on one
+ * ship - hull, module, faction escort - do not read as three rhythms, they read as
+ * no information at all, and the cue silently stops working.
+ *
+ * So: every discrete navigation beacon on every hull and every module in the game is
+ * at this spacing. Nothing overrides it per-ship.
+ *
+ * This is distinct from the fine emissive deck strip in art/textures/runningLights.js,
+ * which is a continuous lit edge rather than a set of countable points. Two different
+ * visual elements; only the countable one is load-bearing for scale.
+ */
+export const SCALE_CUE = {
+  /** Metres between discrete navigation beacons, on everything. */
+  runningLightSpacingM: 40,
+};
+
 /** Engagement distances, metres. */
 export const RANGE = {
   pointDefence: 900,
