@@ -43,8 +43,8 @@ export class ObjectivesPanel extends Panel {
       id: 'objectives',
       title: 'OBJECTIVES',
       hint: 'J',
-      w: 452,
-      h: 384,
+      w: 486,
+      h: 440,
       place: (P) => ({ x: 30, y: Math.max(40, Math.min(118, P.h - 420)) }),
     });
     this.ui = ui;
@@ -87,8 +87,7 @@ export class ObjectivesPanel extends Panel {
     let cy = y + 8;
     P.label('OPEN', x, cy, { color: C.inkFaint });
     P.text(String(rows.length), x + 42, cy, { font: F.bodyBold, color: C.ink });
-    P.label('GENERATED FROM THE FACTION WAR · IGNORING THEM CHANGES NOTHING BUT YOUR PAY',
-      x + 62, cy, { color: C.inkGhost });
+    P.label('READ OFF THE WAR · IGNORING THEM COSTS ONLY PAY', x + 62, cy, { color: C.inkGhost });
     P.hline(x, cy + 5, w, C.rule);
     cy += 18;
 
@@ -100,7 +99,7 @@ export class ObjectivesPanel extends Panel {
     }
 
     for (const o of rows) {
-      const rowH = o.clock ? 96 : 78;
+      const rowH = rowHeight(o);
       if (cy > clip.clipBottom + rowH || cy + rowH < clip.clipTop) { cy += rowH + 6; continue; }
       cy = this._drawRow(P, x, cy, w, o, player, hit) + 6;
     }
@@ -133,7 +132,7 @@ export class ObjectivesPanel extends Panel {
   _drawRow(P, x, y, w, o, player, hit) {
     const here = o.here;
     const top = y;
-    const rowH = o.clock ? 90 : 72;
+    const rowH = rowHeight(o);
 
     P.fill(x - 4, y, w + 8, rowH, here ? C.scrimHard : C.scrimSoft);
     P.frame(x - 4, y, w + 8, rowH, here ? C.rule : C.ruleDim);
@@ -206,26 +205,29 @@ export class ObjectivesPanel extends Panel {
     }
 
     // --- the fork -----------------------------------------------------------
-    // All three tiers, always, with the multiplier on each. This is the only place in
-    // the game where being early is priced, and a player who cannot see the price
-    // cannot choose to pay it.
-    P.label(o.arrival.locked ? 'ARRIVAL · LOCKED' : 'ARRIVAL IF YOU GO NOW', x + 4, cy + 9,
+    // All three tiers, always, with the multiplier on each, on their OWN line. This is
+    // the only place in the game where being early is priced, and a player who cannot
+    // see the price cannot choose to pay it — so the three chips get the width they
+    // need rather than being squeezed in beside a label and clipped.
+    P.label(o.arrival.locked ? 'ARRIVAL · LOCKED' : 'ARRIVAL IF YOU GO NOW', x + 4, cy + 8,
       { color: o.arrival.locked ? C.inkFaint : C.inkGhost });
-    let ax = x + 128;
+    P.text(rewardText(o.projectedReward), x + w, cy + 8, {
+      font: F.small, color: C.ink, align: 'right',
+    });
+    cy += 13;
+
+    let ax = x + 4;
     for (const tier of ARRIVAL_TIERS) {
       const on = tier.id === o.arrival.tier;
       const label = `${tier.label} ×${tier.multiplier.toFixed(2)}`;
       const scales = o.arrival.multiplier !== 1 || o.arrival.tier === tier.id;
-      if (on) ax = P.chip(label, ax, cy, { fill: C.ink, color: C.void, h: 13 }) + 4;
-      else ax = P.chipOutline(label, ax, cy, { color: scales ? C.inkFaint : C.inkGhost, h: 13 }) + 4;
+      if (on) ax = P.chip(label, ax, cy, { fill: C.ink, color: C.void, h: 13 }) + 5;
+      else ax = P.chipOutline(label, ax, cy, { color: scales ? C.inkFaint : C.inkGhost, h: 13 }) + 5;
     }
     cy += 17;
 
-    P.text(P.clip(String(o.arrival.note ?? '').toUpperCase(), F.micro, 250), x + 4, cy + 8,
+    P.text(P.clip(String(o.arrival.note ?? '').toUpperCase(), F.micro, w - 8), x + 4, cy + 8,
       { font: F.micro, color: C.inkGhost, track: TRACK.label });
-    P.text(rewardText(o.projectedReward), x + w, cy + 8, {
-      font: F.small, color: C.ink, align: 'right',
-    });
 
     if (hit) hit.push({ kind: 'objective:row', panel: this.id, objId: o.id, x: x - 4, y: top, w: w + 8, h: rowH });
     return top + rowH;
