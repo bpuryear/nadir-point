@@ -156,6 +156,23 @@ export async function bootGame(world, params) {
     note('refit', false);
   }
 
+  /*
+   * The progression and economy layer: volume-based cargo, tiered materials, the
+   * codex, salvaged patterns, items, hull perks and objectives.
+   *
+   * This is installed AFTER salvage and refit because CargoHold and EconomySystem
+   * take over stores those two already own - the hold stops being a six-slot array
+   * and becomes cubic metres, and materials stop being three flat pools. Installing
+   * it earlier would have salvage write into a hold that is about to be replaced.
+   *
+   * It is loaded through `optional()` like every other stream so a partial build
+   * still boots; the systems stream that wrote it was not allowed to edit this file,
+   * which is why the wiring lands here rather than there.
+   */
+  const metaMod = await optional('./sim/meta/index.js', 'progression');
+  if (metaMod?.installProgression) metaMod.installProgression(world, { salvage });
+  note('progression', !!metaMod?.installProgression);
+
   // Ships integrate themselves; one system drives them all so ordering is explicit.
   engine.add({
     name: 'ships',
