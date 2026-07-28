@@ -78,12 +78,17 @@ export function runningLights(opts = {}) {
   const texture = canvasTexture(canvas, { srgb: true, name: `running-lights:${o.faction}` });
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
+  // Same convention as the hull maps: U is METRES along the strip, so a strip of
+  // geometry authored with u = 0..lengthM gets the correct number of lights with
+  // no per-mesh fiddling and no way to accidentally lie about the ship's size.
+  // V stays 0..1 across the strip's width.
+  texture.repeat.set(1 / RUNNING_LIGHT_TILE_M, 1);
 
   return {
     texture, canvas,
     spacingM: RUNNING_LIGHT_SPACING_M,
     tileM: RUNNING_LIGHT_TILE_M,
-    /** Repeat count for a strip of this length, so spacing stays honest. */
+    /** How many tiles a strip of this length covers, if you need the number. */
     repeatFor: (lengthM) => lengthM / RUNNING_LIGHT_TILE_M,
   };
 }

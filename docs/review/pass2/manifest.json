@@ -1,0 +1,91 @@
+[
+  {
+    "id": "close",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.1583,
+      "contrast": 0.2367,
+      "clippedPct": 0,
+      "nearBlackPct": 39.61
+    },
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity.",
+    "file": "docs/review/pass2/close.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 6.599999999998545,
+      "stepMs": 0.5,
+      "renderMs": 2.899999998509884,
+      "steps": 6,
+      "calls": 148,
+      "triangles": 72469,
+      "points": 7000,
+      "lines": 0,
+      "programs": 59,
+      "geometries": 81,
+      "textures": 74
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "three-quarter",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0789,
+      "contrast": 0.1377,
+      "clippedPct": 0,
+      "nearBlackPct": 37.29
+    },
+    "description": "Mid tactical range, raking key. The everyday playing view.",
+    "file": "docs/review/pass2/three-quarter.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 6.4000000014930265,
+      "stepMs": 0.4000000022351742,
+      "renderMs": 4.300000000745058,
+      "steps": 6,
+      "calls": 151,
+      "triangles": 95013,
+      "points": 7000,
+      "lines": 0,
+      "programs": 59,
+      "geometries": 81,
+      "textures": 74
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "wide",
+    "ok": false,
+    "warnings": [
+      "FRAME IS FLAT OR EMPTY (contrast < 0.02)"
+    ],
+    "frame": {
+      "meanLuma": 0.0227,
+      "contrast": 0.0181,
+      "clippedPct": 0,
+      "nearBlackPct": 48.29
+    },
+    "description": "Maximum tactical zoom. Cruiser a bright speck against the gas giant. The shot that sells the game.",
+    "file": "docs/review/pass2/wide.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 12.000000001491571,
+      "stepMs": 0.30000000074505806,
+      "renderMs": 6.600000001490116,
+      "steps": 6,
+      "calls": 98,
+      "triangles": 65753,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 68,
+      "textures": 71
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

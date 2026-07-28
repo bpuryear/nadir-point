@@ -1,0 +1,112 @@
+[
+  {
+    "id": "close",
+    "ok": true,
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity.",
+    "file": "docs/review/look1/close.png",
+    "stats": {
+      "fps": 5.453553899290981,
+      "cpuMs": 20.800000000745058,
+      "stepMs": 1.199999999254942,
+      "renderMs": 4.200000002980232,
+      "steps": 6,
+      "calls": 148,
+      "triangles": 72565,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 81,
+      "textures": 74
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "three-quarter",
+    "ok": true,
+    "description": "Mid tactical range, raking key. The everyday playing view.",
+    "file": "docs/review/look1/three-quarter.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 22.200000000739237,
+      "stepMs": 0.3999999985098839,
+      "renderMs": 9,
+      "steps": 6,
+      "calls": 143,
+      "triangles": 90565,
+      "points": 7000,
+      "lines": 0,
+      "programs": 57,
+      "geometries": 67,
+      "textures": 71
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "wide",
+    "ok": true,
+    "description": "Maximum tactical zoom. Cruiser a bright speck against the gas giant. The shot that sells the game.",
+    "file": "docs/review/look1/wide.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 13.999999998515705,
+      "stepMs": 0.5,
+      "renderMs": 4.100000001490116,
+      "steps": 6,
+      "calls": 98,
+      "triangles": 65753,
+      "points": 7000,
+      "lines": 0,
+      "programs": 56,
+      "geometries": 68,
+      "textures": 71
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "cinematic",
+    "ok": true,
+    "description": "Chase camera. Tests the cinematic framing and the sense of mass.",
+    "file": "docs/review/look1/cinematic.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 11.400000002235174,
+      "stepMs": 0.5,
+      "renderMs": 3.400000002235174,
+      "steps": 6,
+      "calls": 144,
+      "triangles": 72345,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 81,
+      "textures": 74
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "engagement",
+    "ok": true,
+    "description": "Cruiser under way with hostiles on the plane. Tests scale cues and the fight read.",
+    "file": "docs/review/look1/engagement.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 15.10000000000582,
+      "stepMs": 0.5,
+      "renderMs": 3.2999999970197678,
+      "steps": 6,
+      "calls": 123,
+      "triangles": 89197,
+      "points": 7000,
+      "lines": 0,
+      "programs": 56,
+      "geometries": 67,
+      "textures": 71
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

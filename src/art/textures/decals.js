@@ -13,7 +13,7 @@
  */
 
 import * as THREE from 'three';
-import { makeCanvas, ctx2d, canvasTexture, css, roundRect } from './canvas2d.js';
+import { makeCanvas, ctx2d, canvasTexture, css } from './canvas2d.js';
 import { getFactionPalette } from '../palette.js';
 
 /** 5 wide, 7 tall, row-major, '1' = ink. Drawn as rectangles. */
@@ -59,6 +59,10 @@ const GLYPHS = {
   ':': '00000,01100,01100,00000,01100,01100,00000',
   '/': '00001,00010,00010,00100,01000,01000,10000',
   '+': '00000,00100,00100,11111,00100,00100,00000',
+  '=': '00000,00000,11111,00000,11111,00000,00000',
+  '#': '01010,11111,01010,01010,01010,11111,01010',
+  '<': '00010,00100,01000,10000,01000,00100,00010',
+  '>': '01000,00100,00010,00001,00010,00100,01000',
   ' ': '00000,00000,00000,00000,00000,00000,00000',
 };
 

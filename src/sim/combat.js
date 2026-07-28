@@ -320,6 +320,44 @@ export class CombatSystem {
     }
   }
 
+  /**
+   * Can anything on `fromShip` currently bring fire onto this point or subsystem?
+   *
+   * The subsystem targeting ring greys out entries this returns false for, which is
+   * the mechanism that teaches the player that facing and subsystem targeting are the
+   * same problem. Without it the ring is decorative and the spatial layer never lands.
+   */
+  canAnyWeaponBear(fromShip, target) {
+    const point = target?.worldPosition ?? target?.position ?? target;
+    if (!point) return false;
+    for (const m of fromShip.weapons) {
+      if (!m.online) continue;
+      if (m.def.type === 'pd') continue; // point defence is not a commandable weapon
+      if (m.canBear(fromShip.position, fromShip.heading, point)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * How far off bearing the nearest capable mount is, in radians, and how much of the
+   * ship's armament could engage. The HUD turns this into "turn to port to open your
+   * broadside" without the player having to read six separate arc wedges.
+   */
+  bearingReport(fromShip, target) {
+    const point = target?.worldPosition ?? target?.position ?? target;
+    if (!point) return { bearing: 0, total: 0, minError: Infinity };
+    let bearing = 0;
+    let total = 0;
+    let minError = Infinity;
+    for (const m of fromShip.weapons) {
+      if (!m.online || m.def.type === 'pd') continue;
+      total++;
+      if (m.canBear(fromShip.position, fromShip.heading, point)) bearing++;
+      else minError = Math.min(minError, m.arcError(fromShip.heading, point));
+    }
+    return { bearing, total, minError: bearing > 0 ? 0 : minError };
+  }
+
   /** For the tactical overlay: every arc on a ship, as world-space wedge descriptions. */
   describeArcs(ship) {
     const out = [];

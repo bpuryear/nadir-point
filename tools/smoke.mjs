@@ -11,7 +11,11 @@ let server, browser;
 let failed = false;
 
 try {
-  server = await startServer({ port });
+  // Preview mode: builds, then serves the production bundle. This is deliberately not
+  // the dev server - HMR full-reloads the page whenever any stream writes to the tree,
+  // which shows up as a spurious boot failure while parallel work is in flight. It
+  // also means the smoke test checks the artefact that actually ships.
+  server = await startServer({ port, mode: 'preview' });
   browser = await launchBrowser();
   const { page, consoleErrors, pageErrors, booted, bootError } = await openGame(browser, server.url, {
     width: 1280, height: 720, settleFrames: 60,

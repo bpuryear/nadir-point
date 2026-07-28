@@ -1,4 +1,4 @@
-import { SIM, TIME_SCALES } from './units.js';
+import { SIM, TIME_SCALES_COMBAT } from './units.js';
 import { EventBus, EV } from './events.js';
 
 /**
@@ -17,6 +17,8 @@ export class Engine {
     this.renderSystems = [];
 
     this.timeScaleIndex = 1; // 1x
+    /** Active multiplier table. Transit widens this; a resolved contact narrows it. */
+    this.scaleTable = TIME_SCALES_COMBAT;
     this.accumulator = 0;
     this.simTime = 0;      // seconds of in-world time elapsed
     this.frameTime = 0;    // seconds of wall-clock time elapsed
@@ -34,19 +36,42 @@ export class Engine {
   }
 
   get timeScale() {
-    return TIME_SCALES[this.timeScaleIndex];
+    return this.scaleTable[this.timeScaleIndex];
   }
 
   get paused() {
     return this.timeScale === 0;
   }
 
+  get maxTimeScale() {
+    return this.scaleTable[this.scaleTable.length - 1];
+  }
+
   setTimeScaleIndex(i) {
-    const clamped = Math.max(0, Math.min(TIME_SCALES.length - 1, i | 0));
+    const clamped = Math.max(0, Math.min(this.scaleTable.length - 1, i | 0));
     if (clamped === this.timeScaleIndex) return;
     this.timeScaleIndex = clamped;
     this.accumulator = 0;
     this.bus.emit(EV.TIME_SCALE_CHANGED, { scale: this.timeScale, index: clamped });
+  }
+
+  /**
+   * Swap the multiplier table. Used by the transit layer to open the compression tail
+   * while burning between points of interest, and to slam it shut the moment a contact
+   * resolves. The current index is clamped into the new table, so collapsing the band
+   * while the player sits at 32x drops them to the fastest combat scale rather than
+   * leaving them running at a speed the new table does not contain.
+   */
+  setScaleTable(table) {
+    if (!Array.isArray(table) || table.length === 0 || table === this.scaleTable) return;
+    const previousScale = this.timeScale;
+    this.scaleTable = table;
+    const clamped = Math.max(0, Math.min(table.length - 1, this.timeScaleIndex));
+    this.timeScaleIndex = clamped;
+    this.accumulator = 0;
+    if (this.timeScale !== previousScale) {
+      this.bus.emit(EV.TIME_SCALE_CHANGED, { scale: this.timeScale, index: clamped, tableChanged: true });
+    }
   }
 
   togglePause() {

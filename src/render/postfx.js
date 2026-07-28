@@ -66,9 +66,21 @@ const GodRaysShader = {
 };
 
 /**
- * Final grade, applied after tone mapping in LDR: chromatic aberration, vignette,
- * film grain and an ordered dither. The dither is not decoration - 8-bit gradients
- * across a nebula band without it, and you see every step.
+ * Final grade, applied after tone mapping in LDR: a per-POI lift/gain, chromatic
+ * aberration, vignette, film grain and an ordered dither. The dither is not
+ * decoration - 8-bit gradients across a nebula band without it, and you see every
+ * step.
+ *
+ * THE LIFT/GAIN PAIR IS THE ONLY THING TYING A FRAME TOGETHER.
+ *
+ * Every object in a shot is lit by the POI rig, but they do not share an albedo
+ * family: the rocks are warm brown, the hull is neutral gunmetal, the giant is cold
+ * blue. Lit correctly and graded not at all, that is three unrelated temperatures in
+ * one frame. `lift` tints the toe towards the POI's shadow colour and `gain` tints
+ * the shoulder towards its key, weighted by how dark or bright each pixel already
+ * is - so the shadows across every object in frame agree with each other and so do
+ * the highlights. It is a few lines of shader and it does more for coherence than
+ * any amount of re-authoring albedo.
  */
 const GradeShader = {
   name: 'Grade',
@@ -82,8 +94,12 @@ const GradeShader = {
     vignetteSoftness: { value: 0.62 },
     dither: { value: 1.0 },
     saturation: { value: 1.04 },
-    lift: { value: new THREE.Color(0.004, 0.008, 0.016) },
-    gain: { value: new THREE.Color(1.0, 0.995, 1.01) },
+    /** Toe tint (linear-ish LDR colour) and how far into the toe it reaches. */
+    lift: { value: new THREE.Color(0.04, 0.08, 0.15) },
+    liftAmount: { value: 0.03 },
+    /** Shoulder tint and its weight. */
+    gain: { value: new THREE.Color(1.0, 0.96, 0.90) },
+    gainAmount: { value: 0.10 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -93,6 +109,7 @@ const GradeShader = {
     uniform sampler2D tDiffuse;
     uniform vec2 resolution;
     uniform float time, aberration, grain, vignette, vignetteSoftness, dither, saturation;
+    uniform float liftAmount, gainAmount;
     uniform vec3 lift, gain;
     varying vec2 vUv;
 
@@ -131,7 +148,15 @@ const GradeShader = {
 
       float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
       col = mix(vec3(lum), col, saturation);
-      col = col * gain + lift;
+
+      // Toe towards the POI's shadow colour, shoulder towards its key. Both are
+      // weighted by where the pixel already sits on the curve, so a mid-grey hull
+      // flank is barely touched while the black of space picks up the location's
+      // cold and the lit decks pick up its cream.
+      float toe = 1.0 - smoothstep(0.0, 0.42, lum);
+      float shoulder = smoothstep(0.24, 0.95, lum);
+      col += lift * (liftAmount * toe);
+      col = mix(col, col * gain, gainAmount * shoulder);
 
       float vig = 1.0 - vignette * smoothstep(vignetteSoftness * 0.35, 0.86, length(fromCentre) * 1.32);
       col *= vig;
@@ -177,16 +202,26 @@ export class PostChain {
     this.mainPass.clear = false;
     this.mainPass.clearDepth = true;
 
-    // 3. ambient occlusion over gameplay geometry only
+    /**
+     * 3. Ambient occlusion over gameplay geometry only.
+     *
+     * Tuned up hard, and the reason is specific: when the key is behind the camera
+     * there is no terminator anywhere in frame, and on a hull built out of boxes
+     * every visible face returns nearly the same value. AO is then the ONLY thing
+     * separating the dorsal block from the deck it sits on, the truss legs from the
+     * hull above them, and one bolted-on module from the next. The radius is in
+     * METRES, so 60 is the scale of the gaps between a cruiser's masses - a radius
+     * tuned on a 1 m test scene does nothing here at all.
+     */
     this.gtao = new GTAOPass(rendererWrapper.scene, rendererWrapper.camera, 1, 1);
     this.gtao.output = GTAOPass.OUTPUT.Default;
-    this.gtao.blendIntensity = 0.85;
+    this.gtao.blendIntensity = 1.0;
     this.gtao.updateGtaoMaterial({
-      radius: 34.0,
-      distanceExponent: 1.6,
-      thickness: 12.0,
-      scale: 1.0,
-      samples: 12,
+      radius: 60.0,
+      distanceExponent: 1.4,
+      thickness: 30.0,
+      scale: 1.35,
+      samples: 16,
       screenSpaceRadius: false,
     });
 
@@ -217,7 +252,84 @@ export class PostChain {
     this._keyLight = null;
     this._lightWorld = new THREE.Vector3();
     this._lightProjected = new THREE.Vector3();
+
+    /**
+     * Exposure is split in two so unrelated systems can drive it without fighting.
+     * `baseExposure` is the POI's grade - each point of interest is a lighting setup
+     * and owns its own stop. `exposureScale` is transient and multiplicative, used by
+     * the tactical overlay to dim the live 3D scene as the strategic view fades in.
+     */
+    this.baseExposure = 1.0;
+    this.exposureScale = 1.0;
+
     this.setQuality(quality);
+  }
+
+  /** Per-POI grade exposure. */
+  setExposure(v) {
+    this.baseExposure = v;
+    this._applyExposure();
+  }
+
+  /** Transient multiplier, 0..1. The tactical overlay drives this to 0.22. */
+  setExposureScale(v) {
+    this.exposureScale = v;
+    this._applyExposure();
+  }
+
+  _applyExposure() {
+    this.rw.renderer.toneMappingExposure = this.baseExposure * this.exposureScale;
+  }
+
+  /**
+   * The POI's colour grade.
+   *
+   * Colours come in as PALETTE HEX and are decoded to their raw 0..1 sRGB
+   * components, NOT converted to the renderer's linear working space. This pass
+   * runs after OutputPass, so the pixels it sees are already display-encoded; a
+   * linear-space tint here would arrive one or two orders of magnitude too weak in
+   * the toe and be silently invisible. The lift is additionally normalised so its
+   * brightest channel is 1, which makes `liftAmount` mean exactly "how far off zero
+   * the black point moves", in units the viewer can see.
+   *
+   * @param {{lift?:number|null, liftAmount?:number,
+   *          gain?:number|null, gainAmount?:number,
+   *          saturation?:number}} g   colours are palette hex, not THREE.Color
+   */
+  setColorGrade(g = {}) {
+    const u = this.grade.uniforms;
+    if (g.lift != null) {
+      const r = ((g.lift >> 16) & 255) / 255;
+      const gr = ((g.lift >> 8) & 255) / 255;
+      const b = (g.lift & 255) / 255;
+      const p = Math.max(1e-3, r, gr, b);
+      u.lift.value.setRGB(r / p, gr / p, b / p);
+    }
+    if (g.gain != null) {
+      u.gain.value.setRGB(
+        ((g.gain >> 16) & 255) / 255,
+        ((g.gain >> 8) & 255) / 255,
+        (g.gain & 255) / 255,
+      );
+    }
+    if (g.liftAmount != null) u.liftAmount.value = g.liftAmount;
+    if (g.gainAmount != null) u.gainAmount.value = g.gainAmount;
+    if (g.saturation != null) u.saturation.value = g.saturation;
+  }
+
+  /** Snapshot, so a POI can restore whatever was there before it. */
+  getColorGrade() {
+    const u = this.grade.uniforms;
+    const hex = (c) => (Math.round(Math.min(1, c.r) * 255) << 16)
+      | (Math.round(Math.min(1, c.g) * 255) << 8)
+      | Math.round(Math.min(1, c.b) * 255);
+    return {
+      lift: hex(u.lift.value),
+      liftAmount: u.liftAmount.value,
+      gain: hex(u.gain.value),
+      gainAmount: u.gainAmount.value,
+      saturation: u.saturation.value,
+    };
   }
 
   /** Point the volumetrics at whatever object stands in for this POI's key light. */
