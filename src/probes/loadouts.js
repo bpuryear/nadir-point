@@ -79,12 +79,29 @@ const LOADOUTS = [
   },
 ];
 
+/**
+ * Row layout. `axis` is the world axis the three hulls are spread along and `sign`
+ * makes A land at the TOP OF THE FRAME in every view.
+ *
+ * That sign is not cosmetic. The probe's camera is built by probe.js as
+ * `pos = target + (cos p sin y, sin p, cos p cos y) d`, so in the side view
+ * (pitch ~0) screen-up is world +Y, while in the top view (pitch ~PI/2) screen-up is
+ * world -X. Spreading both views along a POSITIVE offset therefore prints the rows
+ * in opposite orders, which is exactly what happened: the side probe showed A/B/C
+ * top to bottom and the top probe showed C/B/A, so the jump ring described for C
+ * appeared in row 1 of one image and row 3 of the other. An audit whose rows do not
+ * match its own legend cannot be read, and its divergence figures cannot be trusted.
+ *
+ * Rows are also labelled INLINE now (see `rowLabels`), projected from each hull's
+ * own world position, so the picture carries its own key and this class of bug
+ * cannot come back silently.
+ */
 const VIEWS = {
   // Bow points screen-left in the side view; that is the Homeworld ship-portrait
   // convention and it is worth matching because it is what the eye is trained on.
-  side: { yaw: Math.PI * 0.5, pitch: 0.002, dist: 2800, axis: 'y', gap: 660, target: [0, -50, 0] },
-  top: { yaw: Math.PI * 0.5, pitch: 1.5, dist: 3350, axis: 'x', gap: 830, target: [190, 0, 0] },
-  quarter: { yaw: Math.PI * 0.62, pitch: 0.30, dist: 2900, axis: 'y', gap: 800, target: [0, -60, 0] },
+  side: { yaw: Math.PI * 0.5, pitch: 0.002, dist: 2800, axis: 'y', sign: 1, gap: 660, target: [0, -50, 0] },
+  top: { yaw: Math.PI * 0.5, pitch: 1.5, dist: 3600, axis: 'x', sign: -1, gap: 790, target: [0, 0, 0] },
+  quarter: { yaw: Math.PI * 0.62, pitch: 0.30, dist: 2900, axis: 'y', sign: 1, gap: 800, target: [0, -60, 0] },
 };
 
 export default {
@@ -111,13 +128,15 @@ export default {
 
     // ---- build the three ships --------------------------------------------
     const sigs = [];
+    const holders = [];
     for (let i = 0; i < LOADOUTS.length; i++) {
       const L = LOADOUTS[i];
       const holder = new THREE.Group();
-      const off = ((LOADOUTS.length - 1) / 2 - i) * view.gap;
+      const off = ((LOADOUTS.length - 1) / 2 - i) * view.gap * view.sign;
       if (view.axis === 'y') holder.position.set(0, off, 0);
       else holder.position.set(off, 0, 0);
       scene.add(holder);
+      holders.push({ L, holder });
 
       const hull = buildCruiser({
         rng: world.rng.fork(`loadout:${L.id}`),
@@ -190,31 +209,40 @@ export default {
     // Mean absolute difference per bin of (halfWidth, top, bottom), in metres.
     // Two loadouts that produce the same outline score ~0; anything the eye can
     // separate at a glance scores in the tens of metres.
+    //
+    // MEAN AND MAX, because they fail differently. A low mean says the two builds are
+    // the same ship wearing different hats. A low MAX says worse: there is no single
+    // place on the outline where the difference is big enough to see at a glance, so
+    // even a player who knows what to look for cannot find it. The targets are the
+    // ones in docs/design/ship-language.md §6 M2: mean >= 45 m per z-bin, max >= 120 m.
     const diff = (a, b) => {
-      let s = 0, n = 0;
+      let s = 0, n = 0, mx = 0;
       for (let i = 0; i < a.bins.length; i++) {
-        s += Math.abs(a.bins[i].halfWidth - b.bins[i].halfWidth)
-          + Math.abs(a.bins[i].top - b.bins[i].top)
-          + Math.abs(a.bins[i].bottom - b.bins[i].bottom);
+        const d = [
+          Math.abs(a.bins[i].halfWidth - b.bins[i].halfWidth),
+          Math.abs(a.bins[i].top - b.bins[i].top),
+          Math.abs(a.bins[i].bottom - b.bins[i].bottom),
+        ];
+        for (const v of d) { s += v; if (v > mx) mx = v; }
         n += 3;
       }
-      return s / n;
+      return { mean: s / n, max: mx };
     };
     const pairs = [
       ['A/B', diff(sigs[0].sig, sigs[1].sig)],
       ['A/C', diff(sigs[0].sig, sigs[2].sig)],
       ['B/C', diff(sigs[1].sig, sigs[2].sig)],
     ];
+    const worstMean = Math.min(...pairs.map(([, v]) => v.mean));
+    const worstMax = Math.min(...pairs.map(([, v]) => v.max));
 
     const el = document.getElementById('label');
     if (el) {
       el.textContent = [
         `LOADOUT SILHOUETTES  view=${viewName}${silhouette ? '  BLACK ON WHITE' : '  LIT'}`,
-        '',
-        ...sigs.map(({ L, sig }) => `${L.name.padEnd(14)} ${String(sig.length).padStart(4)} x `
-          + `${String(sig.beam).padStart(3)} x ${String(sig.height).padStart(3)} m   ${L.blurb}`),
-        '',
-        `outline divergence (mean metres per bin):  ${pairs.map(([k, v]) => `${k} ${v.toFixed(1)}`).join('   ')}`,
+        `outline divergence per z-bin, metres:  ${pairs.map(([k, v]) => `${k} mean ${v.mean.toFixed(1)} max ${v.max.toFixed(0)}`).join('   ')}`,
+        `worst pair: mean ${worstMean.toFixed(1)} (target >= 45)   max ${worstMax.toFixed(0)} (target >= 120)`
+          + `   ${worstMean >= 45 && worstMax >= 120 ? 'PASS' : 'FAIL'}`,
       ].join('\n');
       el.style.whiteSpace = 'pre';
       el.style.color = silhouette ? '#2a3a44' : '#6f8ea0';
@@ -222,9 +250,45 @@ export default {
       el.style.top = 'auto';
       el.style.bottom = '10px';
     }
+
+    // ---- inline row labels -------------------------------------------------
+    // Each row names itself, projected from the hull's own world position. A legend
+    // in the corner is a second source of truth about row order, and a second source
+    // of truth is a defect waiting to happen - which is precisely how the top view
+    // came to be labelled back to front. These cannot disagree with the picture
+    // because they ARE the picture.
+    ctx.rowLabels = holders.map(({ L, holder }) => {
+      const div = document.createElement('div');
+      div.style.cssText = 'position:fixed;z-index:11;font:11px/1.4 ui-monospace,Menlo,monospace;'
+        + `letter-spacing:.1em;text-transform:uppercase;pointer-events:none;white-space:pre;color:${silhouette ? '#2a3a44' : '#7d97a8'}`;
+      const sig = sigs.find((x) => x.L === L).sig;
+      div.textContent = `${L.name}\n${sig.length} x ${sig.beam} x ${sig.height} m\n${L.blurb}`;
+      document.body.appendChild(div);
+      return { div, holder };
+    });
     for (const { L, sig } of sigs) console.log('[probe:loadouts]', L.id, sig.length, sig.beam, sig.height, sig.hash);
-    console.log('[probe:loadouts] divergence', pairs);
+    console.log('[probe:loadouts] divergence', pairs, 'worstMean', worstMean, 'worstMax', worstMax);
     console.log('[probe:loadouts] materials outside registry:', registry.auditScene(scene));
     ctx.sigs = sigs;
+  },
+
+  /**
+   * Park each row's caption beside its own hull. Runs every frame because the
+   * harness applies the camera pose AFTER setup, so a one-shot projection in setup
+   * would land against the default pose and be wrong in every captured frame.
+   */
+  update(dt, ctx) {
+    if (!ctx.rowLabels) return;
+    const cam = ctx.camera;
+    const v = new ctx.THREE.Vector3();
+    const h = window.innerHeight;
+    for (const { div, holder } of ctx.rowLabels) {
+      v.copy(holder.position).project(cam);
+      // Left margin, vertically aligned to the row. Overlaying the caption on the
+      // hull would put text inside the outline the probe exists to judge.
+      div.style.left = '14px';
+      div.style.top = `${Math.round((-v.y * 0.5 + 0.5) * h) - 22}px`;
+      div.style.display = Math.abs(v.z) > 1 ? 'none' : 'block';
+    }
   },
 };

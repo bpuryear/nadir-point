@@ -196,6 +196,40 @@ export function octProfile(halfWidth, top, bottom, chamW, chamTop, chamBot) {
   ];
 }
 
+/**
+ * THE HULL SECTION. `octProfile` with the deck half-beam and the keel half-beam
+ * stated independently, which is the only thing naval architecture's three free
+ * curves actually need:
+ *
+ *   TUMBLEHOME   keel < deck   the flanks slope inward going down. The upper flank
+ *                catches the key and the lower flank falls into shadow, so one
+ *                geometric surface reads as two values for nothing.
+ *   FLARE        keel > deck   the reverse, forward of the forefoot, so the widest
+ *                part of the bow is down at the working gear rather than up at the
+ *                deck. Flare forward + tumblehome aft is the difference between a
+ *                ship and an extrusion.
+ *
+ * Eight points, same cardinality and same winding as `octProfile`, so the two are
+ * interchangeable inside one loft.
+ */
+export function hullProfile({
+  deckHalf, keelHalf = null, top, bottom, chamW = 0, chamTop = 0, chamBot = 0, keelChamW = null,
+}) {
+  const dh = Math.max(1e-3, deckHalf);
+  const kh = Math.max(1e-3, keelHalf ?? deckHalf);
+  const h = Math.max(1e-3, top - bottom);
+  const cw = Math.min(chamW, dh * 0.92);
+  const kw = Math.min(keelChamW ?? chamW * (kh / dh), kh * 0.92);
+  const ct = Math.min(chamTop, h * 0.45);
+  const cb = Math.min(chamBot, h * 0.45);
+  return [
+    [kh, bottom + cb], [dh, top - ct],
+    [dh - cw, top], [-dh + cw, top],
+    [-dh, top - ct], [-kh, bottom + cb],
+    [-kh + kw, bottom], [kh - kw, bottom],
+  ];
+}
+
 /** Regular n-gon. `rotation` in radians; a flat top wants rotation = PI/n. */
 export function ngonProfile(radius, sides = 6, rotation = 0) {
   const pts = [];
@@ -399,7 +433,8 @@ export function pipeRun({
  * @returns {THREE.BufferGeometry} 12 tris (36 with ribs)
  */
 export function radiatorFin({
-  chord = 120, span = 90, thickness = 5, sweep = -40, tipChord = null, ribs = 0, detail = DETAIL.FULL,
+  chord = 120, span = 90, thickness = 5, sweep = -40, tipChord = null, ribs = 0,
+  rim = 0, detail = DETAIL.FULL,
 } = {}) {
   const tc = tipChord ?? chord * 0.7;
   // Outline in XY (x plays the role of z), CCW seen from +Z, then oriented to X.
@@ -407,6 +442,26 @@ export function radiatorFin({
     [0, 0], [chord, 0], [sweep + tc, span], [sweep, span],
   ];
   const parts = [{ geo: prism(outline, -thickness * 0.5, thickness * 0.5) }];
+  // EDGE RIM. A radiator panel drawn as a bare slab reads as a sheet of tarpaulin:
+  // its silhouette is a quadrilateral with no thickness cue anywhere except the two
+  // end caps, which face away from the camera most of the time. A rim that stands
+  // proud of both faces gives the plate an EDGE - a narrow band at a different
+  // orientation, so it takes a different value under any key and the panel reads as
+  // installed hardware rather than as a painted quad. 24 triangles, and it is the
+  // difference between "radiator" and "pool cover".
+  if (rim > 0 && detail >= DETAIL.MID) {
+    const t2 = thickness * 0.5 + rim * 0.55;
+    const spar = (ax, ay, bx, by) => {
+      const dx = bx - ax, dy = by - ay;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len * rim * 0.5, ny = dx / len * rim * 0.5;
+      return prism([
+        [ax - nx, ay - ny], [bx - nx, by - ny], [bx + nx, by + ny], [ax + nx, ay + ny],
+      ], -t2, t2, { capFront: false, capBack: false });
+    };
+    parts.push({ geo: spar(sweep, span, sweep + tc, span) });      // tip spar
+    if (detail >= DETAIL.FULL) parts.push({ geo: spar(chord, 0, sweep + tc, span) });
+  }
   if (ribs > 0 && detail >= DETAIL.FULL) {
     for (let i = 0; i < ribs; i++) {
       const t = (i + 1) / (ribs + 1);
@@ -625,6 +680,44 @@ export function ringFace(outer, inner, z = 0, facingBack = false) {
 }
 
 /**
+ * BONUS 12b. RECESS — a rectangular hole cut into a surface: four inward-facing
+ * walls and a back plate, opening toward +Z at z = 0 and sinking to z = -depth.
+ *
+ * This is the primitive §3 of the design doc is really asking for when it says
+ * "if you want greeble somewhere, cut a recess for it first". A recess is the only
+ * cheap way to get a self-shadowing dark value on a hull: the walls face four
+ * different directions, so at least two of them are always turned away from the key,
+ * and the aperture reads as a hole rather than as a painted rectangle. It is also
+ * the whole scale cue - a 54 m hangar mouth beside an 18 m fighter says "1400 metres"
+ * in a way no amount of panel line ever will.
+ *
+ * DELIBERATELY BOTTOMLESS. There is no back plate: the aperture is meant to be sunk
+ * into a closed hull loft, and the hull's own skin is what you see at the end of the
+ * tunnel. A back plate would either z-fight with that skin or float in front of it,
+ * and a hole whose floor is the actual hull is both cheaper and more honest.
+ *
+ * `wall` is how far the housing stands proud of the surface it is bolted to, which is
+ * what gives the mouth an edge at a grazing angle.
+ *
+ * @returns {THREE.BufferGeometry} 24 tris
+ */
+export function recess({ width = 60, height = 40, depth = 26, wall = 8, detail = DETAIL.FULL } = {}) {
+  const inner = rectProfile(width, height);
+  const outer = rectProfile(width + wall * 2, height + wall * 2);
+  const parts = [
+    // Inward-facing tunnel walls: you look INTO these.
+    { geo: prism(inner, -depth, 0, { capFront: false, capBack: false, flip: true }) },
+    // The mouth face, an annulus, so nothing solid crosses the aperture.
+    { geo: ringFace(outer, inner, 0) },
+  ];
+  // Outward-facing housing sides, so the aperture stands proud and has an edge.
+  if (detail >= DETAIL.MID) {
+    parts.push({ geo: prism(outer, -depth, 0, { capFront: false, capBack: false }) });
+  }
+  return mergeParts(parts);
+}
+
+/**
  * BONUS 13. CAPPED CONDUIT — a stub of pipe with a bolted blank on the end. This
  * is the single clearest way to say "something was meant to plug in here and has
  * not". Along +Z, cap at the far end.
@@ -657,6 +750,50 @@ export function mountPad({ radius = 40, height = 8, sides = 8, detail = DETAIL.F
     { z: height, points: ngonProfile(radius * 0.88, n, Math.PI / n) },
   ], { capFront: true, capBack: false });
   return orient(g, 'y');
+}
+
+/**
+ * BONUS 15. GREEBLE BAND — a run of mismatched machinery boxes along +Z, sitting on
+ * the XZ plane and growing +Y.
+ *
+ * This primitive exists to enforce a rule rather than to draw a shape. Dense detail
+ * on a capital hull only reads if it is CONCENTRATED IN BANDS at joints, in recesses
+ * and around machinery, with large calm armour faces in between for it to be dense
+ * *against*; scattered evenly it dissolves into one mid-frequency mush at every
+ * distance past about three kilometres. Making a band the unit of authoring means the
+ * 60/30/10 calm/medium/dense split is something you can count instead of something
+ * you hope for.
+ *
+ * Deterministic: every dimension comes from `rng`, never from Math.random, so a seed
+ * reproduces the hull exactly.
+ *
+ * @returns {THREE.BufferGeometry} 12 tris per box, plus 16 per conduit
+ */
+export function greebleBand({
+  length = 200, width = 55, height = 16, boxes = 4, conduits = 0, rng, detail = DETAIL.FULL,
+} = {}) {
+  if (!rng?.range) throw new Error('[greeble] greebleBand needs an RNG (never Math.random)');
+  const n = detail >= DETAIL.FULL ? boxes : Math.max(1, Math.ceil(boxes * 0.5));
+  const parts = [];
+  const step = length / n;
+  for (let i = 0; i < n; i++) {
+    const w = width * rng.range(0.34, 0.92);
+    const d = step * rng.range(0.42, 0.86);
+    const h = height * rng.range(0.45, 1.0);
+    parts.push({
+      geo: prism(rectProfile(w, h), -d * 0.5, d * 0.5),
+      pos: [width * rng.range(-0.22, 0.22), h * 0.5, -length * 0.5 + step * (i + 0.5)],
+    });
+  }
+  const c = detail >= DETAIL.FULL ? conduits : 0;
+  for (let i = 0; i < c; i++) {
+    const len = height * rng.range(0.8, 1.7);
+    parts.push({
+      geo: cappedConduit({ length: len, radius: Math.max(2, height * 0.16), axis: 'y', detail }),
+      pos: [width * rng.range(-0.3, 0.3), 0, length * rng.range(-0.42, 0.42)],
+    });
+  }
+  return mergeParts(parts);
 }
 
 /**

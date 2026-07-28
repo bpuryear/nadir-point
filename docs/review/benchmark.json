@@ -1,8 +1,8 @@
 {
   "scene": "benchmark",
-  "width": 1600,
-  "height": 900,
-  "frames": 120,
+  "width": 2560,
+  "height": 1440,
+  "frames": 60,
   "quality": "high",
   "measuredAt": "software-rasteriser (SwiftShader), no GPU present",
   "budgets": {
@@ -11,37 +11,37 @@
     "programs": 90
   },
   "peak": {
-    "calls": 650,
-    "triangles": 106317,
+    "calls": 622,
+    "triangles": 108883,
     "programs": 64
   },
   "counters": {
     "fps": 4,
-    "cpuMs": 17.700000000739237,
-    "stepMs": 0.6000000014901161,
-    "renderMs": 7.699999999254942,
+    "cpuMs": 21,
+    "stepMs": 0.6999999992549419,
+    "renderMs": 8.200000001117587,
     "steps": 6,
-    "calls": 635,
-    "triangles": 103113,
+    "calls": 622,
+    "triangles": 108883,
     "points": 7000,
     "lines": 0,
     "programs": 64,
-    "geometries": 285,
+    "geometries": 278,
     "textures": 149
   },
   "frameMs": {
-    "mean": 805.6741666666853,
-    "median": 799.8999999985099,
-    "p95": 906.1000000014901,
-    "p99": 928.1999999992549,
-    "min": 647.4000000022352,
-    "max": 1001.8000000007451
+    "mean": 2871.488333333346,
+    "median": 2830.800000000745,
+    "p95": 3230.699999999255,
+    "p99": 3319.699999999255,
+    "min": 2574.800000000745,
+    "max": 3319.699999999255
   },
   "sceneCounts": {
     "capitalShips": 1,
     "combatShips": 12,
     "instancedObjects": 930,
-    "distinctMeshes": 392,
+    "distinctMeshes": 380,
     "totalShips": 13,
     "postChain": "high"
   },
