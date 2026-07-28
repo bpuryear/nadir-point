@@ -103,8 +103,16 @@ export default {
     // One hard key. Low and off the port bow, so the chamfers on the starboard
     // flank rim-light and the port flank falls into near-black. Value contrast on
     // this ship is the lighting doing what the geometry set up.
+    //
+    // The INTENSITY is read from the POI palette, not written here. It used to be a
+    // hardcoded 3.5, which is a pre-r155 number roughly a quarter of what the
+    // palette states, and the probe only looked correct because the hull materials
+    // of the day were bright enough and metallic enough to make up the difference
+    // out of the environment map. The moment the materials were corrected the probe
+    // rendered a near-black ship and blamed the material work for it. A probe that
+    // does not use the game's own numbers cannot verify anything.
     const key = new THREE.DirectionalLight(
-      new THREE.Color().setHex(poi.key.color, THREE.SRGBColorSpace), 3.5,
+      new THREE.Color().setHex(poi.key.color, THREE.SRGBColorSpace), poi.key.intensity,
     );
     key.position.set(0.62, 0.48, 0.62).normalize().multiplyScalar(4000);
     key.castShadow = true;
@@ -120,13 +128,16 @@ export default {
     scene.add(key.target);
 
     // A whisper of planetshine so the shadow side is near-black rather than black.
-    const fill = new THREE.DirectionalLight(
-      new THREE.Color().setHex(poi.fill.color, THREE.SRGBColorSpace), 0.20,
-    );
+    // Stated the way the POI rig states it: the peak channel of the irradiance it
+    // contributes, so a saturated blue does not arrive with its blue channel
+    // rivalling the key's. See world/lighting/poi.js.
+    const fillColor = new THREE.Color().setHex(poi.fill.color, THREE.SRGBColorSpace);
+    const fillPeak = Math.max(fillColor.r, fillColor.g, fillColor.b, 1e-3);
+    const fill = new THREE.DirectionalLight(fillColor, (poi.fill.intensity * 0.5) / fillPeak);
     fill.position.set(-0.7, -0.35, -0.5).normalize().multiplyScalar(4000);
     scene.add(fill);
     scene.add(new THREE.AmbientLight(new THREE.Color().setHex(poi.shadow, THREE.SRGBColorSpace), 0.7));
-    registry.applyEnvironment(scene, POI, 0.28);
+    registry.applyEnvironment(scene, POI, poi.ibl.intensity ?? 0.6);
 
     const keyProxy = new THREE.Object3D();
     keyProxy.position.copy(key.position);

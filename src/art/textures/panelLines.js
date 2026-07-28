@@ -82,8 +82,13 @@ export function panelLayout(rng, opts = {}) {
       return;
     }
 
+    // Split the longer axis MOST of the time, not almost always. At 0.86 the tile
+    // came out as a comb of same-width vertical strakes subdivided the same way,
+    // which at hero distance reads as corrugation rather than as plating. Mixing in
+    // more cross-splits gives neighbouring plates different aspect ratios, which is
+    // what stops the eye locking onto the rhythm.
     let vertical;
-    if (canSplitX && canSplitY) vertical = w >= h ? rng.next() < 0.86 : rng.next() < 0.14;
+    if (canSplitX && canSplitY) vertical = w >= h ? rng.next() < 0.68 : rng.next() < 0.32;
     else vertical = canSplitX;
 
     // Ratio: mostly near the middle, with a long tail so strakes and thin belts appear.
