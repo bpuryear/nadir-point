@@ -1,3 +1,4 @@
+import { getModule } from '../../core/contracts.js';
 import { MEV } from './events.js';
 
 /**
@@ -82,17 +83,35 @@ export function gradeForKind(kind) {
 }
 
 /**
- * Grade a wreck section when it did not record one. `salvage.js` stamps `grade` at
- * construction where the subsystem kind is known; this is the fallback for sections
- * built by older code paths or by a test.
+ * What grade of scrap a wreck section tears down into.
+ *
+ * Derived rather than stamped. `WreckSection` is owned by the salvage stream and is
+ * being actively rewritten; deriving the grade here means this file needs no field on
+ * their class and cannot be broken by a change to it. A section that DOES carry an
+ * explicit `grade` wins, so stamping it later is a pure upgrade.
+ *
+ * The order matters: the module it yields is the strongest signal, then whether it was
+ * a magazine, then the label the hull gave it.
  */
 export function gradeForSection(section) {
   if (section?.grade && SCRAP_GRADES.includes(section.grade)) return section.grade;
+
+  const def = section?.moduleId ? getModule(section.moduleId) : null;
+  if (def) {
+    const g = def.grants ?? {};
+    if (g.powerOutput || g.sensorRange || g.hangarBays) return 'core';
+    if (def.weapon || g.thrust || g.jumpRange) return 'machine';
+    return 'plate';
+  }
+  if (section?.ammo) return 'machine';
+
   const label = String(section?.label ?? '').toLowerCase();
-  if (label.includes('plat') || label.includes('hull') || label.includes('armour')) return 'plate';
   if (label.includes('reactor') || label.includes('sensor') || label.includes('core')
-    || label.includes('computer') || label.includes('bay')) return 'core';
-  if (section?.moduleId) return 'machine';
+    || label.includes('mast') || label.includes('hangar') || label.includes('bay')
+    || label.includes('array') || label.includes('radar')) return 'core';
+  if (label.includes('engine') || label.includes('drive') || label.includes('thrust')
+    || label.includes('turret') || label.includes('cannon') || label.includes('battery')
+    || label.includes('launcher') || label.includes('mount') || label.includes('magazine')) return 'machine';
   return 'plate';
 }
 

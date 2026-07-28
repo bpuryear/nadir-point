@@ -130,9 +130,16 @@ export class ShipThermal {
       peak: 0, mean: 0, rate: 0, tripped: 0, coolant: 0, coolantMax: 0, mounts: [] };
   }
 
-  /** Waste-heat load from the reactor, 0.3..1.0. Locked routing reads as an even split. */
+  /**
+   * Waste-heat load from the reactor, 0.3..1.0.
+   *
+   * The power plant publishes this itself (power.js#thermalLoad) so the routing widget
+   * and the thermal readout can never disagree about what the reactor is doing. The
+   * local fallback exists only so this system does not throw on a hull without a plant.
+   */
   computeLoad(power) {
     if (!power) return 0.6;
+    if (typeof power.thermalLoad === 'number') return power.thermalLoad;
     const share = power.unlocked ? power.actual : null;
     let load = 0;
     for (const ch of Object.keys(CHANNEL_HEAT)) {

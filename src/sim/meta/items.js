@@ -136,9 +136,16 @@ registerItem({
     if (target.position.distanceTo(ship.position) > range) {
       return no(`out of range - close to within ${Math.round(range)} m`);
     }
-    // A prize, not a kill: the hull is not blown open, so everything survives the cut.
+    // A prize, not a kill.
+    //
+    // The order matters and it is the whole trick: drop the hull to a single point
+    // FIRST, then set every section to full condition, then apply one point of damage.
+    // `Ship.applyDamage` spreads a share of whatever it is given across every section,
+    // so killing this hull with a large number would degrade exactly the thing the
+    // charge exists to preserve. One point spread over eight sections is nothing.
+    target.hullHP = 1;
     target.salvageIntegrity = 1;
-    target.applyDamage(target.hullHP + 1, { source: ship, rng: ctx.rng });
+    target.applyDamage(1, { source: ship, rng: ctx.rng });
     ctx.system.bus?.emit(EV.NOTIFY, {
       text: `${target.classDef.name} STRUCK — hulk intact`, important: true,
     });

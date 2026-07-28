@@ -444,6 +444,14 @@ const SURFACE = {
   hull: ['hull', { faction: 'player', wear: 0.5, tier: 2 }],
   plating: ['plating', { faction: 'player', wear: 0.4, tier: 2, seed: 1 }],
   greeble: ['greeble', { faction: 'player', wear: 0.6, tier: 1 }],
+  /**
+   * A HEAT-REJECTION PANEL IS NOT ARMOUR. Cross-stream change requested by the
+   * surface stream and recorded in its report: round-two review named it a BLOCKER
+   * that "the radiator fins, which are heat-rejection panels ... should never carry
+   * an armour-plate map". Everything on the geometry side is the surface NAME; the
+   * map behind it is `art/materials` -> `textures/panelLines.js#radiatorField`.
+   */
+  radiator: ['radiator', { faction: 'player', wear: 0.55, tier: 1 }],
 };
 
 /**
@@ -563,7 +571,7 @@ export function hullParts({ rng, lod = 0 }) {
     // diagonal against black, and the aft end of this ship is not identifiable
     // without them - LOD1 keeps all three, LOD2 keeps the two large ones.
     for (const [s, z, chord, span, rake] of FINS.slice(0, 2)) {
-      B.add('core', 'hull', G.radiatorFin({
+      B.add('core', 'radiator', G.radiatorFin({
         chord, span, thickness: 14, sweep: -chord * 0.42, tipChord: chord * 0.6, detail: D,
       }), { pos: [s * 116, 60, z], rot: [0, 0, rake] });
     }
@@ -1003,7 +1011,7 @@ function buildStern(B, D, full, rng) {
   // grows straight out of a flat is a decal, a fin that grows out of a housing is
   // hardware.
   for (const [s, z, chord, span, rake] of FINS) {
-    B.add('engine', 'plating', G.radiatorFin({
+    B.add('engine', 'radiator', G.radiatorFin({
       chord, span, thickness: 13, sweep: -chord * 0.42, tipChord: chord * 0.6,
       rim: 9, detail: D,
     }), { pos: [s * 116, 60, z], rot: [0, 0, rake] });

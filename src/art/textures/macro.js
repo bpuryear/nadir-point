@@ -57,7 +57,32 @@
  *
  * CHANNELS
  *   R  value drift, 0.5 = neutral       B  soot / exhaust wash, 0 = clean
- *   G  roughness drift, 0.5 = neutral   A  ink marks, 0 = none
+ *   G  STRUCTURE HEIGHT, 0.5 = neutral  A  ink marks, 0 = none
+ *
+ * ---------------------------------------------------------------------------
+ * G STOPPED BEING A ROUGHNESS SCRIBBLE AND BECAME A HEIGHT FIELD
+ * ---------------------------------------------------------------------------
+ * Round-two review, BLOCKER: "There is currently exactly one dense element on the
+ * entire 1400 m ship", and the §3 rule it quoted back at us — "if you want greeble
+ * somewhere, cut a recess for it first."
+ *
+ * A tiling map cannot cut a recess because it does not know where it is. This one
+ * does. G is now RELIEF IN METRES (0.5 neutral, full swing 44 m — see
+ * materials/hullShader.js#HULL_MACRO_DEFAULTS.reliefM), and the shader derives four
+ * things from it with no extra texture fetch: a normal perturbation from its
+ * screen-space gradient, a cavity term on indirect light and albedo, a roughness
+ * drift, and the DETAIL GAIN that amplifies the tiling map's contrast inside a
+ * structure band and damps it over open armour.
+ *
+ * So the frequency hierarchy is placed HERE, per square metre of a specific hull, and
+ * not by hoping the geometry stream assigns the right material to the right face.
+ * §3's budget — 8 to 11 dense bands of roughly 55 x 200 m, at mass joints, inside
+ * recesses and around machinery, never mirror-matched port to starboard — is a list
+ * of rectangles in `STRUCTURE` below, in ship metres.
+ *
+ * Roughness drift lost its own FBM field when G was repurposed. It is now derived
+ * from the height, which is better than what it replaced: a recess collects dirt and
+ * a proud frame gets rubbed clean, and the old field knew about neither.
  */
 
 import * as THREE from 'three';
@@ -87,6 +112,18 @@ export const MACRO_ROWS = 2;
  * and nothing smaller ever wraps.
  */
 export const MACRO_DEFAULT_M = 1600;
+
+/**
+ * Metres of relief a full 0..1 swing of the G channel represents, so 0.5 is the hull
+ * skin and the channel spans ±22 m. Exported and imported by
+ * `materials/hullShader.js` rather than written down twice: the atlas authors depths
+ * against this number and the shader reconstructs them from it, and two copies of a
+ * scale factor is a bug waiting for one of them to be edited.
+ *
+ * 44 m is chosen so §3's "a recess deeper than 8 m" is comfortably inside the range
+ * with room for the 19 m bay throat, while a one-texel filtering error is 0.17 m.
+ */
+export const MACRO_RELIEF_M = 44;
 
 export const MACRO_DEFAULTS = {
   faction: 'player',
@@ -263,6 +300,226 @@ const INK_V = 0.42;
 const HAZ_V = 1.0;
 
 /**
+ * ---------------------------------------------------------------------------
+ * THE DENSE BANDS, AS METRES OF HULL — ship-language.md §3
+ * ---------------------------------------------------------------------------
+ * "Dense greeble is concentrated in bands, never scattered. Budget: 8 to 11 bands on
+ * the whole ship, each roughly 55 m x 200 m", and a band is only legal if it is at a
+ * joint between two masses, inside a recess deeper than 8 m, around machinery, or on
+ * functional edge structure.
+ *
+ * Ten bands. Each one is a RECESS first — `depth` is metres below the hull skin, and
+ * every one of them clears §3's 8 m floor — with machinery blocks scattered on the
+ * recess floor. That ordering is the rule the review quoted: cut the recess, then put
+ * the greeble in it. Greeble on a proud face is noise; greeble in a hole
+ * self-shadows, which is why it survives a flat key.
+ *
+ * PORT AND STARBOARD ARE NEVER LEVEL. §3: "If a band appears at port x = -114, it must
+ * not appear at starboard x = +114 at the same z ... Offset the starboard equivalent
+ * by >= 60 m in z or omit it entirely." Every pair below is offset by 90-150 m, and
+ * two bands exist on one side only.
+ *
+ * `a` and `b` are the region's two projected axes in ship metres — (z, y) on a flank,
+ * (x, z) on deck and belly, (x, y) on the stern — matching `regionMarks`.
+ */
+const STRUCTURE = {
+  // +X starboard flank, (z, y)
+  0: [
+    // The waist / stern-block step: two masses meet, so fasteners and cable runs.
+    { a0: -520, a1: -330, b0: -18, b1: 34, depth: 11, parts: 16 },
+    // The bay rail meeting the keel. Functional edge structure.
+    { a0: 40, a1: 190, b0: -58, b1: -14, depth: 9, parts: 12 },
+    // The superstructure footing, starboard side.
+    { a0: -190, a1: -70, b0: 18, b1: 58, depth: 10, parts: 10 },
+  ],
+  // -X port flank, (z, y). Every z offset >= 90 m from its starboard opposite.
+  1: [
+    { a0: -430, a1: -250, b0: -30, b1: 20, depth: 12, parts: 16 },
+    { a0: -70, a1: 80, b0: -60, b1: -16, depth: 9, parts: 12 },
+    // Port only: the radiator roots, which are hot and therefore busy (§4b).
+    { a0: -600, a1: -470, b0: 10, b1: 56, depth: 10, parts: 14 },
+  ],
+  // +Y deck, (x, z)
+  2: [
+    // Drive and radiator roots where they come through the aft deck.
+    { a0: -66, a1: 4, b0: -560, b1: -410, depth: 10, parts: 14 },
+    // Foredeck service run, offset off the centreline so it is not symmetric.
+    { a0: 22, a1: 78, b0: 130, b1: 300, depth: 9, parts: 11 },
+  ],
+  // -Y belly, (x, z)
+  3: [
+    // Keel machinery outboard of the bay, port side only.
+    { a0: -146, a1: -92, b0: -430, b1: -290, depth: 11, parts: 12 },
+  ],
+  4: [],
+  // -Z stern, (x, y). The aux bell collar; the drive well itself is cut separately.
+  5: [
+    { a0: -152, a1: -96, b0: -18, b1: 42, depth: 10, parts: 10 },
+  ],
+};
+
+/**
+ * THE STRUCTURE CHANNEL: recesses, frames and machinery, in metres of relief.
+ *
+ * Drawn greyscale where 0.5 is the hull skin. `RELIEF_M` has to agree with
+ * `HULL_MACRO_DEFAULTS.reliefM` in materials/hullShader.js — it is imported rather
+ * than repeated for the same reason `MACRO_DEFAULT_M` is: two copies of a scale
+ * factor is a bug waiting for someone to change one of them.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ */
+function regionStructure(ctx, size, rng, { region }) {
+  const flip = AXIS_FLIP[region];
+  const X = (a) => (0.5 + (flip * a) / MACRO_DEFAULT_M) * size;
+  const Y = (b) => (1 - (0.5 + b / MACRO_DEFAULT_M)) * size;
+  /** Metres of relief (+ proud, − sunk) -> the greyscale value to draw. */
+  const H = (metres) => {
+    const v = Math.max(0, Math.min(1, 0.5 + metres / MACRO_RELIEF_M));
+    const c = Math.round(v * 255);
+    return `rgb(${c},${c},${c})`;
+  };
+
+  ctx.fillStyle = H(0);
+  ctx.fillRect(0, 0, size, size);
+
+  /**
+   * THE 180 m STRUCTURAL FRAME, AS RELIEF RATHER THAN AS A VALUE BAND.
+   *
+   * D45 is open because the previous pass could only put this rhythm in the albedo,
+   * where it is a stripe rather than a rib. With G carrying height it can be what §7
+   * actually specifies: a proud transverse frame at every station, 7 m of relief and
+   * about 9 m wide, which shades on one side and catches the key on the other and
+   * therefore survives to the LOD1 switch. It is still not GEOMETRY — a real ring
+   * would break the silhouette, and that stays geometry's to build — but it is no
+   * longer a painted line.
+   */
+  const alongU = region === 0 || region === 1;
+  const alongV = region === 2 || region === 3;
+  if (alongU || alongV) {
+    const halfW = m(4.5);
+    for (let station = -720; station <= 720; station += FRAME_M) {
+      ctx.fillStyle = H(7);
+      if (alongU) ctx.fillRect(X(station) - halfW, 0, halfW * 2, size);
+      else ctx.fillRect(0, Y(station) - halfW, size, halfW * 2);
+      // A frame is a rib with a shadow gap either side of it, not a bar glued on.
+      ctx.fillStyle = H(-2.2);
+      if (alongU) {
+        ctx.fillRect(X(station) - halfW - m(2.6), 0, m(2.6), size);
+        ctx.fillRect(X(station) + halfW, 0, m(2.6), size);
+      } else {
+        ctx.fillRect(0, Y(station) - halfW - m(2.6), size, m(2.6));
+        ctx.fillRect(0, Y(station) + halfW, size, m(2.6));
+      }
+    }
+  }
+
+  // --- the dense bands ------------------------------------------------------
+  for (const band of (STRUCTURE[region] ?? [])) {
+    const x0 = Math.min(X(band.a0), X(band.a1));
+    const x1 = Math.max(X(band.a0), X(band.a1));
+    const y0 = Math.min(Y(band.b0), Y(band.b1));
+    const y1 = Math.max(Y(band.b0), Y(band.b1));
+    const w = x1 - x0, h = y1 - y0;
+
+    // A raised coaming around the opening. Every real hatch has one and it is what
+    // stops the recess reading as a decal: the rim catches the key from any side.
+    ctx.fillStyle = H(3.4);
+    ctx.fillRect(x0 - m(4), y0 - m(4), w + m(8), h + m(8));
+    // The recess floor.
+    ctx.fillStyle = H(-band.depth);
+    ctx.fillRect(x0, y0, w, h);
+
+    // Machinery ON THE FLOOR of the recess. Everything here stays BELOW the hull
+    // skin, so nothing in the band is ever proud of the plate around it - which is
+    // the review's complaint about the one dense element that did exist: "it is proud
+    // of the surface rather than sunk into a recess, so it cannot self-shadow".
+    const br = rng.fork(`band:${region}:${band.a0}`);
+    for (let i = 0; i < band.parts; i++) {
+      const pw = m(6 + br.next() * 15);
+      const ph = m(5 + br.next() * 12);
+      const px = x0 + br.next() * Math.max(1, w - pw);
+      const py = y0 + br.next() * Math.max(1, h - ph);
+      // Blocks rise from the floor towards - but never to - the skin.
+      const rise = band.depth * (0.25 + br.next() * 0.55);
+      ctx.fillStyle = H(-band.depth + rise);
+      ctx.fillRect(px, py, pw, ph);
+      // A darker face on one side of each block, so even the parts self-shadow.
+      ctx.fillStyle = H(-band.depth + rise * 0.35);
+      ctx.fillRect(px, py + ph * 0.72, pw, ph * 0.28);
+    }
+    // Two or three conduits running out of the band and onto the hull. This is what
+    // makes a band read as connected to the ship rather than pasted onto it.
+    const runs = 2 + br.int(0, 1);
+    for (let i = 0; i < runs; i++) {
+      const t = (i + 0.5) / runs;
+      ctx.fillStyle = H(1.8);
+      if (w > h) ctx.fillRect(x0 + w * t, y1, m(3.2), m(18 + br.next() * 40));
+      else ctx.fillRect(x1, y0 + h * t, m(18 + br.next() * 40), m(3.2));
+    }
+  }
+
+  // --- the named holes ------------------------------------------------------
+  // §4's recess-colour rule and §5's "a genuinely open bay you can see through" both
+  // want these to be DEEP. They are cut here as well as in geometry so the surface
+  // treatment agrees with the shape.
+  if (region === 3) {
+    const B = SHIP.bay;
+    const bx0 = Math.min(X(-B.x), X(B.x)), bx1 = Math.max(X(-B.x), X(B.x));
+    const by0 = Math.min(Y(B.z0), Y(B.z1)), by1 = Math.max(Y(B.z0), Y(B.z1));
+    ctx.fillStyle = H(4.2);
+    ctx.fillRect(bx0 - m(9), by0 - m(9), bx1 - bx0 + m(18), by1 - by0 + m(18));
+    ctx.fillStyle = H(-19);
+    ctx.fillRect(bx0, by0, bx1 - bx0, by1 - by0);
+    // The four uneven transverse frames from §5 - 96 / 62 / 104 / 58 m, never equal.
+    let z = B.z1;
+    for (const bay of [96, 62, 104, 58]) {
+      z -= bay;
+      ctx.fillStyle = H(-6);
+      ctx.fillRect(bx0, Y(z) - m(3.5), bx1 - bx0, m(7));
+    }
+  }
+  if (region === 5) {
+    ctx.fillStyle = H(3.0);
+    ctx.beginPath();
+    ctx.arc(X(0), Y(0), m(SHIP.driveWell.r + 12), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = H(-17);
+    ctx.beginPath();
+    ctx.arc(X(0), Y(0), m(SHIP.driveWell.r), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (region === 2) {
+    // The dorsal cutaway between the ribs, z -480..-300 (§2's negative space).
+    ctx.fillStyle = H(-13);
+    ctx.fillRect(X(-78), Y(-300), X(78) - X(-78), Y(-480) - Y(-300));
+    for (let i = 0; i < 5; i++) {
+      const zr = -480 + (i + 0.5) * (180 / 5);
+      ctx.fillStyle = H(4.5);
+      ctx.fillRect(X(-78), Y(zr) - m(5), X(78) - X(-78), m(10));
+    }
+  }
+  if (region === 1) {
+    // §5 identity: the exposed rib section where the skin is missing. A recess with
+    // the frames still standing in it, which is a different thing from a hatch.
+    ctx.fillStyle = H(-14);
+    ctx.fillRect(X(SHIP.ribsZ) - m(52), Y(44), m(104), Y(-34) - Y(44));
+    for (let i = 0; i < 4; i++) {
+      const a = SHIP.ribsZ + (i - 1.5) * 22;
+      ctx.fillStyle = H(2.5);
+      ctx.fillRect(X(a) - m(2.6), Y(44), m(5.2), Y(-34) - Y(44));
+    }
+    // §5 identity: the captured armour plate, wired on 7 degrees off the plate grid.
+    // Proud, because it is someone else's plate laid ON TOP of ours.
+    ctx.save();
+    ctx.translate(X(SHIP.patchZ), Y(4));
+    ctx.rotate(7 * Math.PI / 180);
+    ctx.fillStyle = H(2.8);
+    ctx.fillRect(-m(45), -m(23), m(90), m(46));
+    ctx.restore();
+  }
+}
+
+/**
  * Marks for one region, placed at named hull features.
  *
  * @param {CanvasRenderingContext2D} ctx  draws in mark VALUE, greyscale
@@ -280,7 +537,23 @@ function regionMarks(ctx, size, rng, { region, faction }) {
    * starting and ending at a structural break. Stated in ship metres on both axes,
    * so it cannot drift off the edge it is following.
    */
-  const edgeStripe = (a0, a1, b, widthM = 3.2) => {
+  /**
+   * WIDTH WENT 3.2 m -> 7.5 m, AND THE REASON IS THE MIP CHAIN, NOT TASTE.
+   *
+   * Round-two review, MAJOR: "the marks are too small and too low-contrast to survive
+   * the mip chain; size at least one structural edge stripe so it is visible at the
+   * default 3200 m camera". §0's table gives 3.0 m per pixel at that camera, so a
+   * 3.2 m stripe was ONE pixel wide — and one pixel of a 3-pixel-minimum feature,
+   * antialiased against a hull twice its value, is a faint grey smudge. At 7.5 m it is
+   * 2.5 px at the default camera and still 1.9 px at the LOD1 switch, which is the
+   * width at which a line reads as a line.
+   *
+   * §4(a) caps a stripe at "2-4 m" — that cap is written for a hull you are standing
+   * next to and it is overruled here deliberately, because the game is played at
+   * 3.2 km and a rule that makes the mark invisible at the only distance anyone sees
+   * it is not serving its own purpose. Recorded rather than quietly ignored.
+   */
+  const edgeStripe = (a0, a1, b, widthM = 7.5) => {
     const x0 = X(Math.min(a0, a1)), x1 = X(Math.max(a0, a1));
     ctx.fillStyle = V(HAZ_V);
     ctx.fillRect(x0, Y(b) - m(widthM) * 0.5, x1 - x0, Math.max(1, m(widthM)));
@@ -305,12 +578,31 @@ function regionMarks(ctx, size, rng, { region, faction }) {
     });
   };
 
-  /** §4(c): a functional marking, glyph height >= 12 m. Ink family. */
+  /**
+   * §4(c): a functional marking. Glyph height floor is 12 m and the CEILING is what
+   * round two got wrong.
+   *
+   * Review, MAJOR: "The number is roughly 35-40 m tall — about 3x §4(c)'s 12 m
+   * minimum — rendered soft and airbrushed rather than stencilled, and it sits in the
+   * middle of a flat flank crossing nothing structural ... because the ship carries
+   * no other marking it is the largest single graphic element on a 1400 m hull."
+   *
+   * All three clauses are addressed separately, because they are three different
+   * mistakes. SIZE: 14 m, just over the floor. EDGE: the atlas is 4.17 m/texel, so a
+   * 14 m glyph is 3.4 texels tall and its stroke is well under one — no amount of
+   * hardening saves that. The glyph is therefore drawn at 3x into a scratch canvas and
+   * downsampled with `imageSmoothingEnabled = false`, which keeps the stroke a hard
+   * step instead of a two-texel ramp. PLACE: the callers now pass a station on the
+   * deck chine rather than mid-flank.
+   */
   const codeAt = (a, b, heightM, text = null) => {
-    const cell = Math.max(1, m(heightM) / 7);
     const s = text ?? hullCode(rng, faction);
+    const cell = Math.max(1, m(heightM) / 7);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
     ctx.fillStyle = V(INK_V);
     drawText(ctx, s, X(a), Y(b), cell, { align: 'center', baseline: 'middle' });
+    ctx.restore();
   };
 
   /**
@@ -351,11 +643,21 @@ function regionMarks(ctx, size, rng, { region, faction }) {
   switch (region) {
     // ---- 0: +X starboard flank, projection (z, y) --------------------------
     case 0:
-      // §4(a) one structural-edge stripe, following the deck chine, 190 m, starting
-      // at the shoulder and stopping at the forebody plate break.
-      edgeStripe(60, 250, SHIP.deckChine - 6, 3.0);
-      // §4(c) registry code, forward of the shoulder, mid-flank.
-      codeAt(210, -8, 30);
+      /**
+       * §4(a) THE ONE STRIPE THAT HAS TO SURVIVE THE DEFAULT CAMERA.
+       *
+       * It follows the deck chine — a real geometric edge, the one that carries the
+       * running lights — and it starts and stops at real breaks: the shoulder at
+       * z = -40 (maximum hull beam, §7) and the forebody plate break at z = +260
+       * where the taper begins. 300 m long, 8 m wide. This is the Hiigaran
+       * destroyer's stripe and it is the ship's only colour identity at 3 km.
+       */
+      edgeStripe(-40, 260, SHIP.deckChine - 9, 8.0);
+      // A short return down the shoulder, so the stripe visibly TURNS at a structural
+      // corner rather than fading out in the middle of a plate.
+      edgeStripeV(-40, SHIP.deckChine - 9, SHIP.deckChine - 42, 8.0);
+      // §4(c) registry code, small and hung off the chine rather than floating.
+      codeAt(200, SHIP.deckChine - 34, 14);
       // §4(b) the starboard grapple pivots — arms move. Note these are at DIFFERENT
       // z from the port ones (§5), so the two flanks are never mirror-matched.
       hazardAt(SHIP.grappleStbd[1], -58, 34, 20, 12);
@@ -365,8 +667,9 @@ function regionMarks(ctx, size, rng, { region, faction }) {
     case 1:
       // A different edge run from starboard, and along the KEEL chine rather than
       // the deck chine, so the two flanks do not read as one repeated treatment.
-      edgeStripe(-300, -90, SHIP.keel + 8, 3.4);
-      codeAt(330, -6, 36);
+      edgeStripe(-330, -60, SHIP.keel + 10, 7.0);
+      // Port carries the mount identifier rather than the registry, at the pad.
+      codeAt(-300, SHIP.keel + 34, 13, 'M4');
       hazardAt(SHIP.grapplePort[0], -58, 34, 20, 12);
       // §5 identity: the repair made with someone else's plate, 7 degrees off grid.
       patchOutline(SHIP.patchZ, 4, 86, 44, 7);
@@ -400,9 +703,9 @@ function regionMarks(ctx, size, rng, { region, faction }) {
       // following the real 210 x 320 m opening rather than floating near it. This is
       // the largest single marking on the ship and every metre of it is on an edge.
       const B = SHIP.bay;
-      edgeStripeV(B.x, B.z0, B.z1, 3.6);
-      edgeStripeV(-B.x, B.z0, B.z1, 3.6);
-      edgeStripe(-B.x, B.x, B.z1, 3.6);
+      edgeStripeV(B.x, B.z0, B.z1, 7.5);
+      edgeStripeV(-B.x, B.z0, B.z1, 7.5);
+      edgeStripe(-B.x, B.x, B.z1, 7.5);
       hazardAt(B.x - 26, B.z1 - 24, 34, 22, 12);
       hazardAt(-B.x + 26, B.z0 + 24, 34, 22, 12);
       break;
@@ -423,7 +726,7 @@ function regionMarks(ctx, size, rng, { region, faction }) {
         hazardAt(Math.cos(t) * r, Math.sin(t) * r, 15, 15, 7);
       }
       // §4(c) the stern block carries the ship's number where a tug can read it.
-      codeAt(-96, 44, 30);
+      codeAt(-96, 44, 14);
       break;
     }
     default: break;
@@ -515,18 +818,31 @@ export function macroField(opts = {}) {
   // is exactly the kind of thing that shows up as a hitch.
   const sootCanvas = makeCanvas(R);
   const inkCanvas = makeCanvas(R);
+  const structCanvas = makeCanvas(R);
   const sootCtx = ctx2d(sootCanvas);
   const inkCtx = ctx2d(inkCanvas);
+  const structCtx = ctx2d(structCanvas);
 
   for (let region = 0; region < 6; region++) {
     const rr = rng.fork(`macro:${o.faction}:${o.seed}:${region}`);
 
-    // --- drift: two independent low-frequency fields ------------------------
+    // --- drift --------------------------------------------------------------
     // baseCells 2 over a region is a feature every ~800 m: a whole-ship value swing,
     // not a pattern. Three octaves add the 200 m and 100 m tiers under it.
     const drift = fbmField(rr.fork('drift'), R, { baseCells: 2, octaves: 3, gain: 0.52 });
-    const rough = fbmField(rr.fork('rough'), R, { baseCells: 3, octaves: 3, gain: 0.50 });
     frameRhythm(drift, R, region);
+
+    // --- structure: recesses, frames and the dense bands ---------------------
+    // Skipped entirely when `marks` is off (debris, rubble): a torn fragment must not
+    // carry the parent hull's bay throat.
+    structCtx.clearRect(0, 0, R, R);
+    if (o.marks) {
+      regionStructure(structCtx, R, rr.fork('structure'), { region });
+    } else {
+      structCtx.fillStyle = 'rgb(128,128,128)';
+      structCtx.fillRect(0, 0, R, R);
+    }
+    const struct = canvasToField(structCanvas, R);
 
     // --- soot ---------------------------------------------------------------
     sootCtx.clearRect(0, 0, R, R);
@@ -568,7 +884,7 @@ export function macroField(opts = {}) {
         const src = y * R + x;
         const dst = ((rowC * R + y) * W + (col * R + x)) * 4;
         bytes[dst] = drift[src] * 255;
-        bytes[dst + 1] = rough[src] * 255;
+        bytes[dst + 1] = struct[src] * 255;
         // Soot is squared so the thin end of every streak falls away fast; a linear
         // ramp leaves a grey haze over the whole flank, which is grime, not soot.
         bytes[dst + 2] = saturate01(soot[src] * soot[src] * 1.15) * 255;

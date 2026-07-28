@@ -4,7 +4,7 @@ import { scratch } from '../core/world.js';
 import { RANGE } from '../core/units.js';
 import { getModule, allModules } from '../core/contracts.js';
 import { FreeBody } from './physics.js';
-import { installProgression, storeSection, breakDownItem, gradeForKind } from './meta/index.js';
+import { installProgression, storeSection, breakDownItem } from './meta/index.js';
 import {
   clamp01, salvageState, conditionLabel, cutQuality, burnRate, scrapYield, CONDITION,
 } from './condition.js';
@@ -205,6 +205,61 @@ export class Wreck {
     for (const s of this.sections) {
       s.worldPosition.copy(s.localPosition).applyQuaternion(q).add(this.body.position);
     }
+    if (this.residualHeat > 0) {
+      this.residualHeat = Math.max(0, this.residualHeat - this.heatDecay * dt);
+    }
+  }
+
+  /** Seconds until this wreck is cold enough to cut without cooking what you take. */
+  get coolIn() {
+    return this.residualHeat <= 0.05 ? 0 : (this.residualHeat - 0.05) / this.heatDecay;
+  }
+}
+
+/**
+ * A single module floating free in space, shot off a hull rather than cut out of one.
+ *
+ * Duck-typed to `Wreck` - one section, a tumbling body, `update(dt)` - so the world,
+ * the salvage loop and any UI that walks `world.wrecks` handle it with no special case.
+ */
+export class DetachedModule {
+  constructor({ id, name, faction, moduleId, condition, position, velocity, radius, rng }) {
+    this.id = id;
+    this.name = name;
+    this.faction = faction;
+    this.sourceClass = null;
+    this.root = null;                 // geometry stream may attach one later
+    this.integrity = condition;
+    this.residualHeat = 0.25;         // it came off a hull that was being shot at
+    this.heatDecay = 1 / 40;
+    this.detachedModule = true;
+
+    this.body = new FreeBody({ mass: 60, radius: radius ?? 24 });
+    this.body.position.copy(position);
+    if (velocity) this.body.velocity.copy(velocity).multiplyScalar(0.6);
+    this.body.angularVelocity.set(rng.signed() * 0.5, rng.signed() * 0.4, rng.signed() * 0.5);
+    this.body.noCollide = true;
+
+    this.sections = [new WreckSection({
+      id: `${id}/module`,
+      moduleId,
+      label: name,
+      localPosition: new THREE.Vector3(),
+      radius: radius ?? 24,
+      condition,
+      materials: 40,
+    })];
+    this.towedBy = null;
+  }
+
+  get spent() { return this.sections.every((s) => !s.cuttable); }
+  get coolIn() { return this.residualHeat <= 0.05 ? 0 : (this.residualHeat - 0.05) / this.heatDecay; }
+
+  update(dt) {
+    this.body.integrate(dt);
+    if (this.root) this.body.applyTo(this.root);
+    for (const s of this.sections) s.worldPosition.copy(this.body.position);
+    if (this.residualHeat > 0) this.residualHeat = Math.max(0, this.residualHeat - this.heatDecay * dt);
   }
 }
 
@@ -240,7 +295,20 @@ export class SalvageSystem {
     this.tractorRating = 0;      // raised by the salvage tractor module
     this.cargoCapacity = 6;      // raised by cargo expansion modules
 
-    this.bus.on(EV.SHIP_DESTROYED, ({ ship }) => this._spawnWreck(ship));
+    /**
+     * CUT MODE. `clean` is the default; `fast` cuts at 1.75x and costs quality.
+     *
+     * Cutting used to be dead time - hold position and wait. Now the waiting is a bet:
+     * a burning wreck cooks what you take out of it, so the clean cut wants you to let
+     * it cool, and every reason you have to leave (a second hostile, a response wave,
+     * a plotted course) argues for the fast cut instead. Same verb, real decision.
+     */
+    this.cutMode = 'clean';
+    this.fastCutRate = 1.75;
+    this._detachIndex = 0;
+    this._cutRows = [];
+
+    this.bus.on(EV.SHIP_DESTROYED, (e) => this._spawnWreck(e?.ship, e));
 
     // The progression, economy and objective layer installs from here.
     //
@@ -258,20 +326,69 @@ export class SalvageSystem {
 
   get player() { return this.world.player; }
 
-  _spawnWreck(ship) {
-    if (ship.isPlayer) return;
+  _spawnWreck(ship, event) {
+    if (!ship || ship.isPlayer) return;
     const wreck = new Wreck({ ship, root: ship.root, rng: this.rng.fork(ship.id) });
+
+    // How hot the hull is when it arrives is a consequence of how it died. A reactor
+    // kill leaves a fire; a cold, methodical dismantling leaves something you can cut
+    // straight away. This is the third thing a reactor kill costs you.
+    const mountHeat = ship.thermal ? ship.thermal.peak : 0;
+    wreck.residualHeat = clamp01(
+      (event?.catastrophic ? 0.85 : 0.2) + mountHeat * 0.25 + (1 - wreck.integrity) * 0.3,
+    );
     this.world.removeShip(ship);
     this.world.addWreck(wreck);
     return wreck;
   }
 
+  /**
+   * Shot off a hull rather than cut out of one.
+   *
+   * Called by `Ship._detachMount` when a module's mount pad is destroyed. The module is
+   * intact; it is simply no longer attached to anybody. Go and get it.
+   */
+  spawnDetachedModule({ ship, mount, moduleDef, condition, point }) {
+    const name = moduleDef?.name ?? mount?.def?.name ?? 'MODULE';
+    const detached = new DetachedModule({
+      id: `detached:${this._detachIndex++}`,
+      name,
+      faction: ship?.faction ?? 'derelict',
+      moduleId: moduleDef?.id ?? this._matchModuleFor(ship, mount),
+      condition: clamp01(condition ?? 1),
+      position: point ?? mount?.worldPosition ?? ship.position,
+      velocity: ship?.velocity ?? null,
+      radius: 26,
+      rng: this.rng.fork(`detach:${this._detachIndex}`),
+    });
+    this.world.addWreck(detached);
+    this.bus.emit(EV.NOTIFY, { text: `${name} SHOT FREE — INTACT`, important: true });
+    return detached;
+  }
+
+  /** A registered module of the right faction and role for a mount that has no def. */
+  _matchModuleFor(ship, mount) {
+    if (!mount) return null;
+    const faction = ship?.faction;
+    const candidates = allModules().filter((m) => m.weapon && (!faction || m.faction === faction));
+    if (!candidates.length) return null;
+    const exact = candidates.filter((m) => m.weapon.type === mount.def.type);
+    return this.rng.pick(exact.length ? exact : candidates).id;
+  }
+
   /** Player orders a cut on a specific section. */
-  orderCut(wreck, section) {
+  orderCut(wreck, section, mode = null) {
     if (!section.cuttable) return false;
+    if (mode) this.setCutMode(mode);
     this.cutting = { wreck, section };
-    this.bus.emit(EV.SALVAGE_CUT_START, { wreck, section });
+    this.bus.emit(EV.SALVAGE_CUT_START, { wreck, section, mode: this.cutMode });
     return true;
+  }
+
+  /** 'clean' | 'fast'. See the cutMode note above. */
+  setCutMode(mode) {
+    this.cutMode = mode === 'fast' ? 'fast' : 'clean';
+    return this.cutMode;
   }
 
   cancelCut() {
@@ -317,12 +434,25 @@ export class SalvageSystem {
       return;
     }
 
-    const rate = this.cutRate * (1 + this.tractorRating * 0.65);
+    const fast = this.cutMode === 'fast';
+    const rate = this.cutRate * (1 + this.tractorRating * 0.65) * (fast ? this.fastCutRate : 1);
     c.section.cutProgress += rate * dt;
+
+    // Cutting a burning wreck cooks what you are cutting out of it. The loss accrues
+    // per second under the torch, so the fast cut spends less time in the fire but
+    // does more damage per second of it - which is the trade, not a free win.
+    const heat = c.wreck.residualHeat ?? 0;
+    if (heat > 0.05) {
+      const loss = burnRate(heat) * (fast ? 1.4 : 1) * dt;
+      c.section.condition = clamp01(c.section.condition - loss);
+    }
 
     if (c.section.cutProgress >= 1) {
       c.section.detached = true;
       c.section.cutProgress = 1;
+      // The cut itself has a quality. A hasty torch through a hot hull is the worst
+      // case and it is visible on the part the moment it lands in the hold.
+      c.section.condition = cutQuality(c.section.condition, heat, fast);
       this.inTow.push({
         wreck: c.wreck,
         section: c.section,
@@ -357,6 +487,15 @@ export class SalvageSystem {
   _store(section) {
     const w = this.world;
 
+    // Recovered rounds go straight into the magazine. This is the loop that makes an
+    // empty gun a reason to go and open something up rather than a reason to go home.
+    if (section.ammo && section.ammoRounds > 0) {
+      const stores = this.player?.stores;
+      const taken = stores ? stores.addAmmo(section.ammo, section.ammoRounds) : 0;
+      this.bus.emit(EV.SALVAGE_ACQUIRED, { kind: 'ammo', ammo: section.ammo, rounds: taken, section });
+      if (taken > 0) return;
+    }
+
     // THE ECONOMY SEAM. When the progression layer is installed, storing a section is
     // a volume decision and a materials decision rather than a slot check: see
     // `sim/meta/index.js#storeSection`. The path below is kept intact as the fallback
@@ -366,10 +505,12 @@ export class SalvageSystem {
       if (result.kind !== 'none') return result;
     }
 
-    if (section.moduleId && w.inventory.length < this.cargoCapacity) {
+    // A section below CONDITION.scrap does not contain a part any more, however good
+    // its label looked in the ring. That threshold is the same one the ring showed you.
+    if (section.yieldsModule && w.inventory.length < this.cargoCapacity) {
       const def = getModule(section.moduleId);
       if (def) {
-        w.inventory.push({ moduleId: def.id, condition: section.integrity, uid: section.id });
+        w.inventory.push({ moduleId: def.id, condition: section.condition, uid: section.id });
         this.bus.emit(EV.SALVAGE_ACQUIRED, { kind: 'module', module: def, section });
         return;
       }
@@ -388,11 +529,107 @@ export class SalvageSystem {
     const i = w.inventory.findIndex((it) => it.uid === uid);
     if (i < 0) return false;
     const [item] = w.inventory.splice(i, 1);
+
+    // Breaking a part down yields tier-0 scrap, not finished stock. Two tiers, and the
+    // refinery is the only way across the gap.
+    if (w.systems.economy) {
+      const out = breakDownItem(w, item);
+      if (out) return true;
+    }
+
+    // Canonical breakdown rates live in condition.js. The alloy and composite figures
+    // are bit-for-bit what this function already produced; the exotic is new and is
+    // only paid on a clean part, so cutting carefully pays even when you melt the thing.
     const def = getModule(item.moduleId);
-    const value = Math.round((def?.mass ?? 200) * 0.4 * item.condition);
-    w.materials.alloy += value;
-    w.materials.composite += Math.round(value * 0.35);
-    this.bus.emit(EV.SALVAGE_ACQUIRED, { kind: 'materials', amount: value, scrapped: def });
+    const out = scrapYield(def?.mass ?? 200, item.condition ?? 1);
+    w.materials.alloy += out.alloy;
+    w.materials.composite += out.composite;
+    w.materials.exotic += out.exotic;
+    this.bus.emit(EV.SALVAGE_ACQUIRED, { kind: 'materials', amount: out.alloy, yield: out, scrapped: def });
     return true;
+  }
+
+  /**
+   * READ API — the cut panel and the wreck brackets.
+   *
+   * `salvage.describeWrecks()` returns a cached array, one row per wreck:
+   *
+   *   { id, name, faction, detachedModule, integrity, residualHeat, coolIn,
+   *     distance, sections: [{ id, label, state, grade, condition, moduleId,
+   *                            moduleName, ammo, ammoRounds, materials, cutProgress,
+   *                            cuttable, inRange, etaClean, etaFast, worldPosition }] }
+   *
+   * `state` is INTACT / DAMAGED / SCRAP - the same three words the targeting ring uses
+   * while the ship is still alive, so the player learns one vocabulary, not two.
+   * `etaClean` / `etaFast` are seconds, so the fast-cut decision is arithmetic the
+   * player can actually do.
+   */
+  describeWrecks() {
+    const rows = this._cutRows;
+    rows.length = 0;
+    const p = this.player;
+    const range = RANGE.salvageBeam * (1 + this.tractorRating * 0.4);
+    const baseRate = this.cutRate * (1 + this.tractorRating * 0.65);
+
+    for (const wreck of this.world.wrecks) {
+      let row = wreck._salvageRow;
+      if (!row) row = wreck._salvageRow = { sections: [] };
+      row.id = wreck.id;
+      row.name = wreck.name;
+      row.faction = wreck.faction;
+      row.detachedModule = !!wreck.detachedModule;
+      row.integrity = wreck.integrity;
+      row.residualHeat = wreck.residualHeat ?? 0;
+      row.coolIn = wreck.coolIn ?? 0;
+      row.distance = p ? wreck.body.position.distanceTo(p.position) : Infinity;
+      const secs = row.sections;
+      secs.length = 0;
+      for (const s of wreck.sections) {
+        let sr = s._row;
+        if (!sr) sr = s._row = {};
+        const def = s.moduleId ? getModule(s.moduleId) : null;
+        sr.id = s.id;
+        sr.label = s.label;
+        sr.condition = s.condition;
+        sr.state = s.state;
+        sr.grade = conditionLabel(s.condition);
+        sr.moduleId = s.yieldsModule ? s.moduleId : null;
+        sr.moduleName = s.yieldsModule ? (def?.name ?? null) : null;
+        sr.ammo = s.ammo;
+        sr.ammoRounds = s.ammoRounds;
+        sr.materials = s.materials;
+        sr.cutProgress = s.cutProgress;
+        sr.cuttable = s.cuttable;
+        sr.worldPosition = s.worldPosition;
+        sr.inRange = p ? s.worldPosition.distanceToSquared(p.position) <= range * range : false;
+        const remaining = Math.max(0, 1 - s.cutProgress);
+        sr.etaClean = remaining / baseRate;
+        sr.etaFast = remaining / (baseRate * this.fastCutRate);
+        // What the fast cut would cost, in condition, if started now.
+        sr.fastPenalty = s.condition - cutQuality(s.condition, wreck.residualHeat ?? 0, true);
+        secs.push(sr);
+      }
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  /** Current cut, for the beam readout. Null when idle. */
+  cutStatus() {
+    const c = this.cutting;
+    if (!c) return null;
+    const heat = c.wreck.residualHeat ?? 0;
+    return {
+      wreckId: c.wreck.id,
+      sectionId: c.section.id,
+      label: c.section.label,
+      progress: c.section.cutProgress,
+      mode: this.cutMode,
+      condition: c.section.condition,
+      state: c.section.state,
+      burning: heat > 0.05,
+      burnPerSecond: burnRate(heat) * (this.cutMode === 'fast' ? 1.4 : 1),
+      projected: cutQuality(c.section.condition, heat, this.cutMode === 'fast'),
+    };
   }
 }

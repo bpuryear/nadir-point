@@ -43,7 +43,7 @@
  */
 
 import * as THREE from 'three';
-import { MACRO_DEFAULT_M } from '../textures/macro.js';
+import { MACRO_DEFAULT_M, MACRO_RELIEF_M } from '../textures/macro.js';
 
 /**
  * ---------------------------------------------------------------------------
@@ -195,11 +195,15 @@ vec2 nadirMacroUV(vec3 p, vec3 n) {
 /**
  * Surface-gradient normal perturbation from a height sampled at this pixel.
  *
- * This is three's own `perturbNormalArb` construction (ShaderChunk/bumpmap_pars),
+ * This is three's own perturbNormalArb construction (ShaderChunk/bumpmap_pars),
  * inlined because the material is not a bump-mapped material and defining
- * USE_BUMPMAP would fight the tangent-space normal map it already has. `dHdx`/`dHdy`
+ * USE_BUMPMAP would fight the tangent-space normal map it already has. dHdx and dHdy
  * are METRES OF RELIEF PER SCREEN PIXEL, which is why they are clamped: a macro
  * region boundary is a discontinuity in the atlas UV and its derivative is unbounded.
+ *
+ * NO BACKTICKS ANYWHERE INSIDE THESE GLSL STRINGS. They are JS template literals, so
+ * a backtick in a comment closes the string and the parse error lands sixty lines
+ * away from the character that caused it.
  */
 vec3 nadirPerturb(vec3 n, vec3 viewPos, float dHdx, float dHdy) {
   vec3 sx = dFdx(viewPos);
@@ -222,7 +226,7 @@ const MAP_FRAGMENT = /* glsl */`
 	vec4 sampledDiffuseColor = texture2D( map, vMapUv + nadirUvOffset );
 	/**
 	 * DETAIL GAIN. The tiling map's contrast is pushed about its own mean: up inside
-	 * a macro structure band, down over open armour. `nadirDetail` is 1.0 on a calm
+	 * a macro structure band, down over open armour. nadirDetail is 1.0 on a calm
 	 * face, so a 700 m flank belt renders EXACTLY as authored and only the bands move.
 	 * Pivoting on 0.5 rather than on the texel keeps the mean value of the surface
 	 * constant, so amplifying detail does not also change how light the ship is.
@@ -349,7 +353,7 @@ export const HULL_MACRO_DEFAULTS = {
    * or a 9 m proud frame at 0.60 — the depths ship-language.md §3 asks for ("a recess
    * deeper than 8 m") stated in the units the document uses.
    */
-  reliefM: 44,
+  reliefM: MACRO_RELIEF_M,
   /** How much indirect light a full-depth cavity loses. */
   cavity: 0.72,
   /** Extra tiling-detail contrast and relief inside a structure band. */

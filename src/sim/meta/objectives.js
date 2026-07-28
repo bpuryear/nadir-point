@@ -43,6 +43,16 @@ const GEN_INTERVAL = 12;
 const MAX_ACTIVE = 4;
 
 /**
+ * Per-kind ceilings.
+ *
+ * Without these the panel silts up with whichever kind the map happens to produce most
+ * of - in practice `prospect`, because "somewhere nobody has looked" is true of most of
+ * the map most of the time - and the one that carries the design, `intercept`, never
+ * gets a slot. A list of four identical offers is not four offers.
+ */
+const KIND_CAP = { intercept: 2, strip: 2, blockade: 1, prospect: 1 };
+
+/**
  * Arrival tiers for `intercept`, and what each is worth.
  *
  * This table IS the design. It is the only place in the game where being early is
@@ -111,22 +121,25 @@ export class ObjectiveSystem {
     let snap;
     try { snap = war.snapshot(); } catch { return; }
 
+    const held = { intercept: 0, strip: 0, blockade: 0, prospect: 0 };
+    for (const o of this.active) held[o.kind]++;
+
     const candidates = [];
     for (const poi of snap.pois) {
       if (this.active.some((o) => o.poiId === poi.id)) continue;
 
-      if (poi.battle && poi.battle.phase !== 'resolved') {
+      if (held.intercept < KIND_CAP.intercept && poi.battle && poi.battle.phase !== 'resolved') {
         candidates.push({ weight: 5.0, make: () => this._makeIntercept(poi) });
       }
-      if (poi.hulks >= 3) {
+      if (held.strip < KIND_CAP.strip && poi.hulks >= 3) {
         candidates.push({ weight: 3.0 + poi.hulks * 0.25, make: () => this._makeStrip(poi) });
       }
       const hostileOwner = poi.owner !== 'contested'
         && (snap.reputation[poi.owner] ?? 0) < 0 && poi.heat > 0.45;
-      if (hostileOwner) {
+      if (held.blockade < KIND_CAP.blockade && hostileOwner) {
         candidates.push({ weight: 2.0, make: () => this._makeBlockade(poi) });
       }
-      if (!poi.visited && poi.heat < 0.5) {
+      if (held.prospect < KIND_CAP.prospect && !poi.visited && poi.heat < 0.5) {
         candidates.push({ weight: 1.2, make: () => this._makeProspect(poi) });
       }
     }
