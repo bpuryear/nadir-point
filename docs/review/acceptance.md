@@ -41,12 +41,12 @@ criterion requires running `npm run bench` on the target machine.
 
 | Criterion | State | Evidence |
 |---|---|---|
-| Single consistent key direction per POI across every object | **FAIL** | `docs/review/pass1/three-quarter.png`: the cruiser renders near-uniform white with no readable key direction while the gas giant behind it carries a correct terminator. Open as defect D1/D3. |
-| Shadowed regions retain readable value separation without ambient wash | **FAIL** | Same frame. Faces pointing in completely different directions read at nearly the same value, which is the signature of an IBL/ambient wash. |
-| No object lit from a direction contradicting the POI key | **FAIL** | Same frame. |
+| Single consistent key direction per POI across every object | **PARTIAL** | Was FAIL. Key intensity solved rather than guessed: 13.5 put a fully-lit face at sRGB 0.83 through ACES — white paper before any highlight — and is now 4.6. Fill terms cut from ~38% of key to ~6%. `docs/review/pass4/close.png` shows real deck-vs-flank separation and a terminator. Not yet as decisive as the reference. |
+| Shadowed regions retain readable value separation without ambient wash | **PARTIAL** | Measured: 0% clipping, ~40% of frame genuinely near-black. The shadow side is held readable by the rim, which is directional, rather than by ambient — the distinction the criterion turns on. Cast shadows are still not visible on hulls despite 37 casters / 41 receivers live in the scene. |
+| No object lit from a direction contradicting the POI key | **PARTIAL** | The blown-out case that caused this is fixed. The critic's separate `cinematic.png` finding — a flaring star at frame-right while the ship's left flank is brightest — has not been re-verified since. |
 
-These three are the highest-priority open work and are the subject of the current fix
-pass. They are lighting and material calibration failures, not geometry failures.
+These were the highest-priority failures and are the ones that moved most. The remaining
+gap is surface treatment rather than light calibration.
 
 ## Scale
 
@@ -79,11 +79,30 @@ pass. They are lighting and material calibration failures, not geometry failures
 | | count |
 |---|---|
 | PASS | 5 |
-| PARTIAL | 5 |
-| FAIL | 4 |
-| UNVERIFIED | 5 |
+| PARTIAL | 8 |
+| FAIL | 2 |
+| UNVERIFIED | 4 |
 
-The four outright failures cluster into two root causes: **lighting/exposure calibration
-on gameplay-scene objects**, and **surface detail density on large hulls**. Both are
-being worked. The unverified items are mostly blocked on capture throughput in a
-software-rasterised environment rather than on missing work.
+Two outright failures remain:
+
+1. **Draw calls: 650 against a committed 320.** Understood, not mysterious — the
+   counters say exactly where they go, and `docs/review/benchmark.md` ranks three fixes.
+2. **Surface detail density.** A single plate frequency applied to every square metre of
+   every object. The independent critic named the real problem precisely: there is no
+   *frequency hierarchy*. Homeworld's hulls are roughly 60% calm, 30% medium, 10% dense
+   plus hand-placed asymmetric marks; ours is 100% medium. The fix is **less** detail in
+   most places, not more anywhere.
+
+The lighting failures that dominated the first review moved to PARTIAL after the key
+intensity was solved analytically rather than nudged. The remaining unverified items are
+blocked on capture throughput under software rasterisation, and on frame rate, which
+cannot be measured in this environment at all.
+
+### An honest overall statement
+
+The blind side-by-side against real Homeworld frames was run by an independent critic
+with no build context, and **it chose Homeworld in all four pairs**. It also identified
+the one asset already at the bar — the gas giant's banding, terminator and ring shadow,
+which it judged better observed than the reference's nebula — and it located the gap
+precisely: *"almost entirely LIGHTING and SURFACE, not geometry."* The lighting half has
+since been substantially addressed. The surface half has not.
