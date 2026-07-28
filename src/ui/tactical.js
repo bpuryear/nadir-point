@@ -157,14 +157,16 @@ export class TacticalOverlay {
       if (allOk && fillA > 0) {
         P.polyline(this._arc, count, { stroke: null, close: true, fill: wedgeFill(bearing, fillA) });
       }
+      P.ctx.globalAlpha = bearing ? 0.9 : 0.7;
       P.polyline(this._arc, count, {
-        stroke, weight: bearing ? 1.6 : 1, close: false, dash: a.online ? null : this._dash,
+        stroke, weight: bearing ? 1.3 : 1, close: false, dash: a.online ? null : this._dash,
       });
       if (this._arc[0].ok) {
         const first = this._arc[1], last = this._arc[n + 1];
-        if (first.ok) P.leader(this._arc[0].x, this._arc[0].y, first.x, first.y, stroke, bearing ? 1.2 : 1);
-        if (last.ok) P.leader(this._arc[0].x, this._arc[0].y, last.x, last.y, stroke, bearing ? 1.2 : 1);
+        if (first.ok) P.leader(this._arc[0].x, this._arc[0].y, first.x, first.y, stroke, 1);
+        if (last.ok) P.leader(this._arc[0].x, this._arc[0].y, last.x, last.y, stroke, 1);
       }
+      P.ctx.globalAlpha = 1;
 
       // --- true range arc ---------------------------------------------------
       if (range > near * 1.02) {
