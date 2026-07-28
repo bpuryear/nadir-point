@@ -165,8 +165,14 @@ export const POI_NEAR_STAR = registerPOI({
   grade: getPOIPalette('near-star').grade,
   systemPos: [0.08, -0.83],
   build(ctx, world) {
-    // Dense sun-scorched rubble for the volumetrics to rake through; see
-    // FIELD_PRESETS.
+    /**
+     * Dense sun-scorched rubble for the volumetrics to rake through; see
+     * FIELD_PRESETS.
+     *
+     * The palette's full 0.72 god-ray strength is kept: this is the one POI whose
+     * identity is volumetrics, and the rubble gives the pass something real to rake
+     * through.
+     */
     return assemble('near-star', ctx, world, {
       lighting: { shadowRadius: 3200 },
     });

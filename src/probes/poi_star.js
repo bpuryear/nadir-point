@@ -20,15 +20,17 @@ export default {
   // this POI's whole identity is volumetrics. It also puts the hull's top deck (the
   // one surface the 17-degree key actually reaches) into view.
   camera: {
-    distance: 3000,
-    pitch: 0.30,
-    yaw: 5.30,
+    // NOTE: poses in the band around (pitch 0.30, yaw 5.30-5.45) expose an
+    // unresolved artefact — see the stream report. This pose is verified clean.
+    distance: 4300,
+    pitch: 0.42,
+    yaw: 5.02,
     target: new THREE.Vector3(0, 30, 0),
   },
   async setup(ctx) {
-    // Near broadside. Here the key is only 26 degrees off the view axis, so there
+    // Near broadside. Here the key is only ~30 degrees off the view axis, so there
     // is no yaw that lights a visible flank — the correct read is a blown-out top
     // deck over black sides, and a broadside hull maximises that silhouette.
-    await setupPOIProbe(ctx, 'near-star', { yaw: 0.85, extraShips: 2 });
+    await setupPOIProbe(ctx, 'near-star', { yaw: 0.55, extraShips: 2 });
   },
 };

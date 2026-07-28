@@ -257,10 +257,12 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
   key.shadow.camera.right = shadowRadius;
   key.shadow.camera.top = shadowRadius;
   key.shadow.camera.bottom = -shadowRadius;
-  // At 3.3 m/texel a constant bias cannot cover both a flat plate and a grazing
-  // hull, so most of the work is done by the normal offset, in metres.
-  key.shadow.bias = -0.00045;
-  key.shadow.normalBias = Math.max(2, shadowRadius / 420);
+  // At ~3 m per shadow texel a constant depth bias cannot cover both a flat plate
+  // and a hull at a grazing angle to the light, so most of the work is done by the
+  // normal offset — which is in METRES here, because the world is in metres. A
+  // number tuned on a 1 m test scene is four orders of magnitude too small.
+  key.shadow.bias = -0.0006;
+  key.shadow.normalBias = Math.max(6, shadowRadius / 260);
   key.shadow.camera.updateProjectionMatrix();
   scene.add(key);
   scene.add(key.target);

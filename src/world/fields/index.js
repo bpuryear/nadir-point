@@ -58,8 +58,14 @@ export const FIELD_PRESETS = {
   'near-star': {
     // Sun-scorched rubble, dense and close: the volumetrics need something to rake
     // through or the whole POI is just a bright light.
+    // The inner radius is a CAMERA clearance, not a taste call. The tactical camera
+    // orbits its target out to several kilometres, so a belt that starts at 2.2 km
+    // from the ship puts a 1 km boulder a few hundred metres off the lens — close
+    // enough that its 500 m texture tile fills the frame with one repeating pattern
+    // and the rock stops reading as a rock at all. Nothing starts inside the
+    // camera's own orbit radius.
     asteroids: {
-      innerRadius: 2200, outerRadius: 18000, halfHeight: 6000,
+      innerRadius: 5200, outerRadius: 20000, halfHeight: 6000,
       density: 1.35, clumpCount: 6, clumpRadius: 3000,
       tint: NEUTRAL.rock, spin: 0.05,
     },

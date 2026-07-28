@@ -141,13 +141,20 @@ export async function setupPOIProbe(ctx, poiId, { yaw = 0.22, position = new THR
    * that close puts its 6 m running-light strip across the whole frame as a chain
    * of blooming dashes — which reads as a rendering artefact, not as a ship.
    */
+  // Azimuth of the camera around the target, so extras can be put BEYOND the hero
+  // rather than between it and the lens.
+  const camAz = Math.atan2(
+    Math.cos(ctx.pose.pitch) * Math.cos(ctx.pose.yaw),
+    Math.cos(ctx.pose.pitch) * Math.sin(ctx.pose.yaw),
+  );
   for (let i = 0; i < extraShips; i++) {
     const r = world.rng.fork(`probe-extra:${poiId}:${i}`);
-    const a = (i / Math.max(1, extraShips)) * Math.PI * 2 + r.range(-0.5, 0.5);
-    const rad = r.range(6500, 17000);
+    // camAz + PI is directly away from the camera; spread +/- 70 degrees of that.
+    const a = camAz + Math.PI + ((i + 0.5) / extraShips - 0.5) * 2.4 + r.range(-0.25, 0.25);
+    const rad = r.range(7000, 19000);
     const extra = buildScaleReference(registry, {
       yaw: r.range(-Math.PI, Math.PI),
-      position: new THREE.Vector3(Math.cos(a) * rad, r.range(-1400, 1900), Math.sin(a) * rad),
+      position: new THREE.Vector3(Math.cos(a) * rad, r.range(-1300, 1800), Math.sin(a) * rad),
     });
     extra.scale.setScalar(r.range(0.5, 1.0));
     scene.add(extra);

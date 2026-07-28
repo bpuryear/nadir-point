@@ -1,0 +1,346 @@
+/**
+ * THE STAR SYSTEM.
+ *
+ * Fourteen hand-placed points of interest in one continuous coordinate space, real
+ * metres, no map screen and no node graph the player has to obey. The graph in here
+ * exists for the WAR, not for travel: the factions push along it, the player flies
+ * wherever they like.
+ *
+ * Spacing is authored at 166-546 km between nearest neighbours, which is the band the
+ * travel model in docs/design/controls.md 5.5.3 is tuned for: a 166 km hop is a
+ * two-minute burn and a 546 km crossing is five, before compression. Anything closer
+ * and transit is a formality; anything further and it is a chore.
+ *
+ * The layout is a diagonal war. Coalition holds the north-west (Ironhold, Cinderport,
+ * Marrow Shoal), Concord holds the south-east (Meridian Gate, Perihelion, Tallow), and
+ * the middle - the Graveyard, the Nail, Deepwell - changes hands. The front line the
+ * overlay draws is that diagonal, and it MOVES, because the war is simulated whether
+ * anyone is watching or not.
+ *
+ * WHAT THIS FILE OWNS
+ *   - the authored POI table (position, kind, identity, initial control)
+ *   - registration of the POIs the environment stream has not already registered
+ *   - the adjacency graph and distance queries the faction war pushes along
+ *
+ * It does NOT own lighting or celestials. Those come from the environment stream via
+ * `world/poi/index.js`, which is the one place a POI turns into geometry.
+ */
+
+import * as THREE from 'three';
+import { registerPOI, getPOI } from '../core/contracts.js';
+import { getPOIPalette } from '../art/palette.js';
+import { KM } from '../core/units.js';
+import { buildPOIInstance } from './poi/index.js';
+
+/** How far apart two POIs can be and still be adjacent for the war's purposes. */
+export const LINK_RANGE = 620 * KM;
+
+/**
+ * The authored table.
+ *
+ * `pos` is [x, z] in KILOMETRES, converted to metres on load - authoring 1640000 by
+ * hand is how a typo becomes a 1640 km error nobody notices.
+ *
+ * `control` is the state at t=0: -1 is wholly Concord, +1 is wholly Coalition.
+ * `value` is strategic weight; it drives garrison size, how often the war schedules a
+ * battle here, and how hard each side fights to keep it.
+ * `sun` is [azimuthDeg, elevationDeg] for this location's key light. Two POIs sharing
+ * a palette are told apart by where their light comes from, so this is authored per
+ * place rather than derived.
+ */
+const TABLE = [
+  {
+    id: 'ironhold', name: 'Ironhold Repair Yard', kind: 'yard', paletteId: 'yard',
+    pos: [-880, -690], control: 0.95, heat: 0.16, value: 0.95, sun: [212, 24],
+    blurb: 'Coalition heavy repair. Gantries the length of a frigate, lit around the clock.',
+    field: 'yard-heavy',
+  },
+  {
+    id: 'cinderport', name: 'Cinderport Anchorage', kind: 'station', paletteId: 'station',
+    pos: [-540, -880], control: 0.88, heat: 0.22, value: 0.80, sun: [166, 17],
+    blurb: 'A tender anchorage. Everything here is waiting for something else to break.',
+    field: 'station-quiet',
+  },
+  {
+    id: 'marrow-shoal', name: 'Marrow Shoal', kind: 'belt', paletteId: 'belt',
+    pos: [-430, -430], control: 0.62, heat: 0.34, value: 0.55, sun: [58, 12],
+    blurb: 'Shallow rock. Coalition mining tenders work it under escort and always have.',
+    field: 'belt-dense',
+  },
+  {
+    // Registered by the environment stream as 'giant-orbit'.
+    id: 'giant-orbit', name: 'Marrow Belt, High Orbit', kind: 'giant', paletteId: 'giant-orbit',
+    pos: [-120, -700], control: 0.30, heat: 0.46, value: 0.85, sun: null,
+    blurb: 'High orbit over the banded giant. A shattered fleet still holds its formation.',
+    field: null,
+  },
+  {
+    id: 'hollow-anchor', name: 'Hollow Anchor', kind: 'station', paletteId: 'station',
+    pos: [160, -330], control: -0.44, heat: 0.58, value: 0.78, sun: [318, 9],
+    blurb: 'A Concord forward picket built into a hollowed tender. Nothing docks by accident.',
+    field: 'station-picket',
+  },
+  {
+    id: 'the-nail', name: 'The Nail', kind: 'belt', paletteId: 'belt',
+    pos: [250, -190], control: -0.10, heat: 0.40, value: 0.30, sun: [104, 31],
+    blurb: 'One rock, four kilometres long, drifting alone. Everyone uses it to hide behind.',
+    field: 'belt-sparse',
+  },
+  {
+    id: 'saltpan', name: 'The Saltpan', kind: 'belt', paletteId: 'belt',
+    pos: [380, -60], control: -0.58, heat: 0.44, value: 0.50, sun: [274, 14],
+    blurb: 'Ice and salt dust. The reason Concord can keep a fleet this far forward.',
+    field: 'belt-ice',
+  },
+  {
+    id: 'meridian-gate', name: 'Meridian Gate', kind: 'station', paletteId: 'station',
+    pos: [760, -140], control: -0.96, heat: 0.20, value: 0.98, sun: [22, 21],
+    blurb: 'Concord fleet base. Clean plate, cold light, and gun batteries pointed outward.',
+    field: 'station-fortress',
+  },
+  {
+    id: 'vault-nine', name: 'Vault Nine', kind: 'graveyard', paletteId: 'graveyard',
+    pos: [620, 240], control: -0.20, heat: 0.30, value: 0.62, sun: [140, 6],
+    blurb: 'A derelict yard nobody built. Both fleets scavenge it and neither admits to it.',
+    field: 'graveyard-ancient',
+  },
+  {
+    // Registered by the environment stream as 'near-star'.
+    id: 'near-star', name: 'Perihelion Shoal', kind: 'star', paletteId: 'near-star',
+    pos: [540, 700], control: -0.80, heat: 0.26, value: 0.68, sun: null,
+    blurb: 'Six stops brighter than anywhere else. Sensors are useless and everyone knows it.',
+    field: null,
+  },
+  {
+    id: 'tallow-yard', name: 'Tallow Fitting Yard', kind: 'yard', paletteId: 'yard',
+    pos: [140, 640], control: -0.72, heat: 0.24, value: 0.72, sun: [246, 27],
+    blurb: 'Concord refit slips. Half-built hulls hang in the frames with their frames open.',
+    field: 'yard-light',
+  },
+  {
+    id: 'the-lattice', name: 'The Lattice', kind: 'belt', paletteId: 'belt',
+    pos: [-260, 540], control: 0.05, heat: 0.36, value: 0.42, sun: [190, 8],
+    blurb: 'Rubble in a resonance, strung out in lines. Reads as structure on a bad sensor.',
+    field: 'belt-dense',
+  },
+  {
+    id: 'deepwell', name: 'Deepwell', kind: 'graveyard', paletteId: 'graveyard',
+    pos: [-700, 180], control: 0.34, heat: 0.28, value: 0.46, sun: [86, 5],
+    blurb: 'The first battle of the war is still here. Nobody has come back for it.',
+    field: 'graveyard-cold',
+  },
+  {
+    // Registered by the environment stream as 'graveyard'. The contested centre.
+    id: 'graveyard', name: 'The Graveyard', kind: 'graveyard', paletteId: 'graveyard',
+    pos: [-190, 60], control: 0.0, heat: 0.72, value: 0.90, sun: null,
+    blurb: 'The centre of the war. It has changed hands eleven times and shows all eleven.',
+    field: null,
+  },
+];
+
+/** Where the player starts. Known from the first frame; everything else is dark. */
+export const START_POI = 'graveyard';
+
+/**
+ * One POI node. Positions are metres on the combat plane, so a leg length in here is
+ * the same number the transit burn integrates.
+ */
+export class POINode {
+  constructor(spec) {
+    this.id = spec.id;
+    this.name = spec.name;
+    this.kind = spec.kind;
+    this.paletteId = spec.paletteId;
+    this.blurb = spec.blurb;
+    this.value = spec.value;
+    this.field = spec.field ?? null;
+    this.sun = spec.sun ?? null;
+
+    /** World-space centre, metres. The travel layer plots to this. */
+    this.position = new THREE.Vector3(spec.pos[0] * KM, 0, spec.pos[1] * KM);
+    /** Arrival boundary: inside this the POI's content is loaded and lit. */
+    this.radius = 26 * KM;
+
+    this.initialControl = spec.control;
+    this.initialHeat = spec.heat;
+
+    /** @type {POINode[]} filled by buildSystem() */
+    this.neighbours = [];
+  }
+
+  distanceTo(other) {
+    return this.position.distanceTo(other.position);
+  }
+}
+
+/**
+ * The system: nodes, adjacency, and the queries the war and the travel layer need.
+ * Pure data and geometry - no simulation state lives here, that is `factionWar.js`.
+ */
+export class StarSystem {
+  constructor(nodes) {
+    /** @type {POINode[]} */
+    this.nodes = nodes;
+    /** @type {Map<string, POINode>} */
+    this.byId = new Map(nodes.map((n) => [n.id, n]));
+
+    // Bounds, used by the overlay and by the front-line contour.
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const n of nodes) {
+      minX = Math.min(minX, n.position.x); maxX = Math.max(maxX, n.position.x);
+      minZ = Math.min(minZ, n.position.z); maxZ = Math.max(maxZ, n.position.z);
+    }
+    const pad = 90 * KM;
+    this.bounds = { minX: minX - pad, maxX: maxX + pad, minZ: minZ - pad, maxZ: maxZ + pad };
+    this.centre = new THREE.Vector3((minX + maxX) * 0.5, 0, (minZ + maxZ) * 0.5);
+    this.span = Math.max(maxX - minX, maxZ - minZ);
+
+    this._linkNeighbours();
+  }
+
+  /**
+   * Adjacency for the war's front. Every node keeps its neighbours inside LINK_RANGE,
+   * and always at least two, so an outlying base is never cut out of the simulation by
+   * a distance threshold.
+   */
+  _linkNeighbours() {
+    for (const a of this.nodes) {
+      const scored = [];
+      for (const b of this.nodes) {
+        if (b === a) continue;
+        scored.push({ node: b, d: a.distanceTo(b) });
+      }
+      scored.sort((p, q) => p.d - q.d);
+      a.neighbours.length = 0;
+      for (let i = 0; i < scored.length; i++) {
+        if (scored[i].d <= LINK_RANGE || a.neighbours.length < 2) a.neighbours.push(scored[i].node);
+        else break;
+      }
+    }
+  }
+
+  get(id) { return this.byId.get(id) ?? null; }
+
+  /** Nearest node to a world point, and how far away it is. */
+  nearest(x, z) {
+    let best = null;
+    let bestD2 = Infinity;
+    for (const n of this.nodes) {
+      const dx = n.position.x - x;
+      const dz = n.position.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < bestD2) { bestD2 = d2; best = n; }
+    }
+    return { node: best, distance: Math.sqrt(bestD2) };
+  }
+
+  /** The node whose arrival boundary contains this point, if any. */
+  containing(x, z) {
+    const { node, distance } = this.nearest(x, z);
+    return node && distance <= node.radius ? node : null;
+  }
+
+  /** Sorted [{a,b,distance}] for every adjacency, deduplicated. Used by the overlay. */
+  links() {
+    const out = [];
+    const seen = new Set();
+    for (const a of this.nodes) {
+      for (const b of a.neighbours) {
+        const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ a, b, distance: a.distanceTo(b) });
+      }
+    }
+    return out;
+  }
+
+  /** Diagnostics for the probe: min/max nearest-neighbour spacing, in km. */
+  spacingReport() {
+    let min = Infinity, max = 0;
+    for (const n of this.nodes) {
+      const d = n.neighbours.length ? n.distanceTo(n.neighbours[0]) : 0;
+      if (d > 0) { min = Math.min(min, d); max = Math.max(max, d); }
+    }
+    return { minKm: min / KM, maxKm: max / KM, nodes: this.nodes.length };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Registration
+// ---------------------------------------------------------------------------
+
+let _registered = false;
+
+/**
+ * Register every POI the environment stream has not already registered.
+ *
+ * Idempotent, and deliberately tolerant: `giant-orbit`, `graveyard` and `near-star`
+ * are owned by `world/lighting/pois.js` and are left exactly as that stream authored
+ * them. We only fill the gaps.
+ */
+export function registerSystemPOIs() {
+  if (_registered) return;
+  _registered = true;
+
+  for (const spec of TABLE) {
+    if (getPOI(spec.id)) continue;
+    const pal = getPOIPalette(spec.paletteId);
+    const dir = sunVector(spec.sun ?? [200, 18]);
+    registerPOI({
+      id: spec.id,
+      name: spec.name,
+      kind: spec.kind,
+      paletteId: spec.paletteId,
+      keyLight: {
+        direction: [dir.x, dir.y, dir.z],
+        color: pal.key.color,
+        intensity: pal.key.intensity,
+        angularRadius: pal.key.angularRadius,
+      },
+      fill: pal.fill,
+      ibl: pal.ibl,
+      grade: pal.grade,
+      systemPos: [spec.pos[0] / 900, spec.pos[1] / 900],
+      build(ctx, world) {
+        return buildPOIInstance({
+          id: spec.id,
+          paletteId: spec.paletteId,
+          sunDir: sunVector(spec.sun ?? [200, 18]),
+          field: spec.field,
+        }, ctx, world);
+      },
+    });
+  }
+}
+
+/** [azimuthDeg, elevationDeg] -> unit vector. Azimuth 0 is +Z, measured CCW. */
+export function sunVector([azDeg, elDeg]) {
+  const az = (azDeg * Math.PI) / 180;
+  const el = (elDeg * Math.PI) / 180;
+  const c = Math.cos(el);
+  return new THREE.Vector3(Math.sin(az) * c, Math.sin(el), Math.cos(az) * c).normalize();
+}
+
+/**
+ * Build the system. Cheap; called once by installWorldSim.
+ *
+ * The whole map is recentred so that the starting POI sits on the world origin. The
+ * table stays readable in absolute kilometres, and the player - who is spawned at the
+ * origin by `game.js` before this stream is even loaded - is standing in a real place
+ * on the first frame rather than in the middle of nowhere with a POI 200 km away.
+ */
+export function buildSystem(startId = START_POI) {
+  registerSystemPOIs();
+  const nodes = TABLE.map((spec) => new POINode(spec));
+  const origin = nodes.find((n) => n.id === startId) ?? nodes[0];
+  const ox = origin.position.x;
+  const oz = origin.position.z;
+  for (const n of nodes) {
+    n.position.x -= ox;
+    n.position.z -= oz;
+  }
+  return new StarSystem(nodes);
+}
+
+export const SYSTEM_TABLE = TABLE;

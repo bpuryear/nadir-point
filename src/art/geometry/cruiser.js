@@ -88,7 +88,11 @@ const TOWER_STATIONS = [
   [198, 42, 168, 132, 6, 6, 6],
 ];
 
-/** The forward cutter blade. Hangs below the keel; this is the bow, unmistakably. */
+/**
+ * The forward cutter blade. It hangs BELOW the keel and FLARES WIDER than the hull
+ * forward of z=500, so one part carries the bow read in both audit views: a
+ * downward hook from the side, a chisel head from above. One mass, two silhouettes.
+ */
 const BLADE_STATIONS = [
   [300, 62, -34, -74, 14, 6, 6],
   [470, 76, -28, -120, 14, 8, 8],
@@ -227,19 +231,21 @@ export function hullParts({ rng, lod = 0 }) {
   // LOD2: silhouette only. Six masses, one surface, ~150 triangles.
   // =========================================================================
   if (lod >= 2) {
-    const hull = G.loft(toStations(decimate(HULL_STATIONS, 3)));
+    const hull = G.loft(toStations(decimate(HULL_STATIONS, 2)));
     B.add('core', 'hull', hull);
     B.add('core', 'hull', G.loft(toStations(decimate(ENGINE_STATIONS, 3))));
     B.add('core', 'hull', G.loft(toStations(decimate(BLADE_STATIONS, 3))));
-    // Tower, cradle and sponsons as single blocks - they are outline, not detail.
+    // Tower, cradle and sponsons as single blocks - outline, not detail. Each one
+    // deliberately overlaps the spine so the proxy never separates into fragments
+    // at the switch distance, which is the classic way an LOD2 gives itself away.
     B.add('core', 'hull', G.taperedWedge({
-      length: 456, width0: 116, height0: 122, width1: 88, height1: 74, shear: 24, detail: D,
-    }), { pos: [TOWER_X, 107, -260] });
-    B.add('core', 'hull', G.panelledSlab({ width: 240, height: 130, depth: 520, detail: D }),
-      { pos: [0, -126, -8] });
+      length: 440, width0: 150, height0: 170, width1: 104, height1: 110, shear: 16, detail: D,
+    }), { pos: [TOWER_X, 84, -250] });
+    B.add('core', 'hull', G.panelledSlab({ width: 226, height: 170, depth: 530, detail: D }),
+      { pos: [0, -108, -6] });
     for (const s of [-1, 1]) {
-      B.add('core', 'hull', G.panelledSlab({ width: 76, height: 26, depth: 220, detail: D }),
-        { pos: [s * 152, 8, 48] });
+      B.add('core', 'hull', G.panelledSlab({ width: 110, height: 30, depth: 220, detail: D }),
+        { pos: [s * 136, 8, 48] });
     }
     mass('hull', hull);
     return { buckets: B.list(), lights: [], masses, detail: D };

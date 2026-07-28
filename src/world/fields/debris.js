@@ -38,10 +38,24 @@ import { getFactionPalette, NEUTRAL, mix, shade } from '../../art/palette.js';
  * over the sky reads as confetti and destroys the backdrop behind it.
  */
 const BANDS = [
-  { radius: 3200, half: 1100, share: 0.07, size: 2.60 },  // near — a few big wrecks
-  { radius: 9000, half: 2600, share: 0.31, size: 1.05 },  // mid
-  { radius: 22000, half: 5400, share: 0.62, size: 0.58 }, // far — small, many
+  { radius: 3200, half: 1100, share: 0.07, size: 1.90, min: 0.45 },  // near — a few big wrecks
+  { radius: 9000, half: 2600, share: 0.31, size: 1.05, min: 0.22 },  // mid
+  { radius: 22000, half: 5400, share: 0.62, size: 0.58, min: 0.18 }, // far — small, many
 ];
+
+/**
+ * HOW FAR A PIECE MAY BE SCALED FROM ITS AUTHORED SIZE.
+ *
+ * These are not taste. The registry's `debris` maps are authored at one UV unit per
+ * metre with a ~16 m plate tile, so a 38 m plate carries about two and a half plates
+ * across its face. Scale that same geometry to 240 m — which a 2.4 size jitter in
+ * the near band used to allow — and the panel grid repeats fifteen times at 100 m per
+ * "plate". Up close and at a grazing angle that stops reading as wreckage and starts
+ * reading as a ladder lying across the frame, which is exactly what it looked like.
+ * Silhouette variety has to come from the shape generators, not from scaling one
+ * piece until its texture lies about how big it is.
+ */
+const MAX_KIND_SCALE = 3.1;
 
 // ---------------------------------------------------------------------------
 // Geometry
@@ -212,10 +226,25 @@ export function buildDebrisField({
     scale: 1,
   });
 
+  /**
+   * SHADOW SIDE. The registry builds `debris` as DoubleSide, correctly — fragments
+   * are thin and seen from both faces. But three then defaults `shadowSide` to
+   * DoubleSide too, so a 1.5 m thick hull plate writes BOTH of its faces into the
+   * shadow map at almost the same depth and shadows itself. Under a hard key that
+   * lands as wide alternating bands marching across every plate — it looks like a
+   * staircase, or like broken geometry, and it is neither.
+   *
+   * BackSide is the standard answer for thin double-sided casters: only the far face
+   * writes depth, so the near face is never within bias distance of its own shadow.
+   * This is a render-config property, not a palette or batching one, and the
+   * registry does not set it — but it would be better owned there. Reported.
+   */
+  if (rigidMat.shadowSide !== THREE.BackSide) rigidMat.shadowSide = THREE.BackSide;
+
   const KINDS = [
-    { id: 'plate', share: 0.42, make: (rr) => addMetreUV(plateGeometry(rr, 38 * scale, 1.5 * scale)), sizeJitter: [0.5, 2.4], castShadow: true },
-    { id: 'spar', share: 0.20, make: (rr) => addMetreUV(sparGeometry(rr, 190 * scale)), sizeJitter: [0.4, 1.8], castShadow: true },
-    { id: 'chunk', share: 0.38, make: (rr) => addMetreUV(chunkGeometry(rr, 13 * scale)), sizeJitter: [0.5, 2.8], castShadow: false },
+    { id: 'plate', share: 0.42, make: (rr) => addMetreUV(plateGeometry(rr, 38 * scale, 1.5 * scale)), sizeJitter: [0.5, 1.55], castShadow: true },
+    { id: 'spar', share: 0.20, make: (rr) => addMetreUV(sparGeometry(rr, 190 * scale)), sizeJitter: [0.4, 1.45], castShadow: true },
+    { id: 'chunk', share: 0.38, make: (rr) => addMetreUV(chunkGeometry(rr, 13 * scale)), sizeJitter: [0.5, 2.60], castShadow: false },
   ];
 
   // --- instance colours ----------------------------------------------------
@@ -274,11 +303,15 @@ export function buildDebrisField({
       const band = pickBand();
       const a = r.next() * Math.PI * 2;
       // sqrt for area-uniform placement inside the band, biased outwards a little
-      const rad = band.radius * (0.18 + Math.sqrt(r.next()) * 0.82);
+      const lo = band.min ?? 0.18;
+      const rad = band.radius * (lo + Math.sqrt(r.next()) * (1 - lo));
       pos.set(Math.cos(a) * rad, r.gaussian(0, band.half * 0.45), Math.sin(a) * rad);
       if (Math.abs(pos.y) > band.half) pos.y = Math.sign(pos.y) * band.half * (0.6 + r.next() * 0.4);
 
-      const k = band.size * (kind.sizeJitter[0] + Math.pow(r.next(), 1.6) * (kind.sizeJitter[1] - kind.sizeJitter[0]));
+      const k = Math.min(
+        MAX_KIND_SCALE,
+        band.size * (kind.sizeJitter[0] + Math.pow(r.next(), 1.6) * (kind.sizeJitter[1] - kind.sizeJitter[0])),
+      );
       scl.set(k * (0.75 + r.next() * 0.5), k * (0.7 + r.next() * 0.6), k * (0.75 + r.next() * 0.5));
 
       e.set(r.next() * 6.283, r.next() * 6.283, r.next() * 6.283);
@@ -329,7 +362,8 @@ export function buildDebrisField({
     for (let i = 0; i < plumes; i++) {
       const band = pickBand();
       const a = r.next() * Math.PI * 2;
-      const rad = band.radius * (0.2 + Math.sqrt(r.next()) * 0.8);
+      const lo = band.min ?? 0.2;
+      const rad = band.radius * (lo + Math.sqrt(r.next()) * (1 - lo));
       pos.set(Math.cos(a) * rad, r.gaussian(0, band.half * 0.4), Math.sin(a) * rad);
       const k = (60 + r.next() * 150) * band.size * scale;
       scl.set(k, k * (0.7 + r.next() * 0.8), k);
