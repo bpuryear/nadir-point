@@ -304,14 +304,35 @@ export class TacticalOverlay {
       }
     }
 
+    // Hulks get the reference's bracket: a filled label chip, a distance chip under it
+    // and a leader down to the object. A wreck is the thing this game is ABOUT, and
+    // until now it was a diamond with a caption that lost every fight for space.
     for (const wreck of world.wrecks) {
       if (!wreck.body || !proj.vec(wreck.body.position, this._pt)) continue;
       if (this._pt.x < -60 || this._pt.x > P.w + 60) continue;
       const r = Math.max(9, proj.radiusAt(wreck.body.position, wreck.body.radius ?? 60));
       P.diamond(this._pt.x, this._pt.y, r * 0.5, { stroke: C.salvageDim, weight: 1 });
-      const live = wreck.sections.filter((s) => s.cuttable).length;
-      P.textIfClear(`HULK · ${live} SECTIONS`, this._pt.x, this._pt.y - r * 0.5 - 7,
-        { font: F.micro, color: C.salvageDim, align: 'center', track: TRACK.label });
+
+      let live = 0;
+      let intact = 0;
+      for (const s of wreck.sections) {
+        if (!s.cuttable) continue;
+        live++;
+        if (s.state === 'INTACT') intact++;
+      }
+      const top = this._pt.y - r * 0.5 - 32;
+      const label = `${String(wreck.name ?? 'HULK').toUpperCase()} [${live} SECTIONS]`;
+      const cw = P.measure(label, F.microBold, TRACK.label) + 8;
+      if (P.claim(this._pt.x - cw * 0.5, top - 2, cw, 30, 2)) {
+        P.chip(label, this._pt.x, top, {
+          fill: C.salvage, color: C.void, h: 13, align: 'center', font: F.microBold,
+        });
+        const d = player ? player.position.distanceTo(wreck.body.position) : 0;
+        P.chipOutline(`${fmtRange(d)} · ${intact} INTACT`, this._pt.x, top + 15, {
+          color: C.salvageDim, border: C.salvageGhost, h: 12, align: 'center',
+        });
+        P.leader(this._pt.x, top + 27, this._pt.x, this._pt.y - r * 0.5 - 2, C.salvageGhost, 1);
+      }
     }
   }
 
@@ -331,6 +352,20 @@ export class TacticalOverlay {
     // Hard bracket on the hull.
     P.corners(cx, cy, hullR, hullR * 0.74, Math.min(16, hullR * 0.5), C.hostile, 1.5);
 
+    // --- the world-space bracket, reference-ui-language.md §4 -----------------
+    // A solid filled label chip above the object, a distance chip directly beneath it,
+    // and a thin leader line down to the hull. Observed first-hand off the reference
+    // frame and adopted wholesale: it is far more legible than a wireframe box, it
+    // scales to any object size, and it puts the range where the eye already is.
+    const chipY = cy - ringR - 42;
+    const label = `${target.classDef.name.toUpperCase()} [${String(target.classDef.role ?? 'CONTACT').toUpperCase()}]`;
+    P.chip(label, cx, chipY, { fill: C.hostile, color: C.void, h: 14, align: 'center', font: F.microBold });
+    const dist = player.position.distanceTo(target.position);
+    P.chipOutline(fmtRange(dist), cx, chipY + 16, {
+      color: C.hostile, border: C.hostileDim, h: 12, align: 'center',
+    });
+    P.leader(cx, chipY + 29, cx, cy - ringR - 4, C.hostileDim, 1);
+
     // Ring track.
     const c = P.ctx;
     c.beginPath();
@@ -341,6 +376,16 @@ export class TacticalOverlay {
 
     // Place each subsystem segment at the angle of its ACTUAL screen offset, so the
     // ring is anchored to the geometry rather than being an arbitrary pie chart.
+    // LIVE SALVAGE PROJECTION.
+    //
+    // `fun-systems.md` P3 calls this the fix for the game's central promise: the player
+    // is supposed to be STEERING the salvage outcome during the fight, not discovering
+    // it at the moment of death. `Ship.salvageProjection()` publishes per-section
+    // condition already — every section carries the damage that actually landed near
+    // it — so the only thing missing was drawing it. Rows are a cached array; reading
+    // it every frame allocates nothing.
+    const projection = typeof target.salvageProjection === 'function' ? target.salvageProjection() : null;
+
     const subs = this._subs;
     let n = 0;
     const aimed = player.targetSubsystem;
@@ -354,6 +399,7 @@ export class TacticalOverlay {
       const dx = e.x - cx, dy = e.y - cy;
       e.angle = Math.hypot(dx, dy) > 5 ? Math.atan2(dy, dx) : (n / Math.max(1, target.subsystems.size)) * Math.PI * 2;
       e.bears = !s.destroyed && !!combat && combat.canAnyWeaponBear(player, s);
+      e.salvage = projection ? findRow(projection, s.def.id) : null;
       n++;
     }
 
@@ -392,6 +438,29 @@ export class TacticalOverlay {
         c.beginPath();
         c.arc(cx, cy, ringR - 6, a0, a1);
         c.stroke();
+      }
+
+      // The salvage tier, drawn OUTSIDE the health segment as a separate concentric
+      // arc. Two rings, two questions: the inner one is "can I kill this", the outer
+      // one is "will there be anything left to cut". They are different questions and
+      // the whole design of this game is that they pull against each other.
+      if (e.salvage) {
+        c.lineWidth = 3;
+        c.beginPath();
+        c.arc(cx, cy, ringR + 8, a0, a1);
+        c.strokeStyle = SALVAGE_INK[e.salvage.state] ?? C.inkGhost;
+        c.stroke();
+        if (e.salvage.state === 'SCRAP') {
+          // A section that has fallen past scrap is struck out: it is not coming back,
+          // and nothing about the remaining HP bar says so.
+          c.lineWidth = 1;
+          c.beginPath();
+          c.arc(cx, cy, ringR + 8, a0, a1);
+          c.strokeStyle = C.void;
+          c.setLineDash(this._dash);
+          c.stroke();
+          c.setLineDash(EMPTY);
+        }
       }
 
       // Leader from the segment to the part it is describing.
@@ -450,13 +519,22 @@ export class TacticalOverlay {
           color: dead ? C.inkGhost : e.bears ? C.ink : C.inkFaint,
           align, track: TRACK.label,
         });
-        P.text(dead ? 'DESTROYED' : fmtPct(frac), tx, it.ly + 10, {
+        // Two figures per entry, and they say opposite things: what is left to shoot,
+        // and what is left to keep. Printing only the first is what made salvage a
+        // die roll the player discovered afterwards.
+        const salv = e.salvage;
+        const hpText = dead ? 'DESTROYED' : fmtPct(frac);
+        P.text(salv ? `${hpText}  ${salv.state}` : hpText, tx, it.ly + 10, {
           font: F.micro,
-          color: dead ? C.inkGhost : e.bears ? C.hostileDim : C.inkGhost,
+          color: salv ? (SALVAGE_INK[salv.state] ?? C.inkGhost)
+            : dead ? C.inkGhost : e.bears ? C.hostileDim : C.inkGhost,
           align,
         });
       }
     }
+
+    // --- second tier: the sub-part ring -------------------------------------
+    this._drawPartRing(P, player, target, combat, aimed);
 
     // --- the sentence -------------------------------------------------------
     if (combat) {
@@ -472,6 +550,154 @@ export class TacticalOverlay {
         font: F.micro, color: rep.bearing > 0 ? C.inkFaint : C.warn,
         align: 'center', track: TRACK.label,
       });
+
+      // The salvage headline, in the same place and the same weight as the bearing
+      // headline, because it is the same size of decision.
+      if (projection) {
+        const t = this._tally;
+        t.INTACT = 0; t.DAMAGED = 0; t.SCRAP = 0; t.modules = 0;
+        for (const row of projection) {
+          if (t[row.state] !== undefined) t[row.state]++;
+          if (row.moduleLikely) t.modules++;
+        }
+        const line = `SALVAGE  ${t.INTACT} INTACT · ${t.DAMAGED} DAMAGED · ${t.SCRAP} SCRAP`;
+        P.text(line, cx, y + 27, {
+          font: F.microBold, color: t.SCRAP > t.INTACT ? C.warn : C.salvage,
+          align: 'center', track: TRACK.label,
+        });
+        P.text(`${t.modules} SECTIONS STILL YIELD A PART · ${fmtPct(target.salvageIntegrity ?? 1)} OVERALL`,
+          cx, y + 39, { font: F.micro, color: C.salvageDim, align: 'center', track: TRACK.label });
+      }
+    }
+  }
+
+  // =========================================================================
+  // Second-tier aim ring: barrels, feed, traverse, cooling, pad
+  // =========================================================================
+
+  /**
+   * `sim/subparts.js` says why this ring is worth drawing better than I can:
+   *
+   *     kill the TRAVERSE  -> the arc freezes; the gun can no longer track
+   *     kill the MOUNT     -> THE MODULE FALLS OFF, INTACT, AND YOU GO AND PICK IT UP
+   *
+   * That last row converts subsystem targeting from a damage optimisation into a
+   * shopping mechanic, and it is the strongest single expression of this game's
+   * premise. It was completely invisible: the parts existed, took damage, changed how
+   * the enemy fought and decided whether you got the module — with no way to aim at
+   * one and no way to see one.
+   *
+   * The ring is drawn around the AIMED SUBSYSTEM's own screen position rather than the
+   * hull centre, because the instruction it is giving is spatial and local: shoot the
+   * traverse ring of THAT battery. Each segment greys out on `canAnyWeaponBear`, the
+   * same teaching mechanism the first tier uses, and each carries the one line of plain
+   * text that says what killing it would do.
+   */
+  _drawPartRing(P, player, target, combat, aimedId) {
+    if (!aimedId || !target.weapons?.length) return;
+    const proj = this.ui.projector;
+    const sub = target.subsystems?.get(aimedId);
+    if (!sub || sub.destroyed) return;
+    if (!proj.vec(sub.worldPosition, this._pt)) return;
+
+    // Collect the parts of every mount that belongs to this subsystem. Preallocated.
+    const rows = this._parts;
+    let n = 0;
+    for (const m of target.weapons) {
+      if (m.subsystemId !== aimedId || !m.parts) continue;
+      for (const part of m.parts.list) {
+        if (n >= rows.length) break;
+        const e = rows[n];
+        e.part = part;
+        e.mount = m;
+        e.ok = proj.vec(part.worldPosition, this._pt2);
+        e.x = this._pt2.x;
+        e.y = this._pt2.y;
+        e.bears = !part.destroyed && !!combat && combat.canAnyWeaponBear(player, part);
+        n++;
+      }
+    }
+    if (n === 0) return;
+
+    const cx = this._pt.x;
+    const cy = this._pt.y;
+    const subR = Math.max(16, proj.radiusAt(sub.worldPosition, sub.def.radius ?? 30));
+    const R = Math.max(30, Math.min(74, subR * 1.9));
+
+    const c = P.ctx;
+    c.lineWidth = 1;
+    c.beginPath();
+    c.arc(cx, cy, R, 0, Math.PI * 2);
+    c.strokeStyle = C.hostileGhost;
+    c.stroke();
+
+    // A hard tick at the top so the ring reads as an instrument and not as a halo.
+    P.rule(cx - P.hair, cy - R - 5, P.hair * 2, 6, C.hostileDim);
+    P.label('SUB-PART', cx, cy - R - 9, { color: C.hostileDim, align: 'center' });
+
+    const aimedPart = player.targetPart;
+    const span = (Math.PI * 2) / n;
+    for (let i = 0; i < n; i++) {
+      const e = rows[i];
+      const part = e.part;
+      const a0 = -Math.PI * 0.5 + i * span + 0.06;
+      const a1 = -Math.PI * 0.5 + (i + 1) * span - 0.06;
+      const isAim = aimedPart === part.id;
+      const col = part.destroyed ? C.inkGhost : e.bears ? C.hostile : C.inkFaint;
+
+      c.lineWidth = isAim ? 7 : 5;
+      c.beginPath();
+      c.arc(cx, cy, R, a0, a1);
+      c.strokeStyle = part.destroyed ? C.inkGhost : e.bears ? C.hostileGhost : C.inkGhost;
+      c.stroke();
+      if (!part.destroyed && part.health > 0) {
+        c.beginPath();
+        c.arc(cx, cy, R, a0, a0 + (a1 - a0) * part.health);
+        c.strokeStyle = col;
+        c.stroke();
+      }
+      if (isAim) {
+        c.lineWidth = 1;
+        c.beginPath();
+        c.arc(cx, cy, R + 6, a0, a1);
+        c.strokeStyle = C.hostile;
+        c.stroke();
+      }
+
+      // The label fans outward along the segment's own bearing, with the consequence
+      // underneath. `PART_CONSEQUENCE` is one line of plain text per failure mode and
+      // it is the reason a player would ever aim here rather than at the hull.
+      const mid = (a0 + a1) * 0.5;
+      const lx = cx + Math.cos(mid) * (R + 14);
+      const ly = cy + Math.sin(mid) * (R + 14);
+      const align = Math.cos(mid) < 0 ? 'right' : 'left';
+      P.text(part.destroyed ? `${part.label} ✕` : part.label, lx, ly, {
+        font: isAim ? F.microBold : F.micro,
+        color: part.destroyed ? C.inkGhost : e.bears ? C.ink : C.inkFaint,
+        align, track: TRACK.label,
+      });
+      P.text(part.destroyed ? 'GONE' : `${fmtPct(part.health)} · ${PART_CONSEQUENCE[part.kind] ?? ''}`, lx, ly + 10, {
+        font: F.micro,
+        color: part.destroyed ? C.inkGhost : e.bears ? C.hostileDim : C.inkGhost,
+        align, track: TRACK.label,
+      });
+
+      // A cross on the part itself, plus a leader, so the ring segment and the metal
+      // it describes are unambiguously the same thing.
+      if (e.ok) {
+        P.leader(cx + Math.cos(mid) * (R - 4), cy + Math.sin(mid) * (R - 4), e.x, e.y,
+          part.destroyed ? C.inkGhost : e.bears ? C.hostileDim : C.inkGhost, 1);
+        const k = part.destroyed ? 3 : 4;
+        P.rule(e.x - k, e.y, k * 2, P.hair, col);
+        P.rule(e.x, e.y - k, P.hair, k * 2, col);
+      }
+
+      if (this._hit && !part.destroyed) {
+        this._hit.push({
+          kind: 'tactical:part', partId: part.id, subsystemId: aimedId,
+          x: lx - (align === 'right' ? 96 : 0), y: ly - 10, w: 96, h: 22,
+        });
+      }
     }
   }
 
@@ -547,6 +773,15 @@ export class TacticalOverlay {
 }
 
 // ---------------------------------------------------------------------------
+
+/** `setLineDash` reset value. A shared frozen empty array, never reallocated. */
+const EMPTY = [];
+
+/** Find a salvage-projection row by section id. Linear over <= 12 rows; no allocation. */
+function findRow(rows, id) {
+  for (let i = 0; i < rows.length; i++) if (rows[i].id === id) return rows[i];
+  return null;
+}
 
 const _wedgeCache = new Map();
 function wedgeFill(bearing, alpha) {

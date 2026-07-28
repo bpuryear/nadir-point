@@ -7,45 +7,58 @@
 
 ## 1. The look: Homeworld scale, Beta Decay surface
 
-The reference targets genuinely conflict. Homeworld is cool, cinematic, painterly, with
-blue-teal nebulae and hero lighting. Beta Decay is warm amber monochrome, near-black,
-dense and utilitarian. EVE Frontier is stark and desaturated. Grading against one while
-being directed toward another is why the look scores have stalled at 3/10.
+### THIS IS ABOUT ART STYLE. IT IS NOT ABOUT LIGHTING.
 
-The decision is **hybrid**. The obvious failure mode of a hybrid is that it becomes a
-blend of both and reads as neither, and reviewers split their scores down the middle. So
-it is not a blend. It is a **rule about which reference governs which framing**, and every
-frame has exactly one governing target.
+Read that twice before acting on anything below. The hybrid is a decision about **art
+direction** — shapes, forms, surface language, colour identity, density, composition. It is
+**not** about bloom, exposure, tone curve, shadows, ambient, or key-to-fill ratio.
 
-### The rule
+**Lighting and post are explicitly deferred to a later polish pass.** They are not the
+current problem and they are not what anything should be scored on right now. An earlier
+version of this document specified the hybrid as a zoom-driven lift/gain grade, which was
+simply the wrong axis, and review rounds were consequently spent failing frames for
+"no self-shadowing" and "value range" while the actual art-style question went untouched.
+That was a misreading and it is corrected here.
 
-| Framing | `zoomT` | Governing reference | What that means |
-|---|---|---|---|
-| **Wide / strategic** | > 0.55 | **Homeworld** | Vastness, composition, negative space, painterly backdrop, celestials at true angular size, atmospheric perspective. The ship is small in a large, quiet, beautiful frame. Cool is permitted here. |
-| **Transition** | 0.30 – 0.55 | interpolated | The grade lerps continuously. No discontinuity, no pop. |
-| **Close / tactical** | < 0.30 | **Beta Decay** | Warm amber accent, bone text, near-monochrome, dense utilitarian surface, technical readouts, industrial. The hull fills the frame and it looks like a working machine. |
+### What each reference contributes
 
-This is defensible in fiction as well as in craft: **the system is vast and indifferent;
-your ship is a warm, cramped, over-used industrial object inside it.** Pulling back should
-feel like looking out at something enormous and cold. Leaning in should feel like standing
-in an engine room. That is the game.
+| Reference | What we take from it | Where it applies |
+|---|---|---|
+| **Homeworld** | **Scale and composition.** Vastness. Negative space. How a capital ship sits in a frame. Silhouette drama and how forms read at distance. The sense that the system is enormous and mostly empty. Fleet and hull proportion at range. | Wide and mid framings; overall composition; how big things feel |
+| **Beta Decay** | **Surface and identity.** Warm amber / bone / near-black colour identity. Industrial, utilitarian, working-machine surface treatment. Panel and plate language. Density and technical detail up close. The HUD and UI vocabulary. | Close framings; hull surfaces; materials; UI; the colour the game *is* |
 
-### Implementation
+The two do not fight, because **they are answering different questions.** Homeworld
+answers "how big is this and how is it framed". Beta Decay answers "what is this thing
+made of and what does it feel like to work on". A frame can be composed like Homeworld and
+surfaced like Beta Decay with no contradiction at all.
 
-The per-POI lift/gain grade in `src/render/postfx.js` already takes a colour pair. Drive
-`liftAmount`/`gainAmount` and the lift/gain hues from the camera's `zoomT`, interpolated
-with the same `smoothstep` the pitch floor uses so it is continuous. The POI palette keeps
-its identity; what changes with zoom is **which end of the frame's temperature is
-emphasised**, not the location's colour.
+It is defensible in fiction, too: **the system is vast and indifferent; your ship is a
+warm, cramped, over-used industrial object inside it.** Pulling back should feel like
+looking at something enormous. Leaning in should feel like standing in an engine room.
 
-Faction hue survives at every range. It is the one exception, as before.
+### What this means concretely
+
+- **Hull and module forms**: proportion, mass hierarchy and silhouette follow Homeworld's
+  discipline (see `ship-language.md`).
+- **Hull surfaces**: plate language, wear, marks, industrial density and the warm
+  amber/bone/black identity follow Beta Decay (see `reference-ui-language.md`).
+- **UI and HUD**: Beta Decay, wholesale. Dense, monospace, near-opaque black panels, one
+  warm accent, world-space target brackets with label and distance chips.
+- **Environment and celestials**: Homeworld's vastness and negative space.
+- **Faction hue** survives as the one identity exception, as before.
 
 ### For critics — read this before scoring
 
-**Score a frame against the reference that governs its framing, and say which one you
-used.** Do not average the two. A wide shot judged against Beta Decay's amber will always
-look wrong, and a close shot judged against Homeworld's blue will always look wrong. A
-frame that fails is failing against *one* named target, and the defect must say which.
+Score **art direction**: form, silhouette, proportion, surface language, colour identity,
+density, composition, and whether the frame reads as a designed object.
+
+**Do NOT fail a frame on bloom, exposure, tone curve, shadow presence, ambient level or
+key-to-fill ratio.** Those are a deferred polish pass and are out of scope for scoring.
+If a lighting issue genuinely prevents you from judging the art — the frame is so dark or
+so blown that form is unreadable — say exactly that in one line and score what you can.
+
+Name which reference governs what you are judging: Homeworld for scale, composition and
+form at range; Beta Decay for surface, density and identity up close.
 
 ---
 

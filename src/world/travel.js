@@ -39,6 +39,8 @@ import { scratch } from '../core/world.js';
 import { Ship } from '../sim/ship.js';
 import { pickClass } from '../sim/ai/roster.js';
 import { enterPOI } from './poi/index.js';
+import { DOCK_RANGE, DOCK_SPEED } from './system.js';
+import { MEV } from '../sim/meta/events.js';
 
 /**
  * Transit constants. These mirror `CRUISER_FEEL` in docs/design/controls.md 6.1; the
@@ -147,6 +149,11 @@ export class TravelSystem {
 
     /** Where the player currently is, as far as the world is concerned. */
     this.currentPOI = null;
+
+    /** Berthed at an anchorage. See the DOCKING block below. */
+    this.docked = false;
+    this.dockedAt = null;
+    this._dockSaved = null;
 
     this._saved = null;
     this._transitBand = false;
@@ -266,6 +273,9 @@ export class TravelSystem {
     if (!player || player.dead) return { ok: false, reason: 'no ship' };
     if (!course?.ok) return { ok: false, reason: course?.reason ?? 'no course' };
     if (this.inTransit) return { ok: false, reason: 'already under way' };
+    // Laying in a course IS letting go. Making the player press undock first would be
+    // a modal step between two things that are the same decision.
+    if (this.docked) this.undock('course laid in');
 
     this.course = course;
     this.legIndex = 0;
@@ -674,6 +684,323 @@ export class TravelSystem {
     return p.current;
   }
 
+  /**
+   * `stores.js` asks `world.systems.travel.transiting` before charging manoeuvring
+   * propellant, so that a transit leg is not billed twice - once at the published
+   * 0.8/km and again per unit of commanded delta-v. That property did not exist, so
+   * the check silently never fired and every burn was billed twice. This is the
+   * property it was asking for.
+   */
+  get transiting() { return this.inTransit; }
+
+  // =========================================================================
+  // DOCKING
+  //
+  // The single highest-ratio change in `closest-comparables.md`: `refuel()` above
+  // existed and was called by nobody, and five station and yard POIs sat in
+  // `world/system.js` with written blurbs and no interaction. Everything below is
+  // that one call, made.
+  //
+  // What docking gives, and why each one is here rather than everywhere:
+  //
+  //   PROPELLANT  bought with refined alloy, at a per-berth price. This is the whole
+  //               point: propellant stops being a one-way ratchet toward immobility
+  //               and becomes a clock you reset somewhere specific, at a cost that
+  //               competes with repairs and ammunition for the same pool.
+  //   REPAIR      the existing repair queue, subsidised and run two to four and a half
+  //               times faster. Repair still works in the field; it is simply worse
+  //               there, which is a reason to come in rather than a rule against
+  //               staying out.
+  //   REFINING    the backlog is queued on arrival and the refinery runs at up to 3.6x.
+  //               Scrap is bulky; a berth is where the hold empties.
+  //   REFIT       gated. See `sim/meta/refitGate.js`.
+  //   DEBRIEF     `sim/meta/sortie.js`, closed and priced on the same call.
+  //
+  // Nothing here is a shop. There is no market, no price speculation and nothing to
+  // sell to - materials remain a sink, exactly as the scope decision requires. What an
+  // anchorage sells is SERVICE, and every price is a drain on the same four pools.
+  // =========================================================================
+
+  /** The anchorage profile of a POI, or null if it is rock, wreckage or light. */
+  anchorageAt(poiId = this.currentPOI) {
+    return this.system.get(poiId)?.anchorage ?? null;
+  }
+
+  /** Who runs this berth right now. Control moves, so this is read, never authored. */
+  ownerOf(poiId) {
+    return this.war?.poiState(poiId)?.owner ?? 'contested';
+  }
+
+  /**
+   * Everything a docking prompt needs, whether or not docking is legal.
+   *
+   * Refusals carry a reason string that names the specific thing that is wrong, because
+   * "cannot dock" teaches the player nothing and "MERIDIAN GATE WILL NOT BERTH YOU —
+   * standing -12, minimum +5" teaches them the whole system in one line.
+   */
+  dockStatus(poiId = this.currentPOI) {
+    const node = this.system.get(poiId);
+    const a = node?.anchorage ?? null;
+    if (!a) return { ok: false, anchorage: false, reason: 'no berth here', poiId };
+
+    const player = this.world.player;
+    const owner = this.ownerOf(poiId);
+    const standing = this.world.reputation?.[owner] ?? 0;
+    const distance = player ? player.position.distanceTo(node.position) : Infinity;
+    const speed = player?.body?.speed ?? 0;
+    const st = this.war?.poiState(poiId);
+
+    const out = {
+      anchorage: true,
+      poiId,
+      name: node.name,
+      berth: a.berth ?? node.name,
+      kind: node.kind,
+      owner,
+      standing,
+      minStanding: a.minStanding ?? -100,
+      distance,
+      dockRange: DOCK_RANGE,
+      speed,
+      docked: this.docked && this.dockedAt === poiId,
+      services: this.services(poiId),
+      ok: false,
+      reason: null,
+    };
+
+    if (out.docked) { out.ok = true; out.reason = 'berthed'; return out; }
+    if (!player || player.dead) { out.reason = 'no ship'; return out; }
+    if (this.inTransit) { out.reason = 'under way — abort the course first'; return out; }
+    if (owner === 'contested' || st?.battle) {
+      out.reason = `${node.name.toUpperCase()} IS CONTESTED — the berth is shut`;
+      return out;
+    }
+    if (standing < (a.minStanding ?? -100)) {
+      out.reason = `${owner.toUpperCase()} WILL NOT BERTH YOU — standing ${Math.round(standing)}, `
+        + `minimum ${a.minStanding}`;
+      return out;
+    }
+    if (distance > DOCK_RANGE) {
+      out.reason = `${(distance / KM).toFixed(0)} km out — close to ${(DOCK_RANGE / KM).toFixed(0)} km`;
+      return out;
+    }
+    if (speed > DOCK_SPEED) {
+      out.reason = `${speed.toFixed(0)} m/s — come alongside under ${DOCK_SPEED}`;
+      return out;
+    }
+    out.ok = true;
+    return out;
+  }
+
+  /**
+   * Price and capability of a berth, after standing.
+   *
+   * Standing is a discount, hostility is a surcharge, and the curve is deliberately
+   * gentle: this is a supply relationship, not a reputation grind. The interesting
+   * consequence of burning a faction is that half the map's berths close, not that the
+   * remaining ones charge 40% more.
+   */
+  services(poiId = this.currentPOI) {
+    const node = this.system.get(poiId);
+    const a = node?.anchorage;
+    if (!a) return null;
+    const owner = this.ownerOf(poiId);
+    const standing = this.world.reputation?.[owner] ?? 0;
+    const priceMul = 1 + Math.max(0, -standing) / 100 * 0.8 - Math.max(0, standing) / 100 * 0.25;
+    return {
+      poiId,
+      owner,
+      priceMul,
+      propellantPerUnit: a.propellantPerUnit * priceMul,
+      berthFee: Math.ceil(a.berthFee * priceMul),
+      repairSubsidy: a.repairSubsidy,
+      repairRateMul: a.repairRateMul,
+      refineRateMul: a.refineRateMul,
+      refitSpeedMul: a.refitSpeedMul,
+      heavyRefit: !!a.heavyRefit,
+      kindLabel: a.kindLabel ?? (node.kind === 'yard' ? 'REPAIR YARD' : 'ANCHORAGE'),
+    };
+  }
+
+  /**
+   * Come alongside.
+   *
+   * The order of operations matters and is the design: the sortie closes and is priced
+   * FIRST, then the yard takes what it is owed, then the berth fee, and only then does
+   * anything become available to buy. A player therefore reads what the sortie earned
+   * and what it cost in the same breath, which is the whole reason the debrief exists.
+   */
+  dock(poiId = this.currentPOI) {
+    const status = this.dockStatus(poiId);
+    if (!status.ok) return { ok: false, reason: status.reason, status };
+    if (status.docked) return { ok: true, already: true, status };
+
+    const player = this.world.player;
+    const node = this.system.get(poiId);
+    this._closeBand();
+    player.body.throttle = 0;
+    player.body.velocity.set(0, 0, 0);
+    player.move?.cancel?.();
+    if (this.weaponsOnlineIn > 0) { this.weaponsOnlineIn = 0; this._restoreWeapons(); }
+
+    this.docked = true;
+    this.dockedAt = poiId;
+
+    const sortie = this.world.systems.sortie ?? null;
+    const debrief = sortie ? sortie.end(poiId) : null;
+    const settled = sortie ? sortie.settle() : { paid: 0, debt: 0 };
+
+    const svc = this.services(poiId);
+    const fee = this._charge(svc.berthFee, `berth fee at ${node.name}`);
+
+    // Yard rates, saved so undocking cannot leave the field permanently fast.
+    const refit = this.world.systems.refit ?? null;
+    const economy = this.world.systems.economy ?? null;
+    this._dockSaved = {
+      repairRate: refit?.repairRate ?? null,
+      rateMultiplier: economy?.rateMultiplier ?? null,
+    };
+    if (refit) refit.repairRate *= svc.repairRateMul;
+    if (economy) economy.rateMultiplier *= svc.refineRateMul;
+
+    // The backlog goes into the hopper the moment the lines are on. Nobody comes into
+    // a refinery berth to press a button.
+    const queued = economy ? economy.enqueueAll() : 0;
+
+    this.bus.emit(MEV.DOCKED, {
+      poiId, name: node.name, berth: svc.kindLabel, services: svc,
+      debrief, settled, fee, queued,
+    });
+    this.bus.emit(EV.NOTIFY, {
+      text: `BERTHED — ${(this.anchorageAt(poiId).berth ?? node.name).toUpperCase()}`
+        + (queued > 0 ? ` — ${Math.round(queued)} units to the refinery` : ''),
+      important: true,
+    });
+    this.world.systems.persistence?.autosave?.('dock');
+    return { ok: true, status: this.dockStatus(poiId), debrief, settled, fee, queued, services: svc };
+  }
+
+  /** Let go. Opens a fresh sortie ledger; everything the berth was doing stops. */
+  undock(reason = 'under way') {
+    if (!this.docked) return { ok: false, reason: 'not docked' };
+    const poiId = this.dockedAt;
+    const refit = this.world.systems.refit ?? null;
+    const economy = this.world.systems.economy ?? null;
+    if (this._dockSaved) {
+      if (refit && this._dockSaved.repairRate !== null) refit.repairRate = this._dockSaved.repairRate;
+      if (economy && this._dockSaved.rateMultiplier !== null) economy.rateMultiplier = this._dockSaved.rateMultiplier;
+    }
+    this._dockSaved = null;
+    this.docked = false;
+    this.dockedAt = null;
+    this.world.systems.sortie?.begin(poiId);
+    this.bus.emit(MEV.UNDOCKED, { poiId, reason });
+    this.bus.emit(EV.NOTIFY, { text: `LINES OFF — ${reason.toUpperCase()}`, important: true });
+    return { ok: true, poiId };
+  }
+
+  /**
+   * Buy propellant, in units, or `'full'`.
+   *
+   * THIS IS THE CALL THE WHOLE STREAM EXISTS FOR. `refuel()` above is four lines old and
+   * had no caller; this is its caller, and it is what turns propellant from attrition
+   * into a clock with a reset that lives in a specific place on the map.
+   */
+  buyPropellant(units = 'full') {
+    if (!this.docked) return { ok: false, reason: 'not docked' };
+    const p = this.world.propellant;
+    const svc = this.services(this.dockedAt);
+    const want = units === 'full' ? p.max - p.current : Math.min(units, p.max - p.current);
+    if (want <= 0.5) return { ok: false, reason: 'tank full' };
+
+    const price = want * svc.propellantPerUnit;
+    const paid = this._charge(price, 'propellant');
+    // Credit covers the shortfall, so a berth never strands a player who arrived broke.
+    // It costs them the next sortie's take instead, which is the correct pressure.
+    const before = p.current;
+    const delivered = this.refuel(want) - before;
+    this.bus.emit(MEV.SERVICE_USED, {
+      service: 'propellant', poiId: this.dockedAt, units: want, cost: price, paid,
+    });
+    this.bus.emit(EV.NOTIFY, {
+      text: `TAKING ON ${Math.round(want)} PROPELLANT — ${Math.ceil(price)} ALLOY`,
+      important: true,
+    });
+    return { ok: true, units: want, cost: price, paid, propellant: p.current, delivered };
+  }
+
+  /**
+   * Clear as much of the repair plan as the pools will carry, and hand back the yard's
+   * subsidy. Every job goes through `refit.js`'s own queue, so nothing here duplicates
+   * the repair model - it just makes doing it here cheaper and faster than doing it out
+   * where somebody is shooting at you.
+   */
+  serviceRepair(limit = 24) {
+    if (!this.docked) return { ok: false, reason: 'not docked' };
+    const refit = this.world.systems.refit;
+    if (!refit) return { ok: false, reason: 'no refit system' };
+    const svc = this.services(this.dockedAt);
+    const economy = this.world.systems.economy ?? null;
+
+    const done = [];
+    let subsidy = { alloy: 0, composite: 0, electronics: 0, exotic: 0 };
+    let spent = 0;
+    for (const row of refit.repairPlan().slice(0, limit)) {
+      if (!row.affordable) continue;
+      let res = null;
+      if (row.kind === 'module') res = refit.repairModule(row.hardpoint, 1);
+      else if (row.kind === 'part') res = refit.repairPart(row.hardpoint, row.partId);
+      else if (row.kind === 'structure') res = refit.repairHardpoint(row.hardpoint);
+      else if (row.kind === 'hull') res = refit.repairHull(Infinity);
+      else if (row.kind === 'ammo') res = refit.fabricateAmmo(row.partId, Infinity);
+      else if (row.kind === 'coolant') res = refit.refillCoolant();
+      if (!res?.ok) continue;
+      done.push(row.id);
+      const cost = res.cost ?? { alloy: res.cost ?? 0 };
+      for (const k of ['alloy', 'composite', 'electronics', 'exotic']) {
+        const n = typeof cost === 'number' ? (k === 'alloy' ? cost : 0) : (cost[k] ?? 0);
+        subsidy[k] += n * svc.repairSubsidy;
+        spent += n;
+      }
+    }
+    for (const k in subsidy) subsidy[k] = Math.floor(subsidy[k]);
+    if (economy) economy.credit(subsidy, 'yard subsidy');
+    else for (const k in subsidy) this.world.materials[k] = (this.world.materials[k] ?? 0) + subsidy[k];
+
+    this.bus.emit(MEV.SERVICE_USED, { service: 'repair', poiId: this.dockedAt, jobs: done.length, subsidy, spent });
+    return { ok: true, jobs: done, spent, subsidy, rate: refit.repairRate };
+  }
+
+  /** Push the whole scrap backlog into the refinery. Cheap, and the reason to be here. */
+  serviceRefine() {
+    if (!this.docked) return { ok: false, reason: 'not docked' };
+    const economy = this.world.systems.economy;
+    if (!economy) return { ok: false, reason: 'no economy' };
+    const units = economy.enqueueAll();
+    this.bus.emit(MEV.SERVICE_USED, { service: 'refine', poiId: this.dockedAt, units });
+    return { ok: true, units, rate: economy.rate, etaSeconds: economy.describe().etaSeconds };
+  }
+
+  /** The debrief for the sortie this berth just closed. */
+  debrief() {
+    return this.world.systems.sortie?.lastDebrief() ?? null;
+  }
+
+  /**
+   * Take refined alloy, and put whatever cannot be paid onto the slate.
+   * @returns {{alloy:number, credit:number}}
+   */
+  _charge(alloy, reason) {
+    if (!(alloy > 0)) return { alloy: 0, credit: 0 };
+    const m = this.world.materials;
+    const have = Math.max(0, m.alloy ?? 0);
+    const taken = Math.min(have, alloy);
+    m.alloy = have - taken;
+    const short = alloy - taken;
+    if (short > 0.5) this.world.systems.sortie?.borrow(short, reason);
+    return { alloy: taken, credit: Math.max(0, short) };
+  }
+
   /** Everything the tactical overlay draws, in one call. */
   status() {
     return {
@@ -686,7 +1013,48 @@ export class TravelSystem {
       spoolRemaining: this.state === 'spooling' ? this.phaseTimer : 0,
       weaponsOnlineIn: this.weaponsOnlineIn,
       compression: this._transitBand,
+      docked: this.docked,
+      dockedAt: this.dockedAt,
+      berth: this.docked ? this.dockStatus(this.dockedAt) : null,
+      /** Anchorages the player can name, nearest first. The sortie's list of ways home. */
+      anchorages: this._anchorageRows(),
     };
+  }
+
+  /**
+   * Every berth the player knows about, with the arithmetic that decides which one they
+   * can actually reach. `reachable` is the load-bearing field: it is the sortie's
+   * boundary condition, drawn before it bites.
+   */
+  _anchorageRows() {
+    const rows = this._dockRows ?? (this._dockRows = []);
+    rows.length = 0;
+    const player = this.world.player;
+    if (!player) return rows;
+    const discovery = this.world.systems.discovery ?? null;
+    const prop = this.world.propellant;
+    const spendable = Math.max(0, prop.current - prop.reserve);
+    for (const node of this.system.anchorages()) {
+      if (discovery && !discovery.isKnown(node.id)) continue;
+      const d = player.position.distanceTo(node.position);
+      const cost = (d / KM) * this.propellantPerKm;
+      const owner = this.ownerOf(node.id);
+      rows.push({
+        id: node.id,
+        name: node.name,
+        kind: node.kind,
+        owner,
+        standing: this.world.reputation?.[owner] ?? 0,
+        minStanding: node.anchorage.minStanding ?? -100,
+        km: d / KM,
+        propellant: cost,
+        reachable: cost <= spendable,
+        heavyRefit: !!node.anchorage.heavyRefit,
+        propellantPerUnit: node.anchorage.propellantPerUnit,
+      });
+    }
+    rows.sort((a, b) => a.km - b.km);
+    return rows;
   }
 }
 

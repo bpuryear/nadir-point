@@ -68,6 +68,7 @@ export class HUD {
 
     this._drawWorldLayer(P, player);
     this._drawTimeStrip(P);
+    this._drawPanelTabs(P);
     this._drawShipPanel(P, player);
     this._drawTargetPanel(P, player);
     this._drawHoldStrip(P);
@@ -429,9 +430,24 @@ export class HUD {
     P.bar(x + 116, y + 42, 90, 4, target.salvageIntegrity ?? 1,
       { color: C.salvage, track: C.salvageGhost });
 
+    /**
+     * PER-SECTION SALVAGE PROJECTION, LIVE.
+     *
+     * `fun-systems.md` P3: the player should be steering the salvage outcome during
+     * the fight rather than discovering it at death. `Ship.salvageProjection()` has
+     * published a per-section condition since sections started carrying the damage
+     * that actually landed near them — this column is that data, in the panel the
+     * player is already reading while choosing what to shoot next.
+     *
+     * The three words are the SAME three `salvage.describeWrecks()` uses on the hulk
+     * afterwards, so nothing has to be relearned once the thing is dead.
+     */
+    const projection = typeof target.salvageProjection === 'function' ? target.salvageProjection() : null;
+
     let cy = y + 66;
     P.label('SUBSYSTEMS', x, cy, { color: C.inkFaint });
-    P.label('GREY = NO MOUNT BEARS', x + w, cy, { color: C.inkGhost, align: 'right' });
+    P.label('GREY = NO MOUNT BEARS', x + 116, cy, { color: C.inkGhost });
+    P.label('YIELD', x + w, cy, { color: C.salvageDim, align: 'right' });
     P.hline(x, cy + 5, w, C.ruleDim);
     cy += 16;
 
@@ -453,16 +469,44 @@ export class HUD {
         const tw = P.measure((s.def.label ?? s.def.id).toUpperCase(), F.small, TRACK.value);
         P.rule(x, cy - 4, tw, P.hair, C.inkFaint);
       }
-      P.label(s.def.kind, x + 130, cy, { color: dead ? C.inkGhost : C.inkFaint });
+      P.label(s.def.kind, x + 112, cy, { color: dead ? C.inkGhost : C.inkFaint });
 
       const frac = s.maxHP > 0 ? s.hp / s.maxHP : 0;
-      P.bar(x + w - 96, cy - 7, 62, 5, frac, {
+      P.bar(x + w - 132, cy - 7, 50, 5, frac, {
         color: dead ? C.inkGhost : bears ? C.hostile : C.inkFaint,
         track: C.inkGhost,
       });
-      P.text(dead ? 'DEST' : fmtPct(frac), x + w, cy,
+      P.text(dead ? 'DEST' : fmtPct(frac), x + w - 76, cy,
         { font: F.small, color: dead ? C.inkFaint : col, align: 'right' });
+
+      const row = projection ? findSection(projection, s.def.id) : null;
+      if (row) {
+        const ink = row.state === 'INTACT' ? C.salvage : row.state === 'DAMAGED' ? C.salvageDim : C.warn;
+        P.text(row.state, x + w, cy, { font: F.microBold, color: ink, align: 'right', track: TRACK.label });
+        // A part only comes out of a section that is a module-bearing kind AND has not
+        // been shot past scrap. The dot is the difference between "materials" and "the
+        // thing you came for", and it disappears while the player watches.
+        if (row.moduleLikely) P.fill(x + w - 70, cy - 5, 4, 4, C.salvage);
+      }
       cy += 14;
+    }
+
+    // Hull plating rows: three runs of structure that are not subsystems and never
+    // appeared in this panel, yet carry a third of what a wreck is worth.
+    if (projection) {
+      P.hline(x, cy - 6, w, C.ruleDim);
+      cy += 8;
+      let plateX = x;
+      P.label('PLATING', x, cy, { color: C.inkGhost });
+      plateX = x + 56;
+      for (const row of projection) {
+        if (row.kind !== 'hull') continue;
+        const ink = row.state === 'INTACT' ? C.salvage : row.state === 'DAMAGED' ? C.salvageDim : C.warn;
+        P.text(`${String(row.label).replace(' PLATING', '')} ${row.state}`, plateX, cy,
+          { font: F.micro, color: ink, track: TRACK.label });
+        plateX += 92;
+      }
+      cy += 12;
     }
 
     // --- bearing report -----------------------------------------------------
@@ -490,30 +534,88 @@ export class HUD {
   // Hold / materials
   // =========================================================================
 
+  /**
+   * THE HOLD, AS VOLUME.
+   *
+   * This strip used to print `4/6` slots, which is the readout `cargo.js` was written
+   * to replace: a salvaged destroyer reactor and a sensor mast are the same object to
+   * a slot count and they are obviously not the same object. The binding constraint is
+   * cubic metres, so cubic metres is what the always-on strip prints — the detail, and
+   * what each individual thing costs to carry, is one keystroke away in the HOLD panel.
+   */
   _drawHoldStrip(P) {
     const world = this.world;
-    const cap = world.systems?.salvage?.cargoCapacity ?? 6;
-    const held = world.inventory?.length ?? 0;
+    const cargo = world.systems?.cargo ?? null;
     const m = world.materials ?? { alloy: 0, composite: 0, exotic: 0 };
 
     const x = P.w - 28;
     let y = 30;
 
-    P.label('HOLD', x - 132, y, { color: C.inkFaint });
-    P.text(`${held}/${cap}`, x, y, { font: F.bodyBold, color: held >= cap ? C.warn : C.ink, align: 'right' });
-    P.pips(x - 90, y - 7, cap, held, { size: 5, gap: 3, color: C.salvage, empty: C.inkGhost });
-    y += 15;
-    P.hline(x - 132, y - 6, 132, C.ruleDim);
+    if (cargo) {
+      const cap = Math.max(1, cargo.capacityM3);
+      const used = cargo.usedM3();
+      const frac = used / cap;
+      const full = frac >= 0.995;
+      P.label('HOLD', x - 152, y, { color: C.inkFaint });
+      P.text(`${Math.round(used)} / ${Math.round(cap)} m3`, x, y, {
+        font: F.bodyBold, color: full ? C.warn : frac > 0.9 ? C.ink : C.inkDim, align: 'right',
+      });
+      P.bar(x - 152, y + 4, 152, 5, frac, {
+        color: full ? C.warn : C.salvage, track: C.inkGhost, segments: 8,
+      });
+      y += 20;
+    } else {
+      const cap = world.systems?.salvage?.cargoCapacity ?? 6;
+      const held = world.inventory?.length ?? 0;
+      P.label('HOLD', x - 152, y, { color: C.inkFaint });
+      P.text(`${held}/${cap}`, x, y, { font: F.bodyBold, color: held >= cap ? C.warn : C.ink, align: 'right' });
+      y += 15;
+    }
+    P.hline(x - 152, y - 6, 152, C.ruleDim);
 
-    const mats = [['ALLOY', m.alloy], ['COMP', m.composite], ['EXOTIC', m.exotic]];
+    // Four pools now, not three: `electronics` landed with the material chain and was
+    // never printed anywhere, which meant every cost quoted in it read as unpayable.
+    const mats = [['ALLOY', m.alloy], ['COMP', m.composite], ['ELEC', m.electronics], ['EXOTIC', m.exotic]];
+    let mx = x - 152;
     for (const [k, v] of mats) {
-      P.label(k, x - 132, y + 6, { color: C.inkGhost });
-      P.text(String(v), x, y + 6, { font: F.small, color: C.inkDim, align: 'right' });
-      y += 13;
+      P.label(k, mx, y + 6, { color: C.inkGhost });
+      P.text(String(Math.round(v ?? 0)), mx + 36, y + 6, {
+        font: F.small, color: (v ?? 0) > 0 ? C.inkDim : C.inkGhost, align: 'right',
+      });
+      mx += 40;
+      if (mx > x - 40) { mx = x - 152; y += 12; }
     }
 
     if (world.unlocked?.powerRouting === false) {
-      P.label('PWR SEALED', x, y + 10, { color: C.inkGhost, align: 'right' });
+      P.label('PWR SEALED', x, y + 20, { color: C.inkGhost, align: 'right' });
+    }
+  }
+
+  /**
+   * WINDOW TABS.
+   *
+   * `reference-ui-language.md` §7 observed mode tabs along the top of the reference
+   * frame — `B Build`, `F1 CAM`, `F2 TAC`, `F3 SYS` — keycap first, inline and
+   * diegetic. Six systems that landed with no UI now have windows, and a window nobody
+   * knows the key for is a window nobody opens. Open ones invert, which makes this a
+   * state readout as well as a menu.
+   */
+  _drawPanelTabs(P) {
+    const host = this.ui.panels;
+    if (!host) return;
+    let x = 24;
+    const y = 16;
+    P.label('WINDOWS', x, y - 6, { color: C.inkGhost });
+    for (const panel of host.panels) {
+      const label = `${panel.hint} ${shortTitle(panel.title)}`;
+      const w = P.measure(label, F.microBold, TRACK.label) + 12;
+      if (panel.open) P.fill(x, y, w, 14, C.ink);
+      else P.frame(x, y, w, 14, C.ruleDim);
+      P.text(label, x + 6, y + 10, {
+        font: F.microBold, color: panel.open ? C.void : C.inkFaint, track: TRACK.label,
+      });
+      this.ui.hit.push({ kind: 'panel:tab', panelId: panel.id, x, y, w, h: 14 });
+      x += w + 4;
     }
   }
 
@@ -622,6 +724,17 @@ export class HUD {
 }
 
 // ---------------------------------------------------------------------------
+
+/** `ARMAMENT · THERMAL · DEVICES` → `ARMAMENT`. The tab row has 24 px per word. */
+function shortTitle(title) {
+  return String(title).split('·')[0].trim();
+}
+
+/** Salvage-projection row by section id. Linear over <= 12 rows; no allocation. */
+function findSection(rows, id) {
+  for (let i = 0; i < rows.length; i++) if (rows[i].id === id) return rows[i];
+  return null;
+}
 
 /** Truncate to a pixel width with an ellipsis. Cached through Painter.measure. */
 function clip(P, str, font, maxW) {

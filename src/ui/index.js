@@ -301,6 +301,24 @@ export class UILayer {
       if (this.screen) return;
       const region = this._pick(e.clientX, e.clientY);
       if (!region) return;
+
+      // The second-tier aim ring. Clicking a sub-part goes through the SAME public
+      // order API the input stream uses - `Ship.orderAttack(target, subsystem, part)` -
+      // so there is exactly one path by which an aim point is chosen, and the order
+      // acknowledgement animation fires for it like any other order.
+      if (region.kind === 'tactical:part') {
+        const player = this.world.player;
+        const target = player?.target;
+        if (player && target && !target.dead) {
+          player.orderAttack(target, region.subsystemId, region.partId);
+          this.spawnOrderMarker('attack', { target, subsystem: region.subsystemId });
+          this.orderBar.say(`AIM ${String(region.partId).toUpperCase()} · ${String(region.subsystemId).toUpperCase()}`, 'info');
+        }
+        e.stopPropagation();
+        e.preventDefault();
+        return;
+      }
+
       if (this.panels.onPointerDown(region, e.clientX, e.clientY)) {
         e.stopPropagation();
         e.preventDefault();
@@ -508,7 +526,7 @@ export class UILayer {
         this.hud._drawNotifications(P);
         this.hud._drawOrderBar(P);
       } else {
-        if (camera) this.tactical.draw(P);
+        if (camera) this.tactical.draw(P, this.hit);
         this.hud.draw(P);
         this.power.draw(P);
         // Windows last: they are opaque plates and they are meant to be on top of the
