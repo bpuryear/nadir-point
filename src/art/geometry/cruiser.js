@@ -664,9 +664,24 @@ export function hullParts({ rng, lod = 0 }) {
   // distance, because the eye has nothing whose size it already knows. Two bands of
   // 5 m glazing across the bridge face is a storey height, and a storey is a thing
   // every player has stood in. Additive, so it survives a near-black shadow side.
-  for (const [dy, w] of [[0, 62], [-26, 44]]) {
-    B.addRaw('core', 'engineGlow', glowQuad(w, 5),
-      { pos: [BRIDGE_X, 216 + dy, -140 + dy * 0.22], rot: [-0.34, 0, 0] });
+  //
+  // ROUND-TWO REVIEW: "the bridge band ... blooms into a featureless white slab with
+  // no window structure resolvable in it ... give the band enough internal structure
+  // to survive the bloom." A single 62 m quad cannot have internal structure, because
+  // bloom is a blur and a blur of one bright rectangle is one bright rectangle. So the
+  // band is now PANES with real unlit mullions between them: the dark gaps are gaps in
+  // the GEOMETRY, so no amount of blur closes them and the band reads as a row of
+  // windows at every distance it is visible at. Same material, same merge bucket,
+  // same draw call, +32 triangles. The intensity cut that goes with it is in
+  // art/materials/index.js.
+  for (const [dy, w, panes] of [[0, 62, 7], [-26, 44, 5]]) {
+    const pitch = w / panes;
+    const paneW = pitch * 0.62;          // 38% of the run is mullion, and it is dark
+    for (let i = 0; i < panes; i++) {
+      const px = (i - (panes - 1) * 0.5) * pitch;
+      B.addRaw('core', 'engineGlow', glowQuad(paneW, 5),
+        { pos: [BRIDGE_X + px, 216 + dy, -140 + dy * 0.22], rot: [-0.34, 0, 0] });
+    }
   }
 
   // Sensor mast: the tallest thing on the ship at y = +366, so it fixes "up" from any

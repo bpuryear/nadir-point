@@ -65,6 +65,9 @@ export function installProgression(world, deps = {}) {
 
   perks.apply();
 
+  /** Bus subscriptions this installer owns, released on dispose. */
+  const offs = [];
+
   const api = {
     cargo, economy, codex, patterns, items, perks, objectives,
 
@@ -85,6 +88,8 @@ export function installProgression(world, deps = {}) {
     },
 
     dispose() {
+      for (const off of offs) off?.();
+      offs.length = 0;
       codex.dispose?.();
       items.dispose?.();
       perks.dispose?.();
@@ -111,9 +116,9 @@ export function installProgression(world, deps = {}) {
     }
     cargo.setFitBonus(m3);
   };
-  world.bus.on(EV.MODULE_INSTALLED, recomputeFit);
-  world.bus.on(EV.MODULE_REMOVED, recomputeFit);
-  world.bus.on(EV.MODULE_LOST, recomputeFit);
+  offs.push(world.bus.on(EV.MODULE_INSTALLED, recomputeFit));
+  offs.push(world.bus.on(EV.MODULE_REMOVED, recomputeFit));
+  offs.push(world.bus.on(EV.MODULE_LOST, recomputeFit));
   recomputeFit();
 
   return api;

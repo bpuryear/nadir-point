@@ -139,7 +139,7 @@ export function isInert(c) {
 export function repairCost(massT, from, to = 1) {
   const span = Math.max(0, clamp01(to) - clamp01(from));
   if (span <= 0) return { alloy: 0, composite: 0, exotic: 0, span: 0 };
-  const surcharge = from < 0.35 ? 1 + (0.35 - from) * 2.2 : 1;
+  const surcharge = from < CONDITION.worn ? 1 + (CONDITION.worn - from) * 2.6 : 1;
   const base = (massT ?? 200) * 0.05 * span * surcharge;
   return {
     alloy: Math.ceil(base),

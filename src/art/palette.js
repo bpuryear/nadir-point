@@ -606,6 +606,23 @@ export const POI_PALETTES = {
     },
   },
 
+  /*
+   * THE SAME CUT, APPLIED TO EVERY OTHER LOCATION.
+   *
+   * `giant-orbit` above is the one that was measured, and the defect it was measured
+   * against — "the entire hull lives inside a third of a stop near the top of the
+   * curve and nothing on it goes dark" — is a property of the RATIO between the key
+   * and the sum of the omnidirectional terms, not of the location. Every POI below was
+   * solved in the same pass, against the same 0.765 target, with the same fill levels,
+   * so every one of them has it.
+   *
+   * Keys x0.82 (re-solving a fully lit face from 0.765 to ~0.71), fills x0.50,
+   * bounces x0.45, rims x0.60. STATED LIMITATION, because it matters: only
+   * `giant-orbit` and `station` have been re-measured on a rendered frame this pass.
+   * The other four are carried on the arithmetic and on the fact that the change can
+   * only move them in the direction the review asked for. They should be shot and
+   * measured before anyone quotes them.
+   */
   belt: {
     id: 'belt',
     name: 'The Belt',
@@ -620,58 +637,58 @@ export const POI_PALETTES = {
      * Fill, bounce and rim are deliberately NOT raised with them, so every location's
      * key-to-fill ratio improves: the belt goes 5:1 -> 7.6:1, station 4.5:1 -> 7.4:1.
      */
-    key: { color: 0xffe2b6, intensity: 15.9, angularRadius: 0.014 },
-    fill: { color: 0x6b5a44, intensity: 2.10, broad: 0.30 },  // dust bouncing off a million rocks
-    bounce: { color: 0x8a7350, intensity: 0.82 },
-    rim: { color: 0xd89a4a, intensity: 0.95 },
+    key: { color: 0xffe2b6, intensity: 13.0, angularRadius: 0.014 },
+    fill: { color: 0x6b5a44, intensity: 1.05, broad: 0.30 },  // dust bouncing off a million rocks
+    bounce: { color: 0x8a7350, intensity: 0.37 },
+    rim: { color: 0xd89a4a, intensity: 0.57 },
     shadow: 0x0a0806,
     fog: { color: 0x2a2018, density: 0.000042 },
     accent: 0xd89a4a,
-    ibl: { zenith: 0x0b0a08, horizon: 0x2e2418, ground: 0x100c08, sun: 0xffe6bc, sunSize: 0.07, intensity: 0.66 },
+    ibl: { zenith: 0x0b0a08, horizon: 0x2e2418, ground: 0x100c08, sun: 0xffe6bc, sunSize: 0.07, intensity: 0.42 },
     grade: {
       exposure: 1.0, bloom: 0.38, godrays: 0.48, vignette: 0.46,
-      lift: 0x6b5a44, gain: 0xffe8c8, liftAmount: 0.040, gainAmount: 0.26, saturation: 1.02,
+      lift: 0x6b5a44, gain: 0xffe8c8, liftAmount: 0.020, gainAmount: 0.26, saturation: 1.02,
     },
   },
 
   graveyard: {
     id: 'graveyard',
     name: 'The Graveyard',
-    key: { color: 0xb6c6da, intensity: 20.0, angularRadius: 0.006 },
+    key: { color: 0xb6c6da, intensity: 16.4, angularRadius: 0.006 },
     // The nebula IS the fill here, and it is the only reason anything in this POI
     // is visible at all. Stated brighter than it looks because the key is weak.
-    fill: { color: 0x4c6a4a, intensity: 1.55, broad: 0.34 },
-    bounce: { color: 0x2b3c4e, intensity: 0.78 },
+    fill: { color: 0x4c6a4a, intensity: 0.78, broad: 0.34 },
+    bounce: { color: 0x2b3c4e, intensity: 0.35 },
     // Sick derelict green off the nebula, and the strongest rim in the game: this
     // location is defined as "everything is silhouette", and a silhouette with no
     // rim is just black.
-    rim: { color: 0x8fb04a, intensity: 1.05 },
+    rim: { color: 0x8fb04a, intensity: 0.63 },
     shadow: 0x02040a,
     fog: { color: 0x0e1620, density: 0.000030 },
     accent: 0x8fb04a,                                // derelict light, leaking
-    ibl: { zenith: 0x03060c, horizon: 0x14202e, ground: 0x04070c, sun: 0xc2d2e4, sunSize: 0.035, intensity: 0.62 },
+    ibl: { zenith: 0x03060c, horizon: 0x14202e, ground: 0x04070c, sun: 0xc2d2e4, sunSize: 0.035, intensity: 0.40 },
     grade: {
       exposure: 1.0, bloom: 0.46, godrays: 0.22, vignette: 0.50,
       // A dim frame needs MORE value separation, not less: lift the floor off zero
       // so wreckage separates from the void instead of merging with it.
-      lift: 0x4c6a4a, gain: 0xdfeee0, liftAmount: 0.075, gainAmount: 0.16, saturation: 1.06,
+      lift: 0x4c6a4a, gain: 0xdfeee0, liftAmount: 0.038, gainAmount: 0.16, saturation: 1.06,
     },
   },
 
   yard: {
     id: 'yard',
     name: 'Fitting Yard',
-    key: { color: 0xffd9a0, intensity: 17.3, angularRadius: 0.02 },  // work lights, not a star
-    fill: { color: 0x2b3442, intensity: 2.10, broad: 0.38 },
-    bounce: { color: 0x4a5468, intensity: 0.82 },
-    rim: { color: 0xffa93c, intensity: 0.85 },
+    key: { color: 0xffd9a0, intensity: 14.2, angularRadius: 0.02 },  // work lights, not a star
+    fill: { color: 0x2b3442, intensity: 1.05, broad: 0.38 },
+    bounce: { color: 0x4a5468, intensity: 0.37 },
+    rim: { color: 0xffa93c, intensity: 0.51 },
     shadow: 0x05070c,
     fog: { color: 0x1a212c, density: 0.000022 },
     accent: 0xffa93c,
-    ibl: { zenith: 0x060a12, horizon: 0x232c3a, ground: 0x0a0d14, sun: 0xffdcae, sunSize: 0.10, intensity: 0.72 },
+    ibl: { zenith: 0x060a12, horizon: 0x232c3a, ground: 0x0a0d14, sun: 0xffdcae, sunSize: 0.10, intensity: 0.46 },
     grade: {
       exposure: 1.0, bloom: 0.40, godrays: 0.28, vignette: 0.38,
-      lift: 0x3c5170, gain: 0xffe8c8, liftAmount: 0.042, gainAmount: 0.26, saturation: 1.02,
+      lift: 0x3c5170, gain: 0xffe8c8, liftAmount: 0.021, gainAmount: 0.26, saturation: 1.02,
     },
   },
 
@@ -683,34 +700,34 @@ export const POI_PALETTES = {
      * the one location allowed to sit on the shoulder, and the grade's own
      * exposure 0.86 is carried through the solve rather than argued around.
      */
-    key: { color: 0xfff6ea, intensity: 20.3, angularRadius: 0.05 },  // brutal
-    fill: { color: 0x7a4226, intensity: 1.90, broad: 0.16 },
-    bounce: { color: 0xa85c2e, intensity: 0.70 },
-    rim: { color: 0xff7a2a, intensity: 1.30 },
+    key: { color: 0xfff6ea, intensity: 16.6, angularRadius: 0.05 },  // brutal
+    fill: { color: 0x7a4226, intensity: 0.95, broad: 0.16 },
+    bounce: { color: 0xa85c2e, intensity: 0.32 },
+    rim: { color: 0xff7a2a, intensity: 0.78 },
     shadow: 0x0c0603,
     fog: { color: 0x3c1e0e, density: 0.000055 },
     accent: 0xff7a2a,
-    ibl: { zenith: 0x120804, horizon: 0x5a2c12, ground: 0x1a0c05, sun: 0xfffaf0, sunSize: 0.16, intensity: 1.05 },
+    ibl: { zenith: 0x120804, horizon: 0x5a2c12, ground: 0x1a0c05, sun: 0xfffaf0, sunSize: 0.16, intensity: 0.67 },
     grade: {
       exposure: 0.86, bloom: 0.62, godrays: 0.66, vignette: 0.52,
-      lift: 0x7a4226, gain: 0xffe8c8, liftAmount: 0.036, gainAmount: 0.24, saturation: 1.0,
+      lift: 0x7a4226, gain: 0xffe8c8, liftAmount: 0.018, gainAmount: 0.24, saturation: 1.0,
     },
   },
 
   station: {
     id: 'station',
     name: 'Station Approach',
-    key: { color: 0xdce8f4, intensity: 15.5, angularRadius: 0.008 },
-    fill: { color: 0x27374e, intensity: 2.10, broad: 0.40 },
-    bounce: { color: 0x3c5170, intensity: 0.82 },
-    rim: { color: 0x59c8ff, intensity: 0.95 },
+    key: { color: 0xdce8f4, intensity: 12.7, angularRadius: 0.008 },
+    fill: { color: 0x27374e, intensity: 1.05, broad: 0.40 },
+    bounce: { color: 0x3c5170, intensity: 0.37 },
+    rim: { color: 0x59c8ff, intensity: 0.57 },
     shadow: 0x04070e,
     fog: { color: 0x141e2c, density: 0.000018 },
     accent: 0x59c8ff,
-    ibl: { zenith: 0x050912, horizon: 0x1c2c42, ground: 0x070b12, sun: 0xe6f0fa, sunSize: 0.04, intensity: 0.80 },
+    ibl: { zenith: 0x050912, horizon: 0x1c2c42, ground: 0x070b12, sun: 0xe6f0fa, sunSize: 0.04, intensity: 0.51 },
     grade: {
       exposure: 1.0, bloom: 0.42, godrays: 0.20, vignette: 0.40,
-      lift: 0x27374e, gain: 0xf0f6ff, liftAmount: 0.042, gainAmount: 0.20, saturation: 1.02,
+      lift: 0x27374e, gain: 0xf0f6ff, liftAmount: 0.021, gainAmount: 0.20, saturation: 1.02,
     },
   },
 };

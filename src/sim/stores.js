@@ -60,8 +60,16 @@ export const STORES = {
   chargeRegenPerPower: 0.85,
   /** Coolant purges carried. Small on purpose - it is a decision, not a rotation. */
   coolantBase: 3,
-  /** Propellant per m/s of commanded delta-v, at reference mass. */
-  burnPerDeltaV: 0.012,
+  /**
+   * Propellant per m/s of commanded delta-v, at reference mass.
+   *
+   * Calibrated so one full stop-and-restart of the cruiser costs about seven units -
+   * roughly nine kilometres of transit. A knife fight where you keep reversing your
+   * facing therefore costs a real fraction of the legs you needed to get home, and a
+   * fight you win from a single firing pass costs almost nothing. That difference is
+   * the point.
+   */
+  burnPerDeltaV: 0.03,
   /** Travel spec figure, repeated here rather than imported across a stream boundary. */
   propellantPerKm: 0.8,
   /** The reserve the cruiser never spends manoeuvring. Matches world/travel.js. */

@@ -1,17 +1,19 @@
 [
   {
     "id": "close",
-    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity.",
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity. HUD suppressed: this is a look-review frame.",
     "settle": 28,
     "settleAfterSetup": 40,
-    "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 2.35; t.pitchOffset = t._pitchTarget = 0.18; t.zoomT = t._zoomTTarget = 0.02;"
+    "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 2.35; t.pitchOffset = t._pitchTarget = 0.18; t.zoomT = t._zoomTTarget = 0.02;",
+    "hud": false
   },
   {
     "id": "three-quarter",
-    "description": "Mid tactical range, raking key. The everyday playing view.",
+    "description": "Mid tactical range, raking key. The everyday playing view. HUD suppressed: this is a look-review frame.",
     "settle": 28,
     "settleAfterSetup": 40,
-    "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 0.9; t.pitchOffset = t._pitchTarget = 0.30; t.zoomT = t._zoomTTarget = 0.26;"
+    "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 0.9; t.pitchOffset = t._pitchTarget = 0.30; t.zoomT = t._zoomTTarget = 0.26;",
+    "hud": false
   },
   {
     "id": "wide",

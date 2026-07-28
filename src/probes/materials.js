@@ -22,7 +22,7 @@
  */
 
 import * as THREE from 'three';
-import { createMaterialRegistry } from '../art/materials/index.js';
+import { createMaterialRegistry, MATERIAL_KEYS } from '../art/materials/index.js';
 import { textCanvas } from '../art/textures/decals.js';
 import { getPOIPalette, getFactionPalette, NEUTRAL } from '../art/palette.js';
 import { SCALE, TextureFactory } from '../art/textures/index.js';
@@ -30,21 +30,31 @@ import { RNG } from '../core/rng.js';
 
 const FACTION_ROWS = ['coalition', 'concord', 'derelict', 'player'];
 
-const COLUMNS = [
-  { key: 'hull', label: 'HULL' },
-  { key: 'hullDark', label: 'HULLDARK' },
-  { key: 'plating', label: 'PLATING' },
-  { key: 'greeble', label: 'GREEBLE' },
-  { key: 'trim', label: 'TRIM' },
-  { key: 'damaged', label: 'DAMAGED' },
-  { key: 'derelictHull', label: 'DERELICT' },
-  { key: 'debris', label: 'DEBRIS' },
-  { key: 'asteroid', label: 'ASTEROID' },
-  { key: 'glass', label: 'GLASS' },
-  { key: 'emissive', label: 'EMISSIVE' },
-  { key: 'engineGlow', label: 'ENGINE' },
-  { key: 'runningLights', label: 'LIGHTS' },
+/**
+ * COLUMNS ARE DERIVED FROM THE REGISTRY, NOT TYPED OUT HERE.
+ *
+ * Round-two review, MODERATE: "The same sheet still shows HULLDARK and TRIM as
+ * separate surfaces after D12 records TRIM as deleted ... A review sheet that
+ * misreports the build is worse than no sheet, because it is what the next reviewer
+ * will quote." It was right, and a hardcoded column list guarantees it will happen
+ * again the next time a key is added or retired.
+ *
+ * `MATERIAL_KEYS` is the registry's own declaration, so this chart now cannot show a
+ * surface the build does not have, and cannot omit one it does — the `radiator` key
+ * added this pass appeared here without anyone editing this file. `ORDER` only
+ * decides the left-to-right sequence; anything the registry declares and this list
+ * does not name is appended rather than dropped.
+ */
+const ORDER = [
+  'hull', 'plating', 'hullDark', 'greeble', 'radiator', 'trim',
+  'damaged', 'derelictHull', 'debris', 'asteroid', 'glass',
+  'emissive', 'engineGlow', 'runningLights',
 ];
+const LABELS = { derelictHull: 'DERELICT', engineGlow: 'ENGINE', runningLights: 'LIGHTS' };
+const COLUMNS = [
+  ...ORDER.filter((k) => MATERIAL_KEYS.includes(k)),
+  ...MATERIAL_KEYS.filter((k) => !ORDER.includes(k) && k !== 'decal'),
+].map((key) => ({ key, label: (LABELS[key] ?? key).toUpperCase() }));
 
 const CELL = 96;
 const COL_X = (c) => (c - (COLUMNS.length - 1) / 2) * CELL;
@@ -317,7 +327,7 @@ export default {
       [scorchTex.texture, 'SCORCH STAMP'],
       [burnt.userData.maps.map, 'SCORCH ON HULL'],
       [decalSheet.texture, 'DECALS'],
-      [lights.texture, 'LIGHTS 6M'],
+      [lights.texture, `LIGHTS ${SCALE.runningLightSpacingM}M`],
     ];
 
     const quad = new THREE.PlaneGeometry(1, 1);

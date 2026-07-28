@@ -392,18 +392,67 @@ if (intercept) {
 }
 // Now actually go somewhere. Presence is the trigger; there is no accept button.
 say(`\nFLY TO ONE. Presence is the only trigger — there is no accept button.`);
-const target = obj.active.find((o) => o.kind === 'prospect') ?? obj.active[0];
-if (target) {
-  const node = w3.systems.system.nodes.find((n) => n.id === target.poiId);
-  const matsBefore = { ...w3.materials };
-  say(`  flying to ${target.poiName} (${(node.position.length() / 1000).toFixed(0)} km out, radius ${(node.radius / 1000).toFixed(0)} km)`);
+
+const freshest = (kind, pred = () => true) => {
+  let best = null;
+  for (const o of obj.active) {
+    if (o.kind !== kind) continue;
+    if (o.expiresAt - obj.time < 120) continue;
+    if (!pred(o)) continue;
+    if (!best || o.expiresAt > best.expiresAt) best = o;
+  }
+  return best;
+};
+/** Only useful for a cutting objective if there is actually wreckage lying there. */
+const hasHulks = (o) => (war.poiState(o.poiId).hulks ?? 0) > 0;
+
+// (a) a prospect: arriving IS the objective.
+let prospect = freshest('prospect');
+let guard = 0;
+while (!prospect && guard++ < 40) { advance(w3.engine, 60, 1 / 12); prospect = freshest('prospect'); }
+if (prospect) {
+  const node = w3.systems.system.nodes.find((n) => n.id === prospect.poiId);
+  const before9 = { ...w3.materials };
+  say(`  (a) prospect: ${prospect.poiName}, ${(node.position.length() / 1000).toFixed(0)} km out, `
+    + `${Math.round(prospect.expiresAt - obj.time)} s left`);
   p3.position.copy(node.position);
-  advance(w3.engine, 30, 1 / 12);
-  const rec = obj.history().find((h) => h.poiId === target.poiId);
-  say(`  outcome               : ${rec?.outcome ?? 'still open'}  tier ${rec?.tier ?? '--'}`);
-  say(`  materials before      : ${JSON.stringify(matsBefore)}`);
-  say(`  materials after       : ${JSON.stringify(w3.materials)}`);
-  say(`  paid                  : ${JSON.stringify(rec?.paid ?? {})}`);
+  advance(w3.engine, 2, 1 / 12);
+  const rec = obj.history().find((h) => h.id === prospect.id);
+  say(`      outcome ${rec?.outcome}  paid ${JSON.stringify(rec?.paid ?? {})}`);
+  say(`      materials ${JSON.stringify(before9)} -> ${JSON.stringify(w3.materials)}`);
+}
+
+// (b) a salvage objective: arrive, then cut. Arrival stamps the price, cutting pays it.
+const cuttable = () => freshest('strip', hasHulks) ?? freshest('intercept', hasHulks);
+let strip = cuttable();
+guard = 0;
+while (!strip && guard++ < 60) { advance(w3.engine, 60, 1 / 12); strip = cuttable(); }
+if (strip) {
+  const node = w3.systems.system.nodes.find((n) => n.id === strip.poiId);
+  say(`\n  (b) ${strip.kind}: ${strip.poiName}, target "${strip.targetText}", `
+    + `${Math.round(strip.expiresAt - obj.time)} s left`);
+  p3.position.copy(node.position);
+  advance(w3.engine, 1, 1 / 12);
+  say(`      arrival tier stamped on arrival: ${strip.arrivalTier?.label} x${strip.arrivalTier?.multiplier}`);
+  // The travel layer materialises a POI's hulks when the player turns up, so this is
+  // only a fallback for the case where it has not run yet.
+  war.materialise(strip.poiId, { rng: w3.rng.fork('mat'), faction: 'player', lod: 0 });
+  const made = w3.wrecks.filter((x) => x.body.position.distanceTo(node.position) <= node.radius);
+  say(`      ${made.length} hulks in the field -> ${made.reduce((n, x) => n + x.sections.length, 0)} cuttable sections`);
+  const before9b = { ...w3.materials };
+  let cut = 0;
+  outer: for (const wr of made) {
+    for (const sec of wr.sections) {
+      salv3._store(sec);
+      if (++cut >= strip.target) break outer;
+    }
+  }
+  advance(w3.engine, 1, 1 / 12);
+  const rec = obj.history().find((h) => h.id === strip.id);
+  say(`      cut ${cut} sections -> outcome ${rec?.outcome ?? 'still open'} tier ${rec?.tier ?? '--'}`);
+  say(`      payout ${JSON.stringify(rec?.paid ?? {})}`);
+  say(`      materials ${JSON.stringify(before9b)} -> ${JSON.stringify(w3.materials)}`);
+  say(`      scrap in hold ${JSON.stringify(w3.systems.economy.scrap)}`);
 }
 
 // Let the rest run out so expiry is visible too.

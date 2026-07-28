@@ -174,7 +174,24 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
       // Bloom threshold in postfx.js is 1.05 on luminance. These defaults sit just
       // above it so a light glows, and well below the point where a large emissive
       // face floods the frame - area matters more than intensity for bloom.
-      const dflt = key === 'engineGlow' ? 2.6 : key === 'runningLights' ? 2.0 : 1.9;
+      /**
+       * `engineGlow` came down from 2.6, and the reason is the bridge band rather than
+       * the drive bells.
+       *
+       * Round-two review, MODERATE: "The bridge band is the brightest thing in the
+       * frame and blooms into a featureless white slab ... On a ship whose hull carries
+       * no other value event, the eye goes straight to it and reads it as a billboard.
+       * Fix: drop its intensity so it is a source rather than a second key."
+       *
+       * At 2.6 against a bloom threshold of 1.05 the band was 2.5x over threshold and
+       * every one of its pixels was contributing to the blur at full weight. At 1.6 it
+       * is 1.5x over: still unmistakably a light source, still blooms, but its halo no
+       * longer out-values the lit hull beside it. The drive bells lose the same amount
+       * and want it — they were the second-brightest thing in the frame for the same
+       * reason. Structure to survive the bloom is the other half of the fix and it is
+       * geometry: the band is now seven panes with unlit mullions between them.
+       */
+      const dflt = key === 'engineGlow' ? 1.6 : key === 'runningLights' ? 1.7 : 1.6;
       o.intensity = quantize(Math.max(0, o.intensity ?? dflt), 0.05);
     }
     if (key === 'glass') {

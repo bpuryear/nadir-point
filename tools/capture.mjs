@@ -69,6 +69,28 @@ try {
       }), shot.settleAfterSetup ?? 45);
     }
 
+    /**
+     * HUD SUPPRESSION, per shot.
+     *
+     * Round-two review, MINOR: "The HUD panel stack occupies the lower-right third and
+     * the bottom centre of both frames and sits directly over the cruiser's ventral bay
+     * and cutter gear in the close shot - the one part of the ship that carries the
+     * salvager identity. For a look-review capture set the HUD should be suppressible
+     * via a shot flag so the art can be judged."
+     *
+     * `"hud": false` in tools/shots.json hides `#ui-root` for that shot only. It is
+     * done AFTER setup so the setup snippet can still drive the tactical camera through
+     * the UI systems, and it hides rather than unmounts so nothing in the frame's
+     * simulation state changes - the two frames differ by exactly one CSS property.
+     */
+    if (shot.hud === false) {
+      await page.evaluate(() => {
+        const root = document.getElementById('ui-root');
+        if (root) root.style.visibility = 'hidden';
+      });
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    }
+
     const stats = await page.evaluate(() => window.__NADIR.stats());
 
     /**
@@ -123,6 +145,7 @@ try {
       warnings,
       frame,
       description: shot.description ?? '',
+      hud: shot.hud !== false,
       file: path.relative(ROOT, file),
       stats,
       consoleErrors: consoleErrors.filter((e) => e.startsWith('[error]')),

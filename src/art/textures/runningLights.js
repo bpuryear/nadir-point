@@ -6,16 +6,29 @@
  * repeating feature at a size the player already believes, and running lights are
  * the cheapest and most legible one available.
  *
- * So the spacing is a CONSTANT, in metres, shared by every hull in the game:
+ * So the spacing is a CONSTANT, in metres, shared by every hull in the game — and
+ * there is now exactly ONE of it.
  *
- *     RUNNING_LIGHT_SPACING_M = 6
+ * ---------------------------------------------------------------------------
+ * THIS FILE USED TO DECLARE A SECOND, DIFFERENT SPACING
+ * ---------------------------------------------------------------------------
+ * `RUNNING_LIGHT_SPACING_M` was a local 6, against `core/units.js#SCALE_CUE`'s
+ * game-wide 40, and the two were reconciled only by a paragraph explaining that the
+ * strip was "a continuous lit edge rather than a set of countable points". That
+ * explanation does not survive contact with a player, who counts whatever is
+ * countable: round-two review found `docs/probes/materials.png` printing "RUNNING
+ * LIGHT SPACING = 6 M" under its own swatches, contradicting §7 and D28's fix, and
+ * correctly called a review artefact that misreports the build worse than no artefact
+ * at all.
  *
- * Six metres is roughly a first-floor window ledge. Put lights on a fighter and you
- * get two of them. Put the same strip on the cruiser and you get two hundred and
- * thirty, and the ship reads as enormous without a single number on screen.
+ * The duplicate is deleted. This module now re-exports SCALE_CUE's number, so there
+ * is one constant, one place to change it, and nothing left to disagree with. Forty
+ * metres is roughly a twelve-storey building: put the strip on a fighter and you get
+ * none, put it on the cruiser and you get thirty-five, and the ship reads as enormous
+ * without a number on screen.
  *
- * Every LIGHTS_PER_TILE-th light is a brighter beacon. That is still a constant
- * spacing (48 m), so it adds rhythm without lying about scale.
+ * Every LIGHTS_PER_TILE-th light is a brighter beacon — still a constant spacing, so
+ * it adds rhythm without lying about scale.
  *
  * DO NOT change the spacing per ship, per faction or per POI. If a hull needs
  * fewer lights, use a shorter strip.
@@ -24,8 +37,10 @@
 import * as THREE from 'three';
 import { makeCanvas, ctx2d, canvasTexture, css, roundRect } from './canvas2d.js';
 import { getFactionPalette } from '../palette.js';
+import { SCALE_CUE } from '../../core/units.js';
 
-export const RUNNING_LIGHT_SPACING_M = 6;
+/** Re-exported, NOT redeclared. See the header. */
+export const RUNNING_LIGHT_SPACING_M = SCALE_CUE.runningLightSpacingM;
 export const LIGHTS_PER_TILE = 8;
 /** Metres of hull one texture repeat covers along the strip. */
 export const RUNNING_LIGHT_TILE_M = RUNNING_LIGHT_SPACING_M * LIGHTS_PER_TILE;
