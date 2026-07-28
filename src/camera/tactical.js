@@ -58,8 +58,29 @@ export class TacticalCamera {
     return Math.max(CAMERA.minDistance, r * ORBIT.minDistRadiusK);
   }
 
+  /**
+   * The far end of the zoom is an ABSOLUTE distance, not a multiple of the near end.
+   *
+   * The obvious formulation - softMin * exp(zoomT * lnZoomRange) - is wrong, and
+   * wrong in a way that looks fine until you actually zoom out. lnZoomRange is the
+   * ratio between the two constants in units.js (177x). Multiplying that ratio by a
+   * per-target floor scales the CEILING as well: focusing the 1400 m cruiser raises
+   * the floor to 1330 m and therefore pushes maximum zoom to 235 km rather than the
+   * intended 46 km, where the ship is about six pixels tall. The "cruiser is a bright
+   * speck against the gas giant" shot came out as an empty frame.
+   *
+   * So the range is recomputed per target: the floor scales with what you are looking
+   * at, the ceiling does not move.
+   */
+  zoomRange() {
+    const softMin = this.softMinDistance();
+    const max = Math.max(softMin * 2, CAMERA.maxDistance);
+    return { softMin, max, ln: Math.log(max / softMin) };
+  }
+
   get distance() {
-    return this.softMinDistance() * Math.exp(THREE.MathUtils.clamp(this.zoomT, 0, 1) * ORBIT.lnZoomRange);
+    const { softMin, ln } = this.zoomRange();
+    return softMin * Math.exp(THREE.MathUtils.clamp(this.zoomT, 0, 1) * ln);
   }
 
   /** The floor rises with zoom: 3.4 degrees is usable up close and unreadable at 46 km. */
