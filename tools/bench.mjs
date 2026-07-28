@@ -82,7 +82,7 @@ try {
       frameMs: { mean, median: pct(0.5), p95: pct(0.95), p99: pct(0.99), min: samples[0], max: samples[samples.length - 1] },
       cpuMs: s.cpuMs,
       stepMs: s.stepMs,
-      sceneCounts: N.benchmarkCounts ? N.benchmarkCounts() : null,
+      sceneCounts: window.__NADIR_BENCH_COUNTS ?? (N.benchmarkCounts ? N.benchmarkCounts() : null),
     };
   }, frames);
 
