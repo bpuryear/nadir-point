@@ -38,7 +38,17 @@ await fs.mkdir(path.dirname(outPath), { recursive: true });
 
 let server, browser, failed = false;
 try {
-  server = await startServer({ port });
+  /**
+   * PREVIEW, NOT DEV, for the same reason capture.mjs already gives: the dev
+   * server's HMR full-reloads the page whenever anything writes to the tree, which
+   * destroys the execution context mid-settle and reports as "Execution context was
+   * destroyed, most likely because of a navigation" — a harness failure that looks
+   * exactly like a probe crash and gets debugged as one. It happens constantly while
+   * a stream is iterating, because iterating IS writing to the tree. `probe.html` is
+   * already a rollup input (vite.config.js), so preview serves it, and the frames
+   * then come from the artefact that actually ships.
+   */
+  server = await startServer({ port, mode: 'preview' });
   const url = server.url + 'probe.html';
   browser = await launchBrowser();
 

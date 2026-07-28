@@ -10,6 +10,29 @@
  * z = -700, i.e. LOCAL z = -76. Anything between local 0 and -76 is inside the hole
  * and must stay inside the 108 x 72 m section. Everything past local -76 is in open
  * space and is where the silhouette actually changes.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THESE ARE NOW TWICE THE SIZE THEY WERE
+ * ---------------------------------------------------------------------------
+ * The loadout-silhouette criterion bins the outline along z. The stern owns only
+ * the last two bins of twenty-eight, so an engine module cannot buy length - the
+ * only currency it has is CROSS SECTION, and it has to spend all of it. The hull's
+ * own stern already reaches x = +/-198 over the outrigger drive pods and y = +/-96,
+ * so a module that stops at 150 m across is inside an envelope that is already
+ * there and contributes exactly nothing.
+ *
+ * The four modules are therefore separated by the SHAPE of that cross section, seen
+ * from dead astern, which is the one view where an engine is the whole silhouette:
+ *
+ *   thruster upgrade   a WIDE LOW BAR   x +/-334, y +85..-222   four bells
+ *   reactor uprate     an X             x/y +/-225 on the diagonals
+ *   jump ring          a CIRCLE         x/y +/-304, open in the middle
+ *   stern armour       a RECTANGLE      x +/-260, y +/-210, no holes at all
+ *
+ * (Measured off the built geometry in hull space. The bare hull's own stern reaches
+ * x = +/-198 over the outrigger drive pods, so all four clear it.)
+ *
+ * A bar, a cross, a circle and a rectangle. Four shapes a player can name.
  */
 
 import { registerModule } from '../../../core/contracts.js';
@@ -23,13 +46,18 @@ const AFT = [0, Math.PI, 0];
 const WELL = G.octProfile(51, 34, -34, 17, 10, 10);
 
 // ---------------------------------------------------------------------------
-// T1 — Coalition Thruster Upgrade
+// T1 — Coalition Thruster Upgrade        THE BAR
 // ---------------------------------------------------------------------------
 
 /**
- * A real main drive at last: one 84 m bell in the well, two smaller ones on
- * outriggers, and the plumbing that feeds them. T1, and it still changes the stern
- * from a hole into an engine.
+ * A real main drive at last, and the Coalition builds it the Coalition way: the
+ * machinery is OUTSIDE. One 172 m bell in the well, three more on a transverse beam
+ * that reaches 330 m across and hangs 250 m below the axis, and the plumbing that
+ * feeds them running along the outside where a fitter can get at it.
+ *
+ * From astern it is a WIDE LOW BAR of four circles, two to port and two on the
+ * centreline and starboard. That bar is 660 m across on a hull whose own stern is
+ * 396 m across, so the module is the outline rather than a swelling on it.
  */
 function buildThrusterUpgrade(ctx) {
   const b = new ModuleBuilder(ctx, 'coalition');
@@ -41,33 +69,42 @@ function buildThrusterUpgrade(ctx) {
 
   // Main bell, mouth well aft of the hull.
   b.add('greeble', G.thrusterBell({
-    throat: 46, mouth: 76, length: 92, sides: 8, collar: true, detail: D,
-  }), { pos: [0, 0, -74] });
-  b.glow([0, 0, -164], 62, AFT);
+    throat: 50, mouth: 86, length: 108, sides: 8, collar: true, detail: D,
+  }), { pos: [0, 0, -80] });
+  b.glow([0, 0, -186], 70, AFT);
 
-  // Two outrigger bells, low and splayed, on short pylons.
-  for (const s of [-1, 1]) {
-    b.add('hull', G.panelledSlab({ width: 42, height: 30, depth: 54, chamfer: 8, detail: D }),
-      { pos: [s * 78, -34, -78] });
+  // THE BEAM. One transverse spar carrying everything outboard, dropped below the
+  // axis so the cluster is a bar under the stern rather than a ring around it.
+  b.add('hull', G.panelledSlab({ width: 620, height: 54, depth: 96, chamfer: 14, detail: D }),
+    { pos: [0, -104, -132] });
+
+  // THREE outrigger bells, not four. Two to port and one to starboard, all
+  // different sizes and all at different depths: a row of four matched circles is
+  // a radiator grille, and an odd count is the cheapest way to stop a cluster
+  // reading as a machined part. It is also 140 triangles cheaper, which is what
+  // brings the module back under the 400 ceiling.
+  const pods = [
+    { x: -168, y: -132, r: 46, len: 76 },
+    { x: 178, y: -152, r: 40, len: 66 },
+    { x: -298, y: -188, r: 34, len: 58 },
+  ];
+  for (const p of pods) {
+    b.add('hull', G.panelledSlab({ width: p.r * 2.1, height: p.r * 1.8, depth: 66, detail: D }),
+      { pos: [p.x, p.y, -150] });
     b.add('greeble', G.thrusterBell({
-      throat: 22, mouth: 36, length: 48, sides: 6, collar: false, detail: D,
-    }), { pos: [s * 78, -34, -100] });
-    b.glow([s * 78, -34, -146], 30, AFT);
-    if (full) {
-      b.add('greeble', G.pipeRun({ length: 76, radius: 8, sides: 6, axis: 'x', flanges: 1, detail: D }),
-        { pos: [s * 16, -30, -62] });
-    }
+      throat: p.r * 0.62, mouth: p.r, length: p.len, sides: 6, collar: false, inner: false, detail: D,
+    }), { pos: [p.x, p.y, -182] });
+    b.glow([p.x, p.y, -182 - p.len], p.r * 0.86, AFT);
   }
 
-  // Fuel trunks over the top of the plug.
+  // One fuel trunk, along the port side, outside the hull because that is where
+  // it gets repaired. There is no starboard twin, and that is the faction.
   if (full) {
-    for (const s of [-1, 1]) {
-      b.add('greeble', G.pipeRun({ length: 88, radius: 9, sides: 6, axis: 'z', flanges: 0, detail: D }),
-        { pos: [s * 26, 40, -94] });
-    }
+    b.add('greeble', G.pipeRun({ length: 300, radius: 13, sides: 6, axis: 'x', flanges: 1, detail: D }),
+      { pos: [-322, -78, -118] });
   }
 
-  b.lightRun([0, 46, -20], [0, 46, -140], [0, 1, 0], { max: 7 });
+  b.lightRun([-300, -74, -108], [300, -74, -108], [0, 1, 0], { max: 12 });
 
   return b.finish('engine_thruster_upgrade');
 }
@@ -78,23 +115,30 @@ registerModule({
   hardpoint: 'engine',
   tier: 1,
   faction: 'coalition',
-  description: 'A main drive that actually fits the well, plus two outriggers. The ship has '
-    + 'been limping on auxiliaries since you inherited it; this is the day that stops.',
+  description: 'A main drive that actually fits the well, plus three mismatched outriggers on a '
+    + '620 m spar slung under the stern - two to port, one to starboard. The ship has been '
+    + 'limping on auxiliaries since you inherited it; this is the day that stops.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 720,
   build: buildThrusterUpgrade,
   grants: { thrust: 0.55, turnRate: 0.15 },
-  silhouetteTags: ['bells', 'plug', 'aft-reach', 'engine'],
+  silhouetteTags: ['bells', 'wide-bar', 'slung-low', 'engine'],
 });
 
 // ---------------------------------------------------------------------------
-// T2 — Concord Reactor Uprate
+// T2 — Concord Reactor Uprate        THE X
 // ---------------------------------------------------------------------------
 
 /**
  * A fusion core in the drive well with four radiators in a cross around it. The
  * cross is the whole silhouette idea: from directly astern this is an X, and no
  * other module in the library makes an X.
+ *
+ * The arms now reach 225 m from the axis rather than 128. At 128 the tips landed
+ * inside the hull's own 198 m half-beam over the drive pods, so the X was a
+ * decoration on a stern that was already that wide; at 225 the X IS the stern.
+ * The four spans are also unequal - 246 / 218 / 246 / 196 - because a Concord hull
+ * is clean, not machined.
  */
 function buildReactorUprate(ctx) {
   const b = new ModuleBuilder(ctx, 'concord');
@@ -103,29 +147,29 @@ function buildReactorUprate(ctx) {
   b.add('hull', G.prism(WELL, -70, -2, { capFront: true, capBack: false }), null);
   b.graft([0, 0, -6], AFT, 44);
 
-  // The core: a big faceted drum protruding aft.
-  b.add('hull', G.pipeRun({ length: 128, radius: 50, sides: 8, axis: 'z', flanges: 0, detail: D }),
-    { pos: [0, 0, -196] });
-  b.add('plating', G.hexStrut({ length: 34, radius: 54, radiusEnd: 44, axis: 'z', detail: D }),
-    { pos: [0, 0, -70], rot: AFT });
-  b.glow([0, 0, -202], 44, AFT);
+  // The core: a big faceted drum protruding a long way aft, so the X has a hub.
+  b.add('hull', G.pipeRun({ length: 168, radius: 58, sides: 8, axis: 'z', flanges: 0, detail: D }),
+    { pos: [0, 0, -244] });
+  b.add('plating', G.hexStrut({ length: 46, radius: 64, radiusEnd: 50, axis: 'z', detail: D }),
+    { pos: [0, 0, -74], rot: AFT });
+  b.glow([0, 0, -252], 52, AFT);
 
-  // Four radiators in a cross. Concord runs them hot and clean.
-  const fins = full ? [0, 1, 2, 3] : [0, 2];
-  for (const i of fins) {
-    const a = i * HALF_PI + 0.78;
+  // Four radiators in a cross, on the diagonals, unequal spans.
+  const arms = full ? [[0.78, 246], [2.35, 218], [3.92, 246], [5.50, 196]] : [[0.78, 246], [3.92, 246]];
+  for (const [a, span] of arms) {
     b.add('plating', G.radiatorFin({
-      chord: 96, span: 118, thickness: 6, sweep: -34, tipChord: 56, detail: D,
-    }), { pos: [Math.cos(a) * 34, Math.sin(a) * 34, -196], rot: [0, 0, a - HALF_PI] });
+      chord: 150, span, thickness: 9, sweep: -54, tipChord: 88, rim: 11, detail: D,
+    }), { pos: [Math.cos(a) * 54, Math.sin(a) * 54, -248], rot: [0, 0, a - HALF_PI] });
   }
 
-  // Two coolant towers on the plug face, unequal.
-  b.add('greeble', G.pipeRun({ length: 74, radius: 13, sides: 6, axis: 'z', flanges: full ? 1 : 0, detail: D }),
-    { pos: [-40, 30, -140] });
-  b.add('greeble', G.pipeRun({ length: 52, radius: 11, sides: 6, axis: 'z', flanges: 0, detail: D }),
-    { pos: [42, 26, -120] });
+  // Two coolant towers on the plug face, unequal, standing above the X's arms so
+  // the cross has a top that is not one of its own arms.
+  b.add('greeble', G.pipeRun({ length: 128, radius: 20, sides: 6, axis: 'z', flanges: full ? 1 : 0, detail: D }),
+    { pos: [-58, 58, -190] });
+  b.add('greeble', G.pipeRun({ length: 88, radius: 16, sides: 6, axis: 'z', flanges: 0, detail: D }),
+    { pos: [62, 44, -160] });
 
-  b.lightRun([0, 56, -74], [0, 56, -194], [0, 1, 0], { max: 7 });
+  b.lightRun([0, 76, -84], [0, 76, -244], [0, 1, 0], { max: 7 });
 
   return b.finish('engine_reactor_uprate');
 }
@@ -136,24 +180,29 @@ registerModule({
   hardpoint: 'engine',
   tier: 2,
   faction: 'concord',
-  description: 'A Concord fusion core dropped into your drive well, with the four radiators it '
-    + 'needs to survive. From astern your ship becomes an X.',
+  description: 'A Concord fusion core dropped into your drive well, with the four 250 m radiators '
+    + 'it needs to survive. From astern your ship becomes an X six hundred metres across.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 1180,
   build: buildReactorUprate,
   grants: { powerOutput: 46, thrust: 0.18 },
-  silhouetteTags: ['cross', 'radiators', 'core', 'aft-reach'],
+  silhouetteTags: ['cross', 'radiators', 'core', 'diagonal'],
 });
 
 // ---------------------------------------------------------------------------
-// T3 — Derelict Jump Drive
+// T3 — Derelict Jump Drive        THE CIRCLE
 // ---------------------------------------------------------------------------
 
 /**
- * A 300 m field ring standing off the stern on three unequal pylons, with nothing
+ * A 608 m field ring (320 m nominal radius, 304 across the flats of a ten-sided
+ * band) standing off the stern on three unequal pylons, with nothing
  * inside it. It is the single most recognisable object in the library from any
  * distance and any angle, which is right: the jump drive is the module that decides
  * where a run goes.
+ *
+ * The ring is now wider than the hull is anywhere - 608 m against the cruiser's
+ * 396 m maximum beam - and it stands 240 m clear of the transom, so at every orbit
+ * angle there is a band of stars between the ring and the ship it is bolted to.
  */
 function buildJumpDrive(ctx) {
   const b = new ModuleBuilder(ctx, 'derelict');
@@ -163,38 +212,38 @@ function buildJumpDrive(ctx) {
   b.graft([0, 0, -6], AFT, 44);
 
   // Central spindle out to the ring plane.
-  b.add('hull', G.hexStrut({ length: 118, radius: 26, radiusEnd: 17, axis: 'z', detail: D }),
-    { pos: [0, 0, -66], rot: AFT });
+  b.add('hull', G.hexStrut({ length: 190, radius: 32, radiusEnd: 19, axis: 'z', detail: D }),
+    { pos: [0, 0, -70], rot: AFT });
 
-  // The ring. A real band with a hole through it — you can see stars inside it.
-  b.add('plating', ringBand({ outer: 150, inner: 116, z0: -18, z1: 18, sides: 10, detail: D }),
-    { pos: [0, 0, -196] });
+  // The ring. A real band with a hole through it - you can see stars inside it.
+  b.add('plating', ringBand({ outer: 320, inner: 262, z0: -26, z1: 26, sides: 10, detail: D }),
+    { pos: [0, 0, -276] });
 
   // Three pylons from the plug out to the ring. Unequal, as always.
   const pylons = [0.3, 2.5, 4.4];
   for (let i = 0; i < pylons.length; i++) {
     const a = pylons[i];
     const ca = Math.cos(a), sa = Math.sin(a);
-    const r = 132;
+    const r = 288;
     b.add('hull', aimed(
-      G.hexStrut({ length: 150 + i * 8, radius: 11, radiusEnd: 8, axis: 'z', detail: D }),
-      [ca * 0.86, sa * 0.86, -1], [ca * 18, sa * 18, -62],
+      G.hexStrut({ length: 316 + i * 12, radius: 15, radiusEnd: 10, axis: 'z', detail: D }),
+      [ca * 0.94, sa * 0.94, -1], [ca * 26, sa * 26, -66],
     ));
     // Field emitter where the pylon meets the ring.
-    b.add('greeble', G.panelledSlab({ width: 26, height: 26, depth: 30, chamfer: 6, detail: D }),
-      { pos: [ca * r, sa * r, -196] });
-    b.glowDir([ca * (r - 22), sa * (r - 22), -196], 26, [-ca, -sa, 0]);
+    b.add('greeble', G.panelledSlab({ width: 40, height: 40, depth: 44, chamfer: 8, detail: D }),
+      { pos: [ca * r, sa * r, -276] });
+    b.glowDir([ca * (r - 34), sa * (r - 34), -276], 38, [-ca, -sa, 0]);
   }
 
   if (full) {
     // Two conduits hanging off the spindle at angles that agree with nothing.
     for (const a of [1.4, 3.8]) {
-      b.add('greeble', aimed(G.cappedConduit({ length: 44, radius: 8, axis: 'z', detail: D }),
-        [Math.cos(a), Math.sin(a), -0.4], [Math.cos(a) * 24, Math.sin(a) * 24, -120]));
+      b.add('greeble', aimed(G.cappedConduit({ length: 66, radius: 12, axis: 'z', detail: D }),
+        [Math.cos(a), Math.sin(a), -0.4], [Math.cos(a) * 34, Math.sin(a) * 34, -164]));
     }
   }
 
-  b.lightRun([0, 40, -20], [0, 40, -160], [0, 1, 0], { max: 8 });
+  b.lightRun([0, 52, -24], [0, 52, -230], [0, 1, 0], { max: 8 });
 
   return b.finish('engine_jump_drive');
 }
@@ -202,31 +251,46 @@ function buildJumpDrive(ctx) {
 registerModule({
   id: 'engine_jump_drive',
   // NOTE FOR THE HARDPOINT OWNER: tier 3, and hardpoints.js caps the engine mount
-  // at maxTier 2. Reported, not edited — see the stream report.
+  // at maxTier 2. Reported, not edited - see the stream report.
   name: 'Derelict Jump Ring',
   hardpoint: 'engine',
   tier: 3,
   faction: 'derelict',
-  description: 'A 300 m field ring on three pylons, with nothing inside it and no moving parts. '
-    + 'It takes you to systems the Coalition has no charts for.',
+  description: 'A 608 m field ring on three pylons, with nothing inside it and no moving parts. '
+    + 'It is wider than your ship and it takes you to systems the Coalition has no charts for.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 1900,
   build: buildJumpDrive,
   grants: { powerOutput: -24, thrust: 0.10, jumpRange: 3 },
-  silhouetteTags: ['ring', 'aft-reach', 'alien', 'see-through'],
+  silhouetteTags: ['ring', 'circle', 'alien', 'see-through'],
 });
 
 // ---------------------------------------------------------------------------
-// T1 — Coalition Stern Armour Belt
+// T1 — Coalition Stern Armour Belt        THE RECTANGLE
 // ---------------------------------------------------------------------------
 
 /**
- * A stern plug and a wrap of belt armour. It gives up the drive well — you cannot
- * have this and an engine — and in exchange the back of the ship becomes a flat
- * armoured face 40 m wider than the engine block, with buttresses.
+ * D-list defect, quoted: "the stern is slightly bigger and nothing more."
  *
- * It is the quietest module in the library in silhouette terms, and that is an
- * honest reflection of what it is: armour does not stick out, it squares off.
+ * That was fair. The old version was a stepped transom 316 m across on a stern
+ * block that is already 312 m across, i.e. a two-metre-a-side change to an outline
+ * the hull already had, and it was doing it with the same rounded octagonal section
+ * as everything else on the ship. Two things fix it, and neither is "make it a bit
+ * wider":
+ *
+ *   1. IT IS A RECTANGLE. Not an octagon, not a drum, not a fan. A 520 x 420 m flat
+ *      slab with square corners and a raised rim, welded over the back of the ship.
+ *      Every other module in the library is round, spiky or open; this one is the
+ *      only orthogonal shape in the set, and at thirty pixels a square reads as a
+ *      square when a slightly-larger octagon reads as nothing at all.
+ *   2. IT HAS SKIRTS. Two armour skirts sweep 300 m FORWARD along the flanks from
+ *      the transom, standing 40 m proud of the hull. So the module is not only a
+ *      face at the back, it is a change to the ship's PLAN outline for a fifth of
+ *      its length - which is where "and nothing more" came from: the old one had no
+ *      extent in z at all.
+ *
+ * It gives up the drive well - you cannot have this and an engine - and in exchange
+ * the back of the ship becomes a wall.
  */
 function buildArmourBelt(ctx) {
   const b = new ModuleBuilder(ctx, 'coalition');
@@ -236,54 +300,56 @@ function buildArmourBelt(ctx) {
   b.add('hull', G.prism(WELL, -76, -4, { capFront: true, capBack: false }), null);
   b.graft([0, 0, -8], AFT, 42);
 
-  // The transom: a stepped armoured face, wider and taller than the engine block.
+  // THE PLATE. Square corners, deliberately: `rectProfile`, not `octProfile`.
   b.add('plating', G.loft([
-    { z: -132, points: G.octProfile(178, 104, -112, 40, 26, 30) },
-    { z: -96, points: G.octProfile(186, 110, -118, 42, 28, 32) },
-    { z: -78, points: G.octProfile(168, 96, -104, 38, 24, 28) },
+    { z: -150, points: G.rectProfile(468, 372) },
+    { z: -118, points: G.rectProfile(520, 420) },
+    { z: -96, points: G.rectProfile(506, 408) },
   ], { capFront: true, capBack: false }), null);
-
-  // Belt plates wrapping the block's flanks, standing proud of it.
-  for (const s of [-1, 1]) {
-    b.add('plating', G.armourBelt({
-      length: 150, height: 96, thickness: 16, plates: full ? 3 : 2, gap: 16, chamfer: 12, detail: D,
-    }), { pos: [s * 168, 0, -20] });
-  }
-  // And across the top and bottom of the block.
-  for (const s of [-1, 1]) {
-    b.add('plating', G.armourBelt({
-      length: 140, height: 90, thickness: 14, plates: full ? 2 : 1, gap: 18, chamfer: 10, detail: D,
-    }), { pos: [0, s * 92, -20], rot: [0, 0, HALF_PI] });
-  }
-
-  // A SECOND, SQUARER STEP rather than four splayed buttresses.
-  //
-  // The buttresses that used to be here were four wedges canted out of the corners,
-  // which gave the module a spiky outline - and a spiky outline off a drum is
-  // exactly what the derelict flak cluster is, so in silhouette the two were the
-  // same object at two sizes. This is armour. Armour does not stick out, it SQUARES
-  // OFF: the stern is now a flat rectangular face inside a raised rectangular rim,
-  // and the read is "somebody welded a door over the back of the ship".
+  // The raised rim around it, so the flat face has an edge that takes its own value.
   b.add('hull', G.loft([
-    { z: -150, points: G.rectProfile(302, 236) },
-    { z: -136, points: G.rectProfile(316, 248) },
+    { z: -172, points: G.rectProfile(482, 386) },
+    { z: -150, points: G.rectProfile(508, 410) },
   ], { capFront: true, capBack: false }), null);
+
+  // THE SKIRTS. Two armour runs sweeping forward along the flanks, standing proud
+  // of the hull. This is the part the old module did not have.
+  for (const s of [-1, 1]) {
+    b.add('plating', G.loft([
+      { z: -120, points: G.rectProfile(46, 300, s * 236, -20) },
+      { z: 40, points: G.rectProfile(38, 250, s * 214, -14) },
+      { z: 190, points: G.rectProfile(30, 170, s * 186, -6) },
+    ], { capFront: true, capBack: true }), null);
+    if (full) {
+      b.add('plating', G.armourBelt({
+        length: 250, height: 120, thickness: 20, plates: 3, gap: 22, chamfer: 14, detail: D,
+      }), { pos: [s * 248, -20, 30] });
+    }
+  }
+  // And a cap plate across the top and bottom of the block, squaring it off.
+  for (const s of [-1, 1]) {
+    b.add('plating', G.panelledSlab({ width: 430, height: 30, depth: 210, chamfer: 0, detail: D }),
+      { pos: [0, s * 186, 10] });
+  }
+
   if (full) {
-    // Corner cleats flush with the rim, not wedges cantilevered off it.
+    // Corner cleats flush with the rim, not wedges cantilevered off it: armour does
+    // not stick out, it squares off. Spiky corners here made this read as the same
+    // object as the derelict flak cluster at two different sizes.
     for (const sx of [-1, 1]) {
       for (const sy of [-1, 1]) {
-        b.add('hull', G.panelledSlab({ width: 44, height: 44, depth: 26, detail: D }),
-          { pos: [sx * 136, sy * 102, -136] });
+        b.add('hull', G.panelledSlab({ width: 62, height: 62, depth: 40, detail: D }),
+          { pos: [sx * 226, sy * 178, -140] });
       }
     }
   }
   // Two bolted blanks where the drive plumbing used to run.
-  b.add('greeble', G.cappedConduit({ length: 30, radius: 13, axis: 'z', detail: D }),
-    { pos: [-56, 46, -132], rot: AFT });
-  b.add('greeble', G.cappedConduit({ length: 22, radius: 11, axis: 'z', detail: D }),
-    { pos: [64, -40, -132], rot: AFT });
+  b.add('greeble', G.cappedConduit({ length: 42, radius: 19, axis: 'z', detail: D }),
+    { pos: [-84, 74, -156], rot: AFT });
+  b.add('greeble', G.cappedConduit({ length: 30, radius: 15, axis: 'z', detail: D }),
+    { pos: [96, -64, -156], rot: AFT });
 
-  b.lightRun([-96, 108, -100], [96, 108, -100], [0, 1, 0], { max: 10 });
+  b.lightRun([-200, 202, -110], [200, 202, -110], [0, 1, 0], { max: 11 });
 
   return b.finish('engine_armour_belt');
 }
@@ -294,11 +360,12 @@ registerModule({
   hardpoint: 'engine',
   tier: 1,
   faction: 'coalition',
-  description: 'Belt armour and a stepped transom welded over the drive well. You give up your '
-    + 'main engine for it. Nothing that comes at your stern gets through.',
+  description: 'A 520 x 420 m armour plate welded flat over your drive well, with skirts running '
+    + '300 m forward along both flanks. You give up your main engine for it. Nothing that comes '
+    + 'at your stern gets through, and from astern you are a rectangle.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 1400,
   build: buildArmourBelt,
   grants: { armour: 3600, thrust: -0.12 },
-  silhouetteTags: ['transom', 'squared-stern', 'belted', 'wide'],
+  silhouetteTags: ['transom', 'rectangle', 'skirted', 'orthogonal'],
 });

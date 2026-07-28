@@ -431,6 +431,104 @@ export class ModuleBuilder {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Outline measurement
+// ---------------------------------------------------------------------------
+
+/**
+ * OUTLINE SIGNATURES OVER A SHARED AXIS.
+ *
+ * The acceptance criterion this exists for is "every module identifiable from
+ * silhouette alone at max tactical zoom", which sat at PARTIAL with the honest
+ * admission that the evidence was a contact sheet and not a measurement. This is
+ * the measurement, and it is deliberately the same one the loadout probe uses:
+ * bin along z, record half-beam, top and bottom per bin.
+ *
+ * THE SHARED AXIS IS THE POINT. `hardpoints.js#getSilhouetteSignature` bins over
+ * the BARE hull's z range, so a bow module reaching to z = +966 on a hull that ends
+ * at +702 has a quarter of a kilometre of itself folded into the last bin - and
+ * overhang is exactly what a module is supposed to contribute. Binning every
+ * variant of one mount over the union of their envelopes scores that overhang where
+ * it is.
+ *
+ * @param {Array<{id:string, objects:THREE.Object3D[]}>} entries
+ * @returns {Array<{id:string, bins:Array}>}
+ */
+export function outlineSignatures(entries, { bins = 32 } = {}) {
+  const v = new THREE.Vector3();
+  let zMin = Infinity, zMax = -Infinity;
+  const each = (objects, fn) => {
+    for (const root of objects) {
+      // NOT enough on its own: this updates `root` and its descendants from
+      // `root.parent.matrixWorld`, which is only correct if the caller has already
+      // updated the hierarchy above it. Callers that hand in sockets' children must
+      // call `updateMatrixWorld(true)` on the hull root first - see audit.mjs.
+      root.updateMatrixWorld(true);
+      root.traverse((o) => {
+        if (!o.isMesh || o.isInstancedMesh || !o.visible) return;
+        const pos = o.geometry?.getAttribute('position');
+        if (!pos) return;
+        const step = pos.count > 3000 ? 3 : 1;
+        for (let i = 0; i < pos.count; i += step) {
+          v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+          fn(v);
+        }
+      });
+    }
+  };
+  for (const e of entries) each(e.objects, (p) => {
+    if (p.z < zMin) zMin = p.z;
+    if (p.z > zMax) zMax = p.z;
+  });
+  const span = Math.max(1e-6, zMax - zMin);
+
+  return entries.map((e) => {
+    const out = [];
+    for (let i = 0; i < bins; i++) out.push({ halfWidth: 0, top: -Infinity, bottom: Infinity, count: 0 });
+    each(e.objects, (p) => {
+      let k = Math.floor(((p.z - zMin) / span) * bins);
+      if (k < 0) k = 0; else if (k >= bins) k = bins - 1;
+      const bin = out[k];
+      const ax = Math.abs(p.x);
+      if (ax > bin.halfWidth) bin.halfWidth = ax;
+      if (p.y > bin.top) bin.top = p.y;
+      if (p.y < bin.bottom) bin.bottom = p.y;
+      bin.count++;
+    });
+    for (const bin of out) if (!bin.count) { bin.top = 0; bin.bottom = 0; }
+    return { id: e.id, bins: out };
+  });
+}
+
+/** Mean and peak outline difference between two signatures, in metres. */
+export function outlineDivergence(a, b) {
+  let s = 0, n = 0, mx = 0;
+  for (let i = 0; i < a.bins.length; i++) {
+    const d = [
+      Math.abs(a.bins[i].halfWidth - b.bins[i].halfWidth),
+      Math.abs(a.bins[i].top - b.bins[i].top),
+      Math.abs(a.bins[i].bottom - b.bins[i].bottom),
+    ];
+    for (const t of d) { s += t; if (t > mx) mx = t; }
+    n += 3;
+  }
+  return { mean: s / n, max: mx };
+}
+
+/**
+ * Targets for a SINGLE-MODULE swap on the 1400 m cruiser, in metres.
+ *
+ * At maximum tactical zoom the hull is about thirty pixels long, so one pixel is
+ * 1400/30 = 46.7 m - which is where ship-language.md §6 M2's "45 m" comes from. A
+ * full loadout changes six mounts at once and is held to that mean across the whole
+ * outline. Two fits of ONE mount can only differ where that mount is, so holding
+ * them to the same whole-hull mean would be a rule about how many mounts a ship has
+ * rather than about whether the player can tell two modules apart. The peak is what
+ * carries this criterion: somewhere on the outline the two must differ by three
+ * pixels, and the mean is checked over the BINS THE TWO MODULES ACTUALLY TOUCH.
+ */
+export const MODULE_DIVERGENCE = { mean: 46.7, max: 140 };
+
 /** Count triangles in a built module without a GPU. Used by the audit. */
 export function countTriangles(object) {
   let t = 0;

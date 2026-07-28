@@ -121,7 +121,23 @@ export const POI_GIANT_ORBIT = registerPOI({
   build(ctx, world) {
     // Captured rock left in orbit plus a shattered fleet; see FIELD_PRESETS.
     return assemble('giant-orbit', ctx, world, {
-      lighting: { shadowRadius: 3600 },
+      /**
+       * The shadow box is a SELF-SHADOWING box, not a scene box.
+       *
+       * These were 3600 / 3800 / 3200, which contradicted poi.js's own note that the
+       * box had been halved to 1750 to get the normal-offset bias down. At 3600 m
+       * over a 2048 map a texel is 3.5 m and the normal offset is 4.9 m, and a
+       * contact shadow under a 40 m overhang does not survive being moved five
+       * metres. A capital ship that does not shadow itself cannot read as massive,
+       * and inter-ship shadows in vacuum land on nothing and are never seen — so the
+       * box is sized to the hull plus its immediate escorts and nothing else.
+       * Then it was MEASURED rather than reasoned about. `tools/shadowcheck.mjs`
+       * diffs the close shot against the same frame with `key.castShadow = false`,
+       * and at 2000 m the cast shadows covered 5.3% of the lit hull at a mean delta
+       * of 51/255 — live, but eroded at the near end of every contact shadow by a
+       * 2.6 m normal offset. 1400 m gives 1.37 m texels and a 1.85 m offset.
+       */
+      lighting: { shadowRadius: 1400 },
     });
   },
 });
@@ -144,7 +160,7 @@ export const POI_GRAVEYARD = registerPOI({
   build(ctx, world) {
     // Decades old, three liveries, almost no rock; see FIELD_PRESETS.
     return assemble('graveyard', ctx, world, {
-      lighting: { shadowRadius: 3800 },
+      lighting: { shadowRadius: 1400 },
     });
   },
 });
@@ -174,7 +190,7 @@ export const POI_NEAR_STAR = registerPOI({
      * through.
      */
     return assemble('near-star', ctx, world, {
-      lighting: { shadowRadius: 3200 },
+      lighting: { shadowRadius: 1400 },
     });
   },
 });

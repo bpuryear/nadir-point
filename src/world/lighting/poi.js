@@ -277,7 +277,35 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
 
   const sunDir = (opts.sunDir ?? spec.sunDir).clone().normalize();
 
-  const shadowRadius = opts.shadowRadius ?? 1750;
+  /**
+   * SHADOW BOX SIZE IS THE SHADOW'S RESOLUTION, AND IT WAS STILL TOO BIG.
+   *
+   * Measured with `node tools/shadowcheck.mjs`, which poses the close shot, shoots
+   * it, sets `key.castShadow = false`, shoots it again and diffs. That settles two
+   * passes of argument from screenshots:
+   *
+   *   before: 5.3% of lit pixels change, mean delta 51/255, worst 166
+   *
+   * So cast shadows were LIVE and were landing on the hull — the acceptance doc's
+   * "cast shadows are still not visible on hulls" and round-one's "the ship does not
+   * self-shadow at all" are both wrong as absolutes, and D23's bias fix did work.
+   * What was true is that 5.3% coverage on a hull whose lit deck measured sRGB 0.36
+   * is a small absolute step in a dark frame, so it read as nothing.
+   *
+   * Two changes make it read. The key going 6.8 -> 14.0 (palette.js) doubles the
+   * absolute contrast of every shadow that was already there. And the box comes in
+   * from 1750 m to 1200 m, which is the honest size: it needs to hold a 1400 m hull
+   * plus whatever is close enough for a shadow to LAND on, and in vacuum an inter-ship
+   * shadow at 2 km lands on nothing and is never seen. That takes the texel from
+   * 1.71 m to 1.17 m and the normal offset — which is stated in texels because that is
+   * what it is physically about — from 2.31 m to 1.58 m. A 2.3 m offset on a hull
+   * whose contact shadows are 20-60 m long was eroding the near end of every one of
+   * them, which is exactly where a contact shadow does its work.
+   *
+   * The depth range comes in with it: it was 8400 m for a 1400 m ship, which is
+   * depth precision spent on empty space.
+   */
+  const shadowRadius = opts.shadowRadius ?? 1200;
   const shadowMapSize = opts.shadowMapSize ?? 2048;
 
   // --- 1. the key ----------------------------------------------------------
@@ -287,8 +315,12 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
   key.target.position.set(0, 0, 0);
   key.castShadow = opts.shadows !== false;
   key.shadow.mapSize.set(shadowMapSize, shadowMapSize);
-  key.shadow.camera.near = KEY_DISTANCE - shadowRadius * 2.2;
-  key.shadow.camera.far = KEY_DISTANCE + shadowRadius * 2.6;
+  // +/-1.8 and 2.0 radii along the light axis, not 2.2 and 2.6. The box is square in
+  // the light's own plane, so the worst-case content depth is the diagonal, 1.41
+  // radii; 1.8 covers that with margin for the mast at y = +368 and for debris off
+  // the plane, and nothing beyond it can cast a shadow that lands inside the box.
+  key.shadow.camera.near = KEY_DISTANCE - shadowRadius * 1.8;
+  key.shadow.camera.far = KEY_DISTANCE + shadowRadius * 2.0;
   key.shadow.camera.left = -shadowRadius;
   key.shadow.camera.right = shadowRadius;
   key.shadow.camera.top = shadowRadius;
@@ -301,8 +333,24 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
   // geometry that casts them. At 1750 m / 2048 that is ~2.4 m, against the 13 m the
   // old `shadowRadius / 260` produced.
   const texelM = (shadowRadius * 2) / shadowMapSize;
-  key.shadow.bias = -0.0004;
-  key.shadow.normalBias = Math.max(1.2, texelM * 1.4);
+  /**
+   * `shadow.bias` IS NOT IN METRES AND THAT IS WHY IT WAS WRONG.
+   *
+   * three adds it to the normalised depth of the shadow comparison, so for an
+   * ORTHOGRAPHIC shadow camera it is a fraction of (far - near). This rig's depth
+   * range is thousands of metres, so the -0.0004 that had been sitting here since
+   * the rig was written was not "a small bias" — at shadowRadius 3600 it was
+   * 0.0004 x 17280 m = **6.9 metres of peter-panning**, on top of a 4.9 m normal
+   * offset, on a hull whose contact shadows are 20-60 m long. Between them they
+   * pushed every self-shadow off the geometry that cast it, which is exactly the
+   * acceptance-criteria finding: 37 casters, 41 receivers, and no visible shadow on
+   * any hull.
+   *
+   * Stated in metres and converted, so it stays correct if the box ever changes.
+   */
+  const depthRangeM = (KEY_DISTANCE + shadowRadius * 2.0) - (KEY_DISTANCE - shadowRadius * 1.8);
+  key.shadow.bias = -0.35 / depthRangeM;
+  key.shadow.normalBias = Math.max(0.6, texelM * 1.35);
   key.shadow.camera.updateProjectionMatrix();
   scene.add(key);
   scene.add(key.target);
@@ -358,7 +406,11 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
    * this function. A rim anchored in world space is not a rim, it is a fourth key.
    */
   const rimSpec = pal.rim ?? { color: pal.accent, intensity: 0.9 };
-  const rimColor = col(rimSpec.color);
+  // Same reasoning as the fill's `broad`, and for the same defect: on a face the key
+  // misses entirely, the rim is the only light, so a fully saturated rim paints that
+  // face its own colour at constant value. `broad` averages it towards neutral. A rim
+  // with no `broad` stated keeps its palette colour exactly, so nothing else moves.
+  const rimColor = col(rimSpec.broad ? mix(rimSpec.color, NEUTRAL.ice, rimSpec.broad) : rimSpec.color);
   const rim = new THREE.DirectionalLight(
     rimColor,
     statedToIntensity(rimColor, rimSpec.intensity * (opts.rimScale ?? 1)),
@@ -484,8 +536,18 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
       if (_side.lengthSq() < 1e-6) _side.set(1, 0, 0);
       _side.normalize();
       const keySide = _side.dot(sunDir);
+      /**
+       * The lift used to be 0.42, and at the tactical camera's shallow 10-25 degree
+       * pitch that is enough to flip the rim's elevation POSITIVE: the "kicker" ends
+       * up above the ship shining down, lighting every deck and sponson top over its
+       * whole area at one constant value. That is a second key with a cold hue, and a
+       * broad constant-value cold light on upward-facing surfaces is exactly the
+       * "flat full-face fill on apparently arbitrary panels" blind review named.
+       * 0.28 keeps the band on the upper silhouette edge without the light climbing
+       * over the ship.
+       */
       _rimDir.copy(_fwd)
-        .addScaledVector(_up, 0.42)
+        .addScaledVector(_up, 0.28)
         .addScaledVector(_side, keySide > 0 ? -0.40 : 0.40)
         .normalize();
       rim.position.copy(_focus).addScaledVector(_rimDir, KEY_DISTANCE);

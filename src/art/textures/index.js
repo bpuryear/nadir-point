@@ -27,6 +27,7 @@ import {
   RUNNING_LIGHT_SPACING_M, RUNNING_LIGHT_TILE_M, LIGHTS_PER_TILE,
 } from './runningLights.js';
 import { hullMaps, rockMaps } from './hullMaps.js';
+import { macroField, MACRO_DEFAULTS, MACRO_DEFAULT_M, MACRO_REGION } from './macro.js';
 import { fbmField, cellularField, streakField, fieldOps } from './noise.js';
 import * as canvas2d from './canvas2d.js';
 
@@ -37,6 +38,7 @@ export {
   decals, textTexture, textCanvas, drawText, factionSigil, hazardStripes, chevrons, hullCode, DECAL_GRID,
   runningLights, glowSprite,
   hullMaps, rockMaps,
+  macroField, MACRO_DEFAULT_M, MACRO_REGION,
   fbmField, cellularField, streakField, fieldOps,
   canvas2d,
   RUNNING_LIGHT_SPACING_M, RUNNING_LIGHT_TILE_M, LIGHTS_PER_TILE,
@@ -67,6 +69,7 @@ const GENERATORS = {
   runningLights: { fn: runningLights, defaults: { faction: 'player' } },
   glow: { fn: glowSprite, defaults: { faction: 'player', size: 128 } },
   hull: { fn: hullMaps, defaults: {} },
+  macro: { fn: macroField, defaults: MACRO_DEFAULTS },
   rock: { fn: rockMaps, defaults: {} },
 };
 
@@ -148,6 +151,33 @@ export class TextureFactory {
     visit(result);
   }
 
+  /**
+   * Resident texture bytes, counting the mip chain.
+   *
+   * Defect D8 is "texture memory is unmeasured and likely too high", and the first
+   * half of that is fixable in twenty lines. Every generator here produces 8-bit
+   * RGBA, so the size is width x height x 4, and `generateMipmaps` is on for all of
+   * them, which is the familiar 4/3 series. This is an upper bound on the GPU-side
+   * cost: a driver may store an sRGB8 albedo more cheaply, and none of them will
+   * store it more expensively.
+   */
+  bytes() {
+    let total = 0;
+    const byKind = Object.create(null);
+    for (const t of this.textures) {
+      const img = t.image;
+      const w = img?.width ?? 0;
+      const h = img?.height ?? 0;
+      if (!w || !h) continue;
+      const b = w * h * 4 * (t.generateMipmaps ? 4 / 3 : 1);
+      total += b;
+      const kind = (t.name || 'unknown').split(':')[0];
+      byKind[kind] = (byKind[kind] ?? 0) + b;
+    }
+    for (const k of Object.keys(byKind)) byKind[k] = +(byKind[k] / 1048576).toFixed(2);
+    return { megabytes: +(total / 1048576).toFixed(2), byKindMB: byKind };
+  }
+
   stats() {
     return {
       cached: this.cache.size,
@@ -155,6 +185,7 @@ export class TextureFactory {
       builds: this.builds,
       hits: this.hits,
       byKind: { ...this.byKind },
+      memory: this.bytes(),
       keys: Array.from(this.cache.keys()),
     };
   }

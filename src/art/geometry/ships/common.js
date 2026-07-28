@@ -16,16 +16,44 @@
  * the number of distinct surfaces in frame stays small. A hull that wants a seventh
  * surface wants a different silhouette instead.
  *
- * RUNNING LIGHTS. Every faction hull wears the game-wide 6 m strip from
+ * RUNNING LIGHTS. Every faction hull wears the strip from
  * art/textures/runningLights.js, laid on the upper chine with U authored in METRES.
- * Two triangles a side, exact spacing, no way to lie about the ship's size. The
- * cruiser (1400 m) deliberately does not use it because 650 m of chine renders as
- * one continuous band; at 95-480 m the lamps stay resolvable, which is the whole
- * point of putting them there.
+ * Two triangles a side, exact spacing, no way to lie about the ship's size.
+ *
+ * THE SPACING IS 40 m, AND IT USED TO BE 6. That was a real defect and it is worth
+ * stating why, because it is invisible in any single picture. There are two
+ * constants in this codebase that both call themselves the game-wide running-light
+ * spacing:
+ *
+ *   core/units.js#SCALE_CUE.runningLightSpacingM      40   (shared foundation)
+ *   art/textures/runningLights.js#RUNNING_LIGHT_...    6   (the texture's own tile)
+ *
+ * The player cruiser and every bolt-on module use the first (cruiser.js#
+ * RUNNING_LIGHT_AXIS_SPACING_M, modules/kit.js#MODULE_LIGHT_SPACING_M); the faction
+ * fleet was authoring U straight in metres and therefore getting the second. So the
+ * one repeating feature in the game whose entire job is to be a RULER was 6 m on a
+ * Coalition frigate and 40 m on the cruiser flying beside it - a hull measured
+ * against its escort read six and a half times the size it is, which is precisely
+ * the failure mode ship-language.md §7 forbids ("40 m, game-wide, never
+ * overridden"). Scaling U by `LIGHT_U_PER_M` converts hull metres into texture
+ * metres, so one lamp lands every 40 m on every hull in the fleet and the fleet
+ * agrees with the cruiser.
+ *
+ * The right long-term fix is one constant, not two, and that is a change to
+ * art/textures/ and core/ which this stream does not own - noted in the report.
  */
 
 import * as THREE from 'three';
 import * as G from '../greeble.js';
+import { SCALE_CUE } from '../../../core/units.js';
+import { RUNNING_LIGHT_SPACING_M } from '../../textures/runningLights.js';
+
+/**
+ * Texture-U per hull metre. The strip texture lays a lamp every
+ * RUNNING_LIGHT_SPACING_M of U, so this is the factor that turns that into the
+ * game-wide spacing.
+ */
+export const LIGHT_U_PER_M = RUNNING_LIGHT_SPACING_M / SCALE_CUE.runningLightSpacingM;
 
 // ---------------------------------------------------------------------------
 // Surfaces
@@ -106,12 +134,35 @@ export class Buckets {
 // ---------------------------------------------------------------------------
 
 /**
- * A run of octagonal stations, the cross-section this whole game is drawn in.
- * Rows are `[z, halfWidth, top, bottom, chamferWidth, chamferTop, chamferBottom]`,
+ * A run of hull stations, the cross-section this whole game is drawn in.
+ *
+ * Rows are `[z, deckHalf, top, bottom, chamW, chamTop, chamBot, keelRatio?]`,
  * ascending in z, all metres in ship space (+Z forward, +Y up, +X starboard).
  *
  * The chamfers are not decoration. They are where every rim light in the frame
  * comes from, which is why the running-light strip is laid on the upper one.
+ *
+ * ---------------------------------------------------------------------------
+ * `keelRatio` — the eighth column, and the reason this class changed
+ * ---------------------------------------------------------------------------
+ * The rebuilt cruiser (art/geometry/cruiser.js) carries the keel half-beam
+ * independently of the deck half-beam, which is what buys naval architecture's two
+ * free curves:
+ *
+ *   TUMBLEHOME   keel < deck (0.78-0.84). The flanks slope INWARD going down, so
+ *                the upper flank catches the key and the lower flank falls into
+ *                shadow. One geometric surface reads as two values, for nothing.
+ *   FLARE        keel > deck (1.05-1.15), forward of the forefoot, so the widest
+ *                part of the bow is down at the waterline rather than up at the
+ *                deck. Flare forward plus tumblehome aft is the difference between
+ *                a ship and an extrusion (ship-language.md §2).
+ *
+ * The faction fleet was built to the OLD language and every hull was a plain
+ * `octProfile`, i.e. keelRatio 1.0 everywhere: vertical flanks, no value split, no
+ * flare. Omitting the column still gives you exactly that, so nothing breaks; the
+ * point is that a hull that wants to match the cruiser can now say so in one number
+ * per station. `hullProfile` returns the same eight points in the same winding as
+ * `octProfile`, so the two are interchangeable inside a single loft.
  */
 export class Lines {
   constructor(rows) {
@@ -135,14 +186,35 @@ export class Lines {
     return out;
   }
 
+  static profile(r) {
+    return G.hullProfile({
+      deckHalf: r[1], keelHalf: r[1] * (r[7] ?? 1),
+      top: r[2], bottom: r[3], chamW: r[4], chamTop: r[5], chamBot: r[6],
+    });
+  }
+
   stations(keepEvery = 1) {
-    return Lines.decimate(this.rows, keepEvery).map((r) => ({
-      z: r[0],
-      points: G.octProfile(r[1], r[2], r[3], r[4], r[5], r[6]),
-    }));
+    return Lines.decimate(this.rows, keepEvery).map((r) => ({ z: r[0], points: Lines.profile(r) }));
+  }
+
+  /**
+   * Stations at the listed z values ONLY, extremes always kept.
+   *
+   * This exists because `decimate` is the wrong tool for an LOD and the cruiser
+   * rebuild proved it: a blind every-other pass dropped the waist and two of three
+   * prow stations, and the ship read as a DIFFERENT CLASS at five kilometres than
+   * at three. An LOD is authored INWARD from the LOD0 silhouette by naming the
+   * stations that ARE the silhouette, never by throwing away every second one.
+   */
+  pick(zs) {
+    const keep = this.rows.filter((r, i) => zs.includes(r[0]) || i === 0 || i === this.rows.length - 1);
+    return keep.map((r) => ({ z: r[0], points: Lines.profile(r) }));
   }
 
   loft(opts = {}, keepEvery = 1) { return G.loft(this.stations(keepEvery), opts); }
+
+  /** Loft only the named stations. See `pick`. */
+  loftPick(zs, opts = {}) { return G.loft(this.pick(zs), opts); }
 
   /** Linear interpolation of the table at an arbitrary z. Clamped at both ends. */
   at(z) {
@@ -158,7 +230,45 @@ export class Lines {
     const span = b[0] - a[0];
     const t = span === 0 ? 0 : (z - a[0]) / span;
     const L = (i) => a[i] + (b[i] - a[i]) * t;
-    return { hw: L(1), top: L(2), bot: L(3), cw: L(4), ct: L(5), cb: L(6) };
+    return {
+      hw: L(1), top: L(2), bot: L(3), cw: L(4), ct: L(5), cb: L(6),
+      keel: (a[7] ?? 1) + ((b[7] ?? 1) - (a[7] ?? 1)) * t,
+    };
+  }
+
+  /**
+   * SELF-AUDIT against ship-language.md §2, in metres, normalised by hull length.
+   * Returns findings rather than throwing, because a corvette legitimately cannot
+   * afford every rule a 1400 m cruiser can. Called by probes/ships.js.
+   */
+  audit(length) {
+    const rows = this.rows;
+    const out = { flatRun: 0, minima: 0, maxima: 0, waistRatio: 1, tipBelowAxis: 0 };
+    // Longest contiguous run inside +-4% of the run's starting half-beam (R2.1).
+    for (let i = 0; i < rows.length; i++) {
+      const base = rows[i][1];
+      let j = i;
+      while (j + 1 < rows.length && Math.abs(rows[j + 1][1] - base) <= base * 0.04) j++;
+      out.flatRun = Math.max(out.flatRun, rows[j][0] - rows[i][0]);
+    }
+    // Interior extrema in the plan half-beam curve (R2.2): want exactly one of each.
+    for (let i = 1; i < rows.length - 1; i++) {
+      if (rows[i][1] < rows[i - 1][1] && rows[i][1] < rows[i + 1][1]) out.minima++;
+      if (rows[i][1] > rows[i - 1][1] && rows[i][1] > rows[i + 1][1]) out.maxima++;
+    }
+    // Waist depth (R2.3): smallest interior section against the largest.
+    const area = (r) => r[1] * 2 * (r[2] - r[3]);
+    const interior = rows.slice(1, -1);
+    if (interior.length) {
+      const lo = Math.min(...interior.map(area));
+      const hi = Math.max(...rows.map(area));
+      out.waistRatio = hi > 0 ? lo / hi : 1;
+    }
+    // Tip centre below the axis (R2.5).
+    const tip = rows[rows.length - 1];
+    out.tipBelowAxis = -((tip[2] + tip[3]) * 0.5);
+    out.flatRunFrac = out.flatRun / Math.max(1, length);
+    return out;
   }
 
   /**
@@ -201,8 +311,9 @@ export const mirrorOutline = (o) => o.map(([x, z]) => [-x, z]).reverse();
 
 /**
  * THE SCALE CUE. A strip along the upper chine from z0 to z1 on one side, with U
- * authored in METRES so the registry's running-light texture lays down exactly one
- * lamp every 6 m and a beacon every 48 m. Two triangles.
+ * authored in HULL METRES and scaled by `LIGHT_U_PER_M` so the registry's
+ * running-light texture lays down exactly one lamp every
+ * SCALE_CUE.runningLightSpacingM - see the file header. Two triangles.
  *
  * @param {Lines} lines
  * @param {number} side  -1 port, +1 starboard
@@ -218,18 +329,18 @@ export function chineStrip(lines, z0, z1, side, { width = 1.6, offset = 0.35 } =
     [side * (b.x + b.nx * offset - cb[0]), b.y + b.ny * offset - cb[1], z1],
     [side * (b.x + b.nx * offset + cb[0]), b.y + b.ny * offset + cb[1], z1],
   ];
-  const lengthM = Math.abs(z1 - z0);
-  return quad(p, [[0, 0], [0, 1], [lengthM, 1], [lengthM, 0]], [side * a.nx, a.ny, 0]);
+  const u = Math.abs(z1 - z0) * LIGHT_U_PER_M;
+  return quad(p, [[0, 0], [0, 1], [u, 1], [u, 0]], [side * a.nx, a.ny, 0]);
 }
 
 /**
  * A free-standing emissive strip between two points, facing `normal`. Used where a
  * hull has no chine to sit on - Concord's flush flanks, the derelict's vanes.
- * U is metres, same contract as `chineStrip`.
+ * Same U contract as `chineStrip`.
  */
 export function lightRun(from, to, normal, width = 1.6) {
   const d = new THREE.Vector3(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
-  const lengthM = d.length();
+  const lengthM = d.length() * LIGHT_U_PER_M;
   d.normalize();
   const n = new THREE.Vector3(...normal).normalize();
   const side = new THREE.Vector3().crossVectors(n, d).normalize().multiplyScalar(width * 0.5);
@@ -284,6 +395,18 @@ export function glowSlot(width, height) {
 // Audit (headless)
 // ---------------------------------------------------------------------------
 
+/** Collapse every damage group into `core`, keeping surfaces separate. */
+function mergeBuckets(buckets) {
+  const map = new Map();
+  for (const b of buckets) {
+    const key = `core/${b.surface}`;
+    let e = map.get(key);
+    if (!e) { e = { key, group: 'core', surface: b.surface, uv: b.uv, parts: [] }; map.set(key, e); }
+    for (const p of b.parts) e.parts.push(p);
+  }
+  return Array.from(map.values());
+}
+
 /**
  * Merge every bucket and report triangles and bounds without a GPU. This is the
  * only honest way to argue about a budget, and it runs in node.
@@ -309,6 +432,98 @@ export function auditParts(partsFor, rng, lod = 0) {
     geo.dispose();
   }
   return { triangles, draws, bounds, bySurface };
+}
+
+/**
+ * NORMALISED SILHOUETTE SIGNATURE — the measurement behind "every faction ship
+ * class distinguishable from every other".
+ *
+ * That criterion has sat at PARTIAL through two passes on the strength of somebody
+ * looking at the sheet and saying the pairs looked different, which is exactly the
+ * kind of judgement that quietly rots as hulls get edited. This turns it into a
+ * number, using the same method the loadout probe already uses for modules: bin the
+ * hull along z and record the outline in each bin.
+ *
+ * Two differences from the loadout signature, both deliberate:
+ *
+ *   1. It is NORMALISED BY LENGTH. Two classes 95 m and 900 m long are trivially
+ *      tellable apart by size, and a metric that scored them apart on size would
+ *      pass a fleet of thirteen identical shapes at thirteen sizes. The question
+ *      this metric asks is the one the silhouette sheet asks: with both hulls drawn
+ *      at the same length, is the SHAPE different?
+ *   2. Emissive surfaces are excluded, because the sheet hides them - a lamp is not
+ *      outline.
+ *
+ * Returned figures are fractions of hull length. Multiply by a reference length to
+ * read them as metres at that size.
+ */
+export function silhouetteSignature(partsFor, rng, { lod = 0, bins = 24 } = {}) {
+  const { buckets } = partsFor({ rng, lod });
+  const pts = [];
+  const box = new THREE.Box3();
+  const v = new THREE.Vector3();
+  for (const b of buckets) {
+    if (RAW_SURFACES.has(b.surface)) continue;   // lamps and plumes are not outline
+    const geo = G.mergeParts(b.parts, { uv: false });
+    if (!geo) continue;
+    const pos = geo.getAttribute('position');
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      pts.push(v.x, v.y, v.z);
+      box.expandByPoint(v);
+    }
+    geo.dispose();
+  }
+  const L = Math.max(1e-6, box.max.z - box.min.z);
+  const out = [];
+  for (let i = 0; i < bins; i++) out.push({ halfWidth: 0, top: -Infinity, bottom: Infinity, count: 0 });
+  for (let i = 0; i < pts.length; i += 3) {
+    const x = pts[i], y = pts[i + 1], z = pts[i + 2];
+    let k = Math.floor(((z - box.min.z) / L) * bins);
+    if (k < 0) k = 0; else if (k >= bins) k = bins - 1;
+    const bin = out[k];
+    const ax = Math.abs(x) / L;
+    if (ax > bin.halfWidth) bin.halfWidth = ax;
+    const ty = y / L;
+    if (ty > bin.top) bin.top = ty;
+    if (ty < bin.bottom) bin.bottom = ty;
+    bin.count++;
+  }
+  // A hull with a genuine through-void has bins with no geometry at all. Those are
+  // scored as zero extent, which is the honest answer: at that station the
+  // silhouette is background, and a class that is empty where another is solid is
+  // exactly the difference this metric should reward.
+  for (const bin of out) if (!bin.count) { bin.top = 0; bin.bottom = 0; }
+  return { bins: out, length: L, beam: box.max.x - box.min.x, height: box.max.y - box.min.y };
+}
+
+/**
+ * Mean and max outline divergence between two normalised signatures, expressed at
+ * a reference length so the number is readable in metres.
+ *
+ * THE THRESHOLD, and where it comes from. ship-language.md §0/§8 fix the hardest
+ * read in the game at "30 px": at maximum tactical zoom a capital hull is about
+ * thirty pixels long, and silhouette is the only information the player has. One
+ * pixel is therefore L/30 = 3.3% of the hull's length. Two classes whose outlines
+ * differ by less than one pixel at that read are, literally, the same shape on
+ * screen. So: mean divergence >= 3.3% of L, peak divergence >= 10% of L (three
+ * pixels somewhere along the hull, which is what makes the difference findable
+ * rather than merely present).
+ */
+export const CLASS_DIVERGENCE = { mean: 0.0333, max: 0.10 };
+
+export function silhouetteDivergence(a, b, refLength = 1) {
+  let s = 0, n = 0, mx = 0;
+  for (let i = 0; i < a.bins.length; i++) {
+    const d = [
+      Math.abs(a.bins[i].halfWidth - b.bins[i].halfWidth),
+      Math.abs(a.bins[i].top - b.bins[i].top),
+      Math.abs(a.bins[i].bottom - b.bins[i].bottom),
+    ];
+    for (const t of d) { s += t; if (t > mx) mx = t; }
+    n += 3;
+  }
+  return { mean: (s / n) * refLength, max: mx * refLength };
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +570,17 @@ export function buildShip(ctx, { id, faction, partsFor, length, levels = 3 }) {
   for (let lod = 0; lod < levels; lod++) {
     const level = new THREE.Group();
     level.name = `${id}:lod${lod}`;
-    const { buckets } = partsFor({ rng: ctx.rng, lod });
+    const { buckets: raw } = partsFor({ rng: ctx.rng, lod });
+
+    // PAST LOD0 EVERYTHING COLLAPSES INTO ONE DAMAGE GROUP.
+    //
+    // Damage groups exist so a system can hide or swap one mass; past the first LOD
+    // switch nothing is destroyed independently, because at that range you cannot
+    // see which part came off. Keeping them costs one draw call per (group x
+    // surface) pair for no visible return, and the benchmark's camera sits at
+    // 7.2 km, i.e. LOD1 for every hull in the frame - so the LOD1 number is the one
+    // that pays. This is the same change that took the cruiser from 12 draws to 5.
+    const buckets = lod === 0 ? raw : mergeBuckets(raw);
 
     const groups = Object.create(null);
     let tris = 0;

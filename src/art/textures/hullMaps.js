@@ -73,24 +73,104 @@ function busyField(fbm, calm) {
   return out;
 }
 
-/** Which palette entries and surface spec each material variant pulls from. */
+/**
+ * FREQUENCY HIERARCHY — three genuinely different KINDS of surface.
+ *
+ * Round-one review, measured: "There is no calm square metre on the ship. The same
+ * medium block field covers the 700 m flank belts, the dorsal armour spine, the prow
+ * and the superstructure — every surface ship-language.md §3 names as calm reserve."
+ * The tiers below existed then, but they differed only in tile SIZE, and the same
+ * block field at two sizes is still one kind of surface. They now differ in the two
+ * things that decide what a surface IS: how many seams it has, and in which
+ * direction they run.
+ *
+ *   hull     CALM ARMOUR      tile x3.6 -> 94 m on the player hull, 15 repeats over
+ *                             1400 m. THREE strakes over that tile, i.e. a 31 m
+ *                             strake, and a 3.4:1 plate aspect, i.e. a 31 x 106 m
+ *                             plate. Zero greeble, zero rivets, zero steps. This
+ *                             surface is a flat plate with two long lines across it
+ *                             and nothing else, and it is what everything else is
+ *                             detail AGAINST.
+ *   plating  MEDIUM           tile x1.15 -> 30 m, five strakes, some steps and welds.
+ *                             Plate breaks, hatches, belt edges.
+ *   greeble  DENSE MACHINERY  tile x0.5 -> 13 m, eight strakes, full greeble.
+ *                             This is where detail is ALLOWED, and the geometry
+ *                             stream places it in bands at mass joints, inside
+ *                             recesses and around machinery.
+ *
+ * The calm tile is 7.2x the dense tile and carries roughly a twentieth of the seam
+ * length per square metre. That is what makes them read as different materials
+ * rather than as one material at two zooms.
+ *
+ * `tileMul` also feeds the shader: hullShader.js expresses its domain-warp period
+ * and amplitude against the tile, so the warp stays proportional on all three tiers.
+ */
 function variantSpec(pal, variant) {
   switch (variant) {
-    case 'hullDark': return { base: pal.baseDark, alt: pal.base, surface: pal.surface.hullDark, greeble: 1.4, markings: false, wearMul: 1.15 };
-    case 'plating': return { base: pal.plating, alt: pal.base, surface: pal.surface.plating, greeble: 0.55, markings: true, wearMul: 0.85 };
-    case 'greeble': return { base: pal.greeble, alt: pal.baseDark, surface: pal.surface.greeble, greeble: 2.2, markings: false, wearMul: 1.0 };
+    case 'hullDark': return {
+      base: pal.baseDark, alt: pal.base, surface: pal.surface.hullDark,
+      greeble: 1.0, markings: false, wearMul: 1.15,
+      tileMul: 1.6, calmAdd: 0.06, contrastMul: 0.92, rivetMul: 0.7,
+      strakes: 4, plateAspect: 2.8, stepMul: 0.9,
+    };
+    case 'plating': return {
+      base: pal.plating, alt: pal.base, surface: pal.surface.plating,
+      greeble: 0.45, markings: true, wearMul: 0.85,
+      tileMul: 1.15, calmAdd: 0.04, contrastMul: 0.95, rivetMul: 0.9,
+      strakes: 3, plateAspect: 3.2, stepMul: 1.0,
+    };
+    case 'greeble': return {
+      base: pal.greeble, alt: pal.baseDark, surface: pal.surface.greeble,
+      greeble: 0.90, markings: false, wearMul: 1.0,
+      tileMul: 0.50, calmAdd: -0.26, contrastMul: 1.0, rivetMul: 1.0,
+      strakes: 4, plateAspect: 2.2, stepMul: 1.4,
+      // The greeble variant's own base IS the machinery colour and its `alt` is
+      // already baseDark, so tinting the mechanical mask towards baseDark a second
+      // time drove whole bands to near-black. Every other variant needs the full tint
+      // because on those the greeble is a different part from the plate it sits on.
+      greebleTint: 0.16,
+    };
     // Trim's second tone must be a darker TRIM, not the hull grey - blending an
     // accent band towards the hull colour is how a faction's identity colour ends
     // up as beige.
-    case 'trim': return { base: pal.trim, alt: shade(pal.trim, 0.78), surface: pal.surface.trim, greeble: 0.25, markings: false, wearMul: 1.25 };
+    case 'trim': return {
+      base: pal.trim, alt: shade(pal.trim, 0.78), surface: pal.surface.trim,
+      greeble: 0.20, markings: false, wearMul: 1.25,
+      tileMul: 1.0, calmAdd: 0.10, contrastMul: 0.85, rivetMul: 0.3,
+      strakes: 3, plateAspect: 3.0, stepMul: 0.6,
+    };
     // Debris albedo is deliberately near-neutral and light. An InstancedMesh tints
     // each fragment with setColorAt, and instanceColor MULTIPLIES the map - so if
     // the map already carried the faction hue the wreckage would be double-tinted
     // and end up nearly black.
-    case 'debris': return { base: desat(pal.bare, 0.18), alt: desat(pal.base, 0.18), surface: pal.surface.hull, greeble: 0.8, markings: false, wearMul: 1.3 };
+    case 'debris': return {
+      base: desat(pal.bare, 0.18), alt: desat(pal.base, 0.18), surface: pal.surface.hull,
+      greeble: 0.8, markings: false, wearMul: 1.3,
+      tileMul: 0.85, calmAdd: -0.05, contrastMul: 1.0, rivetMul: 1.0,
+      strakes: 3, plateAspect: 2.6, stepMul: 1.2,
+    };
+    // A 3.4 km hulk needs the largest tile in the game or the whole thing is one
+    // weave at one density, which is exactly what defect D5 describes.
+    case 'derelictHull': return {
+      base: pal.base, alt: pal.baseAlt, surface: pal.surface.hull,
+      greeble: 0.8, markings: true, wearMul: 1.0,
+      tileMul: 2.6, calmAdd: 0.14, contrastMul: 0.86, rivetMul: 1.0,
+      strakes: 3, plateAspect: 2.2, stepMul: 1.3,
+    };
     case 'hull':
-    case 'derelictHull':
-    default: return { base: pal.base, alt: pal.baseAlt, surface: pal.surface.hull, greeble: 1.0, markings: true, wearMul: 1.0 };
+    default: return {
+      base: pal.base, alt: pal.baseAlt, surface: pal.surface.hull,
+      /**
+       * §3's calm reserve: the two 700 m flank belts, the dorsal armour spine, the
+       * prow. Every number here is zero or near it, and that is the point — round
+       * one was failed because "there is not one calm square metre on the ship".
+       * Greeble, steps and fasteners are all switched OFF on this tier; the only
+       * events on a 94 m tile are two strake seams and one butt joint per strake.
+       */
+      greeble: 0.0, markings: true, wearMul: 0.7,
+      tileMul: 3.6, calmAdd: 0.34, contrastMul: 0.62, rivetMul: 0.0,
+      strakes: 3, plateAspect: 3.4, stepMul: 0.0,
+    };
   }
 }
 
@@ -111,17 +191,35 @@ export function hullMaps(opts = {}) {
   const tier = Math.max(1, Math.min(3, o.tier | 0 || 1));
 
   // --- structural layer -----------------------------------------------------
+  /**
+   * The tile size is resolved BEFORE the plate field is built, because everything
+   * that decides what a seam looks like is stated in METRES and has to be converted
+   * against it. That ordering is the fix for the "same block scale on every part"
+   * finding: a groove is 0.26 m on the 13 m machinery tile and 0.26 m on the 94 m
+   * armour tile, so the armour reads as one big plate with a hairline in it while
+   * the machinery reads as a dense assembly, from the same generator.
+   */
+  const tileM = pal.panel.tileM * o.scale * spec.tileMul;
   const panelOpts = {
     ...pal.panel,
     size,
-    splits: pal.panel.splits + (tier - 1),
-    minPanel: pal.panel.minPanel * (tier === 3 ? 0.78 : tier === 2 ? 0.9 : 1),
+    tileM,
+    /**
+     * Tier raises the seam count only slightly. It used to feed `splits` on a
+     * recursive subdivision, where +1 doubled the leaf count; here it is a strake
+     * count and a 5 -> 6 step turns a 10 m strake into an 8 m plank, which is what
+     * made the medium tier read as running-bond brick on the first sheet.
+     */
+    strakes: Math.max(1, Math.round(spec.strakes * (tier === 3 ? 1.34 : tier === 2 ? 1.0 : 0.8))),
+    plateAspect: spec.plateAspect,
+    step: (pal.panel.step ?? 0.10) * spec.stepMul,
+    rivets: pal.panel.rivets * spec.rivetMul,
   };
   const panel = panelField(rng.fork(`panel:${o.variant}`), panelOpts);
 
   // --- density hierarchy ----------------------------------------------------
   // Built before the mechanical layer because everything below is gated by it.
-  const calm = pal.panel.calm ?? 0.55;
+  const calm = saturate01((pal.panel.calm ?? 0.55) + spec.calmAdd);
   const busy = busyField(
     fbmField(rng.fork(`density:${o.variant}`), size, { baseCells: 2, octaves: 3, gain: 0.55 }),
     calm,
@@ -131,11 +229,33 @@ export function hullMaps(opts = {}) {
   // Density is raised because the field now removes most of it again: the same
   // number of features end up in the frame, concentrated into bands instead of
   // spread evenly, which is the difference between "a vent run" and "noise".
+  /**
+   * FEATURE SIZE IS STATED IN METRES, AND THAT IS THE FIX FOR THE SPECK FIELD.
+   *
+   * Round-one review: "The radiator surface is a uniform regular grid of bright
+   * specks over its entire area and aliases into visible moire at 1280x720."
+   *
+   * It was, and here is the arithmetic. `greebleCanvas` draws a hatch 26-70 px wide
+   * on a 512 px canvas. On the dense tier that canvas covered a 13 m tile, i.e.
+   * 39 px per metre, so a "hatch" was 0.7-1.8 METRES across — smaller than the crew
+   * that would open it, far below the 3 m that resolves at any playing distance, and
+   * repeated forty times per tile. That is not machinery, it is noise, and noise at
+   * exactly the frequency that aliases.
+   *
+   * `metreScale` converts the generator's canvas-pixel vocabulary into metres
+   * against whatever tile this tier uses, so a hatch is ~3.2 m on the 13 m machinery
+   * tile and ~3.2 m on the 30 m plating tile — the same physical object either way,
+   * which is the whole point of a metre-based UV convention. Count comes down with
+   * it: fewer, larger, countable parts.
+   */
+  const MEAN_FEATURE_PX = 48;      // mean base size greebleCanvas draws at scale 1
+  const TARGET_FEATURE_M = 3.2;    // an access hatch a person could open
+  const metreScale = (TARGET_FEATURE_M * 512) / (MEAN_FEATURE_PX * tileM);
   const greeb = greebleMap({
     rng: rng.fork(`greeble:${o.variant}`),
     size,
-    density: spec.greeble * (0.7 + tier * 0.25) * 1.35,
-    scale: 0.85 + tier * 0.12,
+    density: spec.greeble * (0.7 + tier * 0.25),
+    scale: metreScale,
     amplitude: 1,
   });
   for (let i = 0; i < n; i++) {
@@ -185,7 +305,7 @@ export function hullMaps(opts = {}) {
    * it; the relief and the light do the work, not the paint. `plateContrast` scales
    * all three together so the relationship between them stays intact.
    */
-  const contrast = pal.panel.plateContrast ?? 0.45;
+  const contrast = (pal.panel.plateContrast ?? 0.45) * spec.contrastMul;
   const seamK = 0.55 * contrast;
   const cavityK = 0.45 * contrast;
 
@@ -198,7 +318,7 @@ export function hullMaps(opts = {}) {
     // Greeble is a different part with a different finish, not the same paint.
     const gm = greeb.mask[i];
     if (gm > 0.01) {
-      const k = gm * 0.35;
+      const k = gm * (spec.greebleTint ?? 0.35);
       r = lerp(r, dr, k); g = lerp(g, dg, k); b = lerp(b, db, k);
     }
 
@@ -286,7 +406,8 @@ export function hullMaps(opts = {}) {
 
   // UV units are metres, so the repeat is 1 / (plate tile in metres). This is what
   // keeps a plate the same physical size on an 18 m fighter and a 1400 m cruiser.
-  const tileM = pal.panel.tileM * o.scale;
+  // `tileMul` is the frequency tier: see variantSpec. `tileM` was resolved above,
+  // before the plate field, because the field needs it to convert its metres.
   const repeat = 1 / tileM;
   return {
     size, tileM, panel, surface: S, repeat,

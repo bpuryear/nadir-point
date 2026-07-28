@@ -48,6 +48,7 @@ import { TextureFactory, SCALE, RUNNING_LIGHT_SPACING_M, RUNNING_LIGHT_TILE_M } 
 import { applyScorchStamp } from '../textures/scorch.js';
 import { ctx2d } from '../textures/canvas2d.js';
 import { EnvironmentCache } from './env.js';
+import { applyHullMacro, HULL_MACRO_DEFAULTS } from './hullShader.js';
 
 export { SCALE, RUNNING_LIGHT_SPACING_M, RUNNING_LIGHT_TILE_M };
 
@@ -75,15 +76,22 @@ const quantize = (v, step) => Math.round(v / step) * step;
  * this project cannot afford to lose.
  */
 const HULL_VARIANTS = {
-  hull: { variant: 'hull', normalScale: 0.62, envMapIntensity: 0.70 },
-  hullDark: { variant: 'hullDark', normalScale: 0.58, envMapIntensity: 0.55 },
-  plating: { variant: 'plating', normalScale: 0.62, envMapIntensity: 0.75 },
+  // `hull` is the CALM ARMOUR tier (textures/hullMaps.js#variantSpec): a 57 m plate
+  // tile with almost no greeble. Its relief is dropped to match - a big armour face
+  // has plate steps of a few centimetres over tens of metres, and carrying the old
+  // 0.62 across a tile 2.2x larger turned an armour belt into corrugation.
+  hull: { variant: 'hull', normalScale: 0.40, envMapIntensity: 0.70, macro: 1.0 },
+  hullDark: { variant: 'hullDark', normalScale: 0.54, envMapIntensity: 0.55, macro: 0.9 },
+  plating: { variant: 'plating', normalScale: 0.62, envMapIntensity: 0.75, macro: 0.85 },
   // Greeble is genuinely bare hardware, so it keeps a strong relief and a real
-  // environment response. It is the frequency contrast against the calm hull.
-  greeble: { variant: 'greeble', normalScale: 1.0, envMapIntensity: 1.10 },
-  trim: { variant: 'trim', normalScale: 0.45, envMapIntensity: 0.60 },
-  derelictHull: { variant: 'derelictHull', normalScale: 0.80, envMapIntensity: 0.60 },
-  debris: { variant: 'debris', normalScale: 0.75, envMapIntensity: 0.70 },
+  // environment response. It is the frequency contrast against the calm hull, and it
+  // takes only a whisper of macro - machinery is not where soot and stencils live.
+  greeble: { variant: 'greeble', normalScale: 1.0, envMapIntensity: 1.10, macro: 0.35 },
+  trim: { variant: 'trim', normalScale: 0.45, envMapIntensity: 0.60, macro: 0.5 },
+  derelictHull: { variant: 'derelictHull', normalScale: 0.80, envMapIntensity: 0.60, macro: 0.9 },
+  // Debris is instanced, so every fragment shares one object space and would carry
+  // one identical macro layer. It gets none; `instanceColor` is its variation.
+  debris: { variant: 'debris', normalScale: 0.75, envMapIntensity: 0.70, macro: 0 },
 };
 
 /**
@@ -133,6 +141,9 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
       // tier and wear, so a big hull can be built from 2-3 tiles that read as one
       // material. Each distinct seed is a real extra bake - use 2 or 3, not 20.
       o.seed = Math.max(0, Math.round(o.seed ?? 0));
+      // Part of the cache key: a hull with the macro layer and one without are two
+      // different materials and must not share an instance.
+      o.macro = o.macro !== false;
       if (key === 'derelictHull') o.faction = 'derelict';
     }
     if (key === 'damaged') {
@@ -183,9 +194,78 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
     const args = {
       faction: o.faction, variant, wear: o.wear, tier: o.tier,
       size: o.size, scale: o.scale, seed: o.seed ?? 0,
-      markings: o.markings !== false,
+      /**
+       * TILING STENCILS ARE OFF, AND THIS IS THE POINT OF THE MACRO LAYER.
+       *
+       * `hullMaps.stampMarkings` puts a hull code and a hazard patch into the TILING
+       * map at alpha 0.34, with a comment saying it can only ever be faint because
+       * whatever it draws repeats every `tileM` metres. Raising the calm tile to 57 m
+       * made that stencil 2.2x larger and it stopped being faint: the first capture
+       * after the frequency change had the same "XXX" code and the same hazard bar
+       * printed a dozen times down the starboard flank.
+       *
+       * The macro layer draws those marks ONCE, in object space, at a size stated in
+       * metres. It is a strictly better version of the same idea, so the tiling one
+       * is switched off rather than left to fight it. Pass `tilingMarks: true` to get
+       * the old behaviour for a surface that has no macro layer.
+       */
+      markings: o.tilingMarks === true,
     };
     return cached ? textures.get('hull', args) : textures.build('hull', args);
+  }
+
+  /**
+   * THE NON-TILING SECOND FREQUENCY.
+   *
+   * Everything above this line tiles. `macroField` does not: it is addressed in
+   * object space and sampled once from stem to stern, which is the only way to get
+   * a value drift that defeats repeat-detection, soot that knows which way is down,
+   * and marks that are not stamped fifty times along a cruiser. See
+   * textures/macro.js and hullShader.js.
+   *
+   * One atlas per faction, shared by every material of that faction, so this adds
+   * one texture and zero draw calls. Materials that opt out (`macro: 0`, instanced
+   * uses) never touch it and never pay for the fetch.
+   */
+  function attachMacro(material, spec, o, maps) {
+    if (!spec.macro || o.instanced || o.macro === false) return material;
+    const pal = getFactionPalette(o.faction ?? 'player');
+    // Deliberately NOT keyed by `o.seed`. `seed` varies the tiling PLATE LAYOUT per
+    // surface - the cruiser's plating carries seed 1 so its plates differ from its
+    // armour - but the macro layer is the ship's own soot and stencilling, and the
+    // soot on the armour has to be in the same place as the soot on the plating next
+    // to it. One atlas per faction, shared across all three frequency tiers.
+    const { texture } = textures.get('macro', {
+      faction: o.faction ?? 'player',
+      seed: o.macroSeed ?? 0,
+      marks: o.marks === false ? 0 : 1,
+    });
+    applyHullMacro(material, {
+      macroTexture: texture,
+      tileM: maps.tileM,
+      /**
+       * TWO mark colours, because there are two mark families and they mean
+       * different things (see hullShader.js#nadirMark).
+       *
+       * `hazardA` is the ONLY saturated albedo on the hull: ship-language.md §4 caps
+       * saturated accent at 3.5% of hull area and allows it in four places, and every
+       * accent mark macro.js draws is either a stripe following a real geometric edge
+       * or a hazard zone on something that moves, opens or gets hot.
+       *
+       * `ink` is a near-neutral and carries the functional markings — hull numbers,
+       * the sigil, the repair-patch outline. Those used to be drawn in hazardA too,
+       * which is how the round-one frames ended up with amber lettering floating
+       * mid-face: the wrong colour AND the wrong place. Both are fixed, separately.
+       */
+      inkColor: pal.marking.ink,
+      hazardColor: pal.marking.hazardA,
+      sootColor: pal.burn,
+      drift: HULL_MACRO_DEFAULTS.drift * spec.macro,
+      roughDrift: HULL_MACRO_DEFAULTS.roughDrift * spec.macro,
+      soot: HULL_MACRO_DEFAULTS.soot * spec.macro,
+      ink: HULL_MACRO_DEFAULTS.ink * spec.macro,
+    });
+    return material;
   }
 
   function standardFromMaps(maps, spec, o) {
@@ -206,7 +286,7 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
     });
     m.normalScale.set(spec.normalScale, spec.normalScale);
     m.userData.maps = maps;
-    return m;
+    return attachMacro(m, spec, o, maps);
   }
 
   const BUILDERS = {
@@ -354,7 +434,10 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
       const maps = textures.build('hull', {
         faction: o.faction, variant: 'hull',
         wear: Math.min(1, 0.55 + o.severity * 0.45),
-        tier: o.tier, size: o.size, scale: o.scale, seed: o.seed ?? 0, markings: true,
+        // Tiling stencils off, same as hullMapsFor: this builder bypasses that
+        // helper, and leaving it at `true` here would have left exactly one material
+        // key still printing a 57 m hull code down the length of every damaged wreck.
+        tier: o.tier, size: o.size, scale: o.scale, seed: o.seed ?? 0, markings: false,
       });
       const m = standardFromMaps(maps, HULL_VARIANTS.hull, o);
       // Forked, never drawn from the root stream: material build order must not
@@ -498,6 +581,9 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
         textures: ts.textures,
         byKey: { ...byKey },
         cacheHits: hits,
+        /** Upper-bound resident texture bytes, mips included. Defect D8. */
+        textureMemoryMB: ts.memory.megabytes,
+        textureMemoryByKindMB: ts.memory.byKindMB,
         textureCache: { cached: ts.cached, builds: ts.builds, hits: ts.hits, byKind: ts.byKind },
         poi: activePOI,
         programsHint: materials.size,

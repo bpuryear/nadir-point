@@ -39,7 +39,7 @@
 
 import * as THREE from 'three';
 import { createMaterialRegistry } from '../art/materials/index.js';
-import { getPOIPalette, getFactionPalette, NEUTRAL } from '../art/palette.js';
+import { getPOIPalette, getFactionPalette, NEUTRAL, mix } from '../art/palette.js';
 import { BUDGET } from '../core/units.js';
 import { buildCruiser, hullParts, RUNNING_LIGHT_AXIS_SPACING_M } from '../art/geometry/cruiser.js';
 import {
@@ -139,8 +139,12 @@ export default {
     const S = 1100;
     key.shadow.camera.left = -S; key.shadow.camera.right = S;
     key.shadow.camera.top = S; key.shadow.camera.bottom = -S;
-    key.shadow.bias = -0.0012;
-    key.shadow.normalBias = 2.0;
+    // `shadow.bias` is a fraction of the shadow camera's depth RANGE, not metres.
+    // At near 500 / far 7000 that range is 6500 m, so -0.0012 was 7.8 metres of
+    // peter-panning and no self-shadow on this hull survived it. Stated in metres
+    // and converted. See world/lighting/poi.js, which had the same defect.
+    key.shadow.bias = -0.35 / (7000 - 500);
+    key.shadow.normalBias = 1.5;
     scene.add(key);
     scene.add(key.target);
 
@@ -148,7 +152,17 @@ export default {
     // Stated the way the POI rig states it: the peak channel of the irradiance it
     // contributes, so a saturated blue does not arrive with its blue channel
     // rivalling the key's. See world/lighting/poi.js.
-    const fillColor = new THREE.Color().setHex(poi.fill.color, THREE.SRGBColorSpace);
+    // BROADENED, exactly as world/lighting/poi.js broadens it. This probe used the
+    // palette's raw `fill.color` - the giant's deepest belt - where the game's own rig
+    // averages it towards neutral by `fill.broad`, because the light off a disc thirty
+    // degrees across is the average of the whole disc. The probe was therefore lighting
+    // the hull with a more saturated blue than the game ever does, and it is this probe
+    // that blind review cited for "saturated cobalt-blue as flat full-face fills". A
+    // probe that does not use the game's own numbers cannot verify anything - the same
+    // sentence already written above about the key intensity.
+    const fillColor = new THREE.Color().setHex(
+      mix(poi.fill.color, NEUTRAL.ice, poi.fill.broad ?? 0.32), THREE.SRGBColorSpace,
+    );
     const fillPeak = Math.max(fillColor.r, fillColor.g, fillColor.b, 1e-3);
     const fill = new THREE.DirectionalLight(fillColor, (poi.fill.intensity * 0.5) / fillPeak);
     fill.position.set(-0.7, -0.35, -0.5).normalize().multiplyScalar(4000);

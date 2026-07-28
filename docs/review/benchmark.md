@@ -26,16 +26,66 @@ These are real measurements and do not depend on the GPU.
 
 | Metric | Measured | Ceiling | Result |
 |---|---|---|---|
-| draw calls (peak) | **650** | 320 | **FAIL** |
-| triangles (peak) | 106,317 | 1,900,000 | PASS |
-| shader programs | 64 | 90 | PASS |
-| geometries | 285 | — | — |
-| textures | 149 | — | — |
-| simulation step cost | **0.60 ms** | — | CPU-only, meaningful |
+| draw calls (peak) | **499** | 320 | **FAIL** |
+| triangles (peak) | 113,233 | 1,900,000 | PASS |
+| shader programs | 63 | 90 | PASS |
+| geometries | 201 | — | — |
+| textures | 150 | — | — |
+| simulation step cost | **0.80 ms** | — | CPU-only, meaningful |
+
+Re-run after the cruiser rebuild and the surface/shader pass. Draw calls 650 → **499**
+and distinct meshes 392 → **259**, from fix (1) below landing on the capital hull.
+Still a FAIL: it needs the same merge applied to the faction hulls and the module
+library.
+
+**The surface pass was draw- and program-neutral, deliberately.** The macro layer
+(`art/materials/hullShader.js`) patches every hull material through `onBeforeCompile`,
+and its `customProgramCacheKey` returns a CONSTANT because the emitted GLSL does not
+depend on any uniform — so three groups all of them onto one program. Programs went
+64 → 63 and the extra cost is one texture per faction and one texture fetch per
+fragment. A per-material shader here would have been the obvious implementation and
+would have put dozens of programs against the 90 ceiling.
+
+### NOT RE-MEASURED AFTER THE SURFACE PASS — and why, stated rather than hidden
+
+The figures in this file are from the run before the round-two surface pass. That pass
+tried three times to re-measure and failed three times to the same cause, which is worth
+recording because it will keep happening:
+
+**`tools/bench.mjs` runs the DEV server, and the dev server's HMR full-reloads the page
+whenever anything writes to the source tree.** The benchmark needs ~10 minutes of
+software-rasterised settle and frames; a stream iterating on the code writes to the tree
+several times in ten minutes; each write destroys the execution context mid-run and the
+harness reports `Execution context was destroyed, most likely because of a navigation`,
+which looks exactly like a benchmark crash. `capture.mjs` already solved this by serving
+a built bundle, and `probe.mjs` was moved to the same footing in this pass (D46).
+
+The three-character fix is `startServer({ port })` -> `startServer({ port, mode:
+'preview' })`. It was NOT made here because `tools/bench.mjs` belongs to the performance
+stream (ARCHITECTURE.md) and unilaterally editing another stream's tooling is what that
+table exists to prevent.
+
+**What did change, and what it should do to these numbers.** The surface pass was
+draw-neutral by construction — no new material keys, no new meshes, the macro atlas went
+from a `CanvasTexture` to a `DataTexture` (same texture count), and the hull shader patch
+still returns a constant `customProgramCacheKey`. `npm run smoke` on the assembled game
+measured **115 draws / 58 programs** before and after, unchanged. The one thing that
+should move is FRAME COST, not counts: the composer's HDR target now carries 4x MSAA
+(D44), which is per-sample fill on a half-float target and is therefore very expensive
+under SwiftShader specifically and cheap on the GPU this is aimed at. Read the software
+timings below as even less meaningful than usual.
+
+### One measurement to take before anyone re-merges a hull to chase the draw count
+
+`renderer.info` counts **GTAO's depth-normal prepass, which is a second full render of
+the scene**. At `high` quality the reported 499 is therefore roughly one scene counted
+twice, and the three merge fixes below are being sized against a number that includes an
+AO pass. Running `npm run bench -- --quality medium` disables GTAO and would separate the
+two in one command. That is cheap and nobody has done it.
 
 ### The draw-call failure
 
-We committed to 320 and measured 650. That is a real miss, reported as a miss.
+We committed to 320 and measured 650, now 499. That is a real miss, reported as a miss.
 
 Cause is 392 distinct meshes across thirteen ships plus a fully-fitted capital. LOD is
 wired correctly — `buildCruiser` puts its `THREE.LOD` inside the returned root, and the

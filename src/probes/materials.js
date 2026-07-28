@@ -137,7 +137,18 @@ export default {
     // objects with no shared contact surfaces it contributes almost nothing - the
     // baked cavity AO in the ORM map is doing that work already.
     renderer.post.gtao.enabled = false;
-    renderer.renderer.toneMappingExposure = 1.18;
+    /**
+     * EXPOSURE 1.0, NOT 1.18, AND IT MUST STAY THAT WAY.
+     *
+     * This was 1.18 to lift a chart that measured dark, which was the wrong lever:
+     * the chart measured dark because the POI keys were calibrated to put a fully lit
+     * face at 0.57 instead of 0.76 (see palette.js#giant-orbit). Now that the keys
+     * are solved, a probe running its own exposure would be showing the material at a
+     * stop the game never uses — and the whole reason this probe reads its light out
+     * of the POI palette rather than making one up is that a probe which does not use
+     * the game's numbers cannot verify anything.
+     */
+    renderer.renderer.toneMappingExposure = 1.0;
     // A chart is not a shot: the shipping vignette pulls the outer columns two
     // stops down and they cannot be compared with the middle ones.
     renderer.post.grade.uniforms.vignette.value = 0.16;

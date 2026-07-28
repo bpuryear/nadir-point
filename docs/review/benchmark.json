@@ -11,37 +11,37 @@
     "programs": 90
   },
   "peak": {
-    "calls": 622,
-    "triangles": 108883,
-    "programs": 64
+    "calls": 499,
+    "triangles": 113233,
+    "programs": 63
   },
   "counters": {
     "fps": 4,
-    "cpuMs": 21,
-    "stepMs": 0.6999999992549419,
-    "renderMs": 8.200000001117587,
+    "cpuMs": 11.300000000745058,
+    "stepMs": 0.7999999970197678,
+    "renderMs": 8.800000000745058,
     "steps": 6,
-    "calls": 622,
-    "triangles": 108883,
+    "calls": 490,
+    "triangles": 110313,
     "points": 7000,
     "lines": 0,
-    "programs": 64,
-    "geometries": 278,
-    "textures": 149
+    "programs": 63,
+    "geometries": 201,
+    "textures": 150
   },
   "frameMs": {
-    "mean": 2871.488333333346,
-    "median": 2830.800000000745,
-    "p95": 3230.699999999255,
-    "p99": 3319.699999999255,
-    "min": 2574.800000000745,
-    "max": 3319.699999999255
+    "mean": 4063.025,
+    "median": 3804.199999999255,
+    "p95": 5360.300000000745,
+    "p99": 5585.89999999851,
+    "min": 2805.60000000149,
+    "max": 5585.89999999851
   },
   "sceneCounts": {
     "capitalShips": 1,
     "combatShips": 12,
     "instancedObjects": 930,
-    "distinctMeshes": 380,
+    "distinctMeshes": 259,
     "totalShips": 13,
     "postChain": "high"
   },

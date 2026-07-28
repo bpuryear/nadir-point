@@ -96,13 +96,73 @@ const LOADOUTS = [
  * own world position, so the picture carries its own key and this class of bug
  * cannot come back silently.
  */
+/**
+ * ROW SPACING IS DERIVED FROM THE ENVELOPE, NOT GUESSED.
+ *
+ * The gaps used to be 660 m in the side view, which was comfortable when a fitted
+ * hull was 614 m tall. The ventral and engine modules are now cantilevered far
+ * enough to satisfy the divergence criterion (ship-language.md §6 M2), and a fitted
+ * hull spans roughly 950 m vertically and 850 m across, so at the old spacing the
+ * three rows overlapped and the probe's own picture became unreadable - which would
+ * be the same class of defect as D15, an audit you cannot read.
+ *
+ * These are the measured envelope plus a 200 m margin. If a module grows past them
+ * the rows will touch again and that is the signal to re-measure, not to nudge.
+ */
 const VIEWS = {
   // Bow points screen-left in the side view; that is the Homeworld ship-portrait
   // convention and it is worth matching because it is what the eye is trained on.
-  side: { yaw: Math.PI * 0.5, pitch: 0.002, dist: 2800, axis: 'y', sign: 1, gap: 660, target: [0, -50, 0] },
-  top: { yaw: Math.PI * 0.5, pitch: 1.5, dist: 3600, axis: 'x', sign: -1, gap: 790, target: [0, 0, 0] },
-  quarter: { yaw: Math.PI * 0.62, pitch: 0.30, dist: 2900, axis: 'y', sign: 1, gap: 800, target: [0, -60, 0] },
+  side: { yaw: Math.PI * 0.5, pitch: 0.002, dist: 4400, axis: 'y', sign: 1, gap: 1180, target: [0, -110, 0] },
+  top: { yaw: Math.PI * 0.5, pitch: 1.5, dist: 4600, axis: 'x', sign: -1, gap: 1120, target: [0, 0, 0] },
+  quarter: { yaw: Math.PI * 0.62, pitch: 0.30, dist: 4600, axis: 'y', sign: 1, gap: 1240, target: [0, -110, 0] },
 };
+
+/**
+ * Bin every visible mesh under each holder into a signature, over ONE z range
+ * shared by all of them - the union of their fitted envelopes. A shared axis is
+ * the whole point: three signatures binned over three different ranges are not
+ * comparable bin for bin, which is the bug this exists to route around.
+ */
+function fittedSignatures(holders, bins = 32) {
+  for (const h of holders) h.updateMatrixWorld(true);
+  const boxes = holders.map((h) => new THREE.Box3().setFromObject(h));
+  let zMin = Infinity, zMax = -Infinity;
+  for (let i = 0; i < holders.length; i++) {
+    zMin = Math.min(zMin, boxes[i].min.z - holders[i].position.z);
+    zMax = Math.max(zMax, boxes[i].max.z - holders[i].position.z);
+  }
+  const span = Math.max(1e-6, zMax - zMin);
+  const v = new THREE.Vector3();
+  const inv = new THREE.Matrix4();
+  const local = new THREE.Matrix4();
+
+  return holders.map((holder) => {
+    holder.updateMatrixWorld(true);
+    inv.copy(holder.matrixWorld).invert();
+    const out = [];
+    for (let i = 0; i < bins; i++) out.push({ halfWidth: 0, top: -Infinity, bottom: Infinity, count: 0 });
+    holder.traverse((o) => {
+      if (!o.isMesh || o.isInstancedMesh || !o.visible) return;
+      const pos = o.geometry?.getAttribute('position');
+      if (!pos) return;
+      local.multiplyMatrices(inv, o.matrixWorld);
+      const step = pos.count > 3000 ? 3 : 1;
+      for (let i = 0; i < pos.count; i += step) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(local);
+        let k = Math.floor(((v.z - zMin) / span) * bins);
+        if (k < 0) k = 0; else if (k >= bins) k = bins - 1;
+        const bin = out[k];
+        const ax = Math.abs(v.x);
+        if (ax > bin.halfWidth) bin.halfWidth = ax;
+        if (v.y > bin.top) bin.top = v.y;
+        if (v.y < bin.bottom) bin.bottom = v.y;
+        bin.count++;
+      }
+    });
+    for (const bin of out) if (!bin.count) { bin.top = 0; bin.bottom = 0; }
+    return { bins: out };
+  });
+}
 
 export default {
   name: 'Loadout silhouettes',
@@ -154,7 +214,28 @@ export default {
           materials: registry, palette: poi, faction: def.faction, lod: 0,
         });
       }
-      sigs.push({ L, sig: getSilhouetteSignature(hull) });
+      // THE FITTED ENVELOPE, measured on the assembled object.
+      //
+      // `getSilhouetteSignature` reports length/beam/height off `hullResult.bounds`,
+      // which is the BARE hull - so all three rows of this sheet printed
+      // "1403 x 396 x 614 m" under three visibly different ships, and the row that
+      // hangs a 300 m jump ring off the stern claimed the same length as the one
+      // that does not. A picture whose own caption contradicts it cannot be used to
+      // judge anything (this is D15 again), and the numbers being wrong in the
+      // CONSERVATIVE direction does not make them true.
+      // updateMatrixWorld FIRST. Modules hang off SOCKETS that carry the mount
+      // offset, and Box3.setFromObject does not refresh an ancestor's world
+      // matrix - it refreshes local matrices up the chain and world matrices down
+      // from the object it was handed. Measure without this and every module is
+      // measured as though it were bolted to the origin.
+      holder.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(holder);
+      const size = box.getSize(new THREE.Vector3());
+      sigs.push({
+        L,
+        sig: getSilhouetteSignature(hull),
+        fitted: { length: Math.round(size.z), beam: Math.round(size.x), height: Math.round(size.y) },
+      });
     }
 
     // ---- presentation ------------------------------------------------------
@@ -236,6 +317,29 @@ export default {
     const worstMean = Math.min(...pairs.map(([, v]) => v.mean));
     const worstMax = Math.min(...pairs.map(([, v]) => v.max));
 
+    // ---- the same measurement over the FITTED envelope ---------------------
+    //
+    // `getSilhouetteSignature` bins over the BARE hull's z range, so every module
+    // that overhangs the stem or the transom is clamped into the first or last bin.
+    // That is not a small correction: the captions above measure loadout A at
+    // 1913 m against a 1403 m hull, so five hundred metres - a third of the fitted
+    // length, and precisely the cantilever that M3 exists to demand - is scored in
+    // two bins out of thirty-two.
+    //
+    // The criterion is the one the probe already prints and it passes on that
+    // metric. This is the same metric taken over the union of the three FITTED
+    // envelopes, so overhang is scored where it actually is. It is reported
+    // alongside rather than instead: a measurement that only ever moves in the
+    // direction its author wants is not a measurement.
+    const fit = fittedSignatures(holders.map((h) => h.holder));
+    const fitPairs = [
+      ['A/B', diff(fit[0], fit[1])],
+      ['A/C', diff(fit[0], fit[2])],
+      ['B/C', diff(fit[1], fit[2])],
+    ];
+    const fitMean = Math.min(...fitPairs.map(([, v]) => v.mean));
+    const fitMax = Math.min(...fitPairs.map(([, v]) => v.max));
+
     const el = document.getElementById('label');
     if (el) {
       el.textContent = [
@@ -243,6 +347,9 @@ export default {
         `outline divergence per z-bin, metres:  ${pairs.map(([k, v]) => `${k} mean ${v.mean.toFixed(1)} max ${v.max.toFixed(0)}`).join('   ')}`,
         `worst pair: mean ${worstMean.toFixed(1)} (target >= 45)   max ${worstMax.toFixed(0)} (target >= 120)`
           + `   ${worstMean >= 45 && worstMax >= 120 ? 'PASS' : 'FAIL'}`,
+        `same measure binned over the FITTED envelope, not the bare hull's z range:`
+          + `  worst mean ${fitMean.toFixed(1)}  max ${fitMax.toFixed(0)}`
+          + `   ${fitMean >= 45 && fitMax >= 120 ? 'PASS' : 'FAIL'}`,
       ].join('\n');
       el.style.whiteSpace = 'pre';
       el.style.color = silhouette ? '#2a3a44' : '#6f8ea0';
@@ -261,8 +368,9 @@ export default {
       const div = document.createElement('div');
       div.style.cssText = 'position:fixed;z-index:11;font:11px/1.4 ui-monospace,Menlo,monospace;'
         + `letter-spacing:.1em;text-transform:uppercase;pointer-events:none;white-space:pre;color:${silhouette ? '#2a3a44' : '#7d97a8'}`;
-      const sig = sigs.find((x) => x.L === L).sig;
-      div.textContent = `${L.name}\n${sig.length} x ${sig.beam} x ${sig.height} m\n${L.blurb}`;
+      const e = sigs.find((x) => x.L === L);
+      div.textContent = `${L.name}\nfitted ${e.fitted.length} x ${e.fitted.beam} x ${e.fitted.height} m`
+        + `  (bare hull ${e.sig.length} x ${e.sig.beam} x ${e.sig.height})\n${L.blurb}`;
       document.body.appendChild(div);
       return { div, holder };
     });

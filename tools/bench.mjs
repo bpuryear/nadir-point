@@ -37,7 +37,15 @@ const { BUDGET } = await import('../src/core/units.js');
 
 let server, browser, failed = false;
 try {
-  server = await startServer({ port });
+  // Preview mode, matching capture.mjs and probe.mjs.
+  //
+  // The benchmark needs ~10 minutes of software-rasterised settle and frames. The dev
+  // server's HMR full-reloads the page whenever anything writes to the source tree, so
+  // any stream iterating on code during that window destroys the execution context
+  // mid-run, and the harness reports it as "Execution context was destroyed", which
+  // looks exactly like a benchmark crash. Three separate re-measure attempts were lost
+  // to this. Serving a built bundle is immune.
+  server = await startServer({ port, mode: 'preview' });
   browser = await launchBrowser();
   const { page, consoleErrors, pageErrors, booted, bootError } = await openGame(
     browser, server.url + 'probe.html',
