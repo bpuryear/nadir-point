@@ -490,7 +490,42 @@ export const POI_PALETTES = {
      * Celestials are in the far scene and carry their own lighting, so this does not
      * brighten the gas giant.
      */
-    key: { color: 0xfff0d8, intensity: 14.0, angularRadius: 0.009 },
+    /*
+     * ROUND THREE: THE KEY WAS RIGHT AND EVERYTHING ELSE WAS TOO BRIGHT.
+     *
+     * Round-two review, MAJOR: "The hull is now too LIGHT and too flat, which is the
+     * exact mirror of the defect D42 was written to fix. A lit flank crop measures
+     * p05 0.398, median 0.632, p95 0.714 — the entire hull lives inside a third of a
+     * stop near the top of the curve and nothing on it goes dark ... the shadow end is
+     * simply unused."
+     *
+     * Reproduced exactly with `tools/surface.mjs --crop 0.34,0.40,0.52,0.50` before
+     * touching anything: p05 0.438, median 0.624, p95 0.718 on the lit flank, and
+     * p05 0.509 median 0.666 on the bridge tower. The tower's face TURNED AWAY from
+     * the key measured 0.587. A face at NdotL = 0 has no key on it at all, so 0.587
+     * is what the non-key terms alone were delivering — and 0.587 sRGB back-solves
+     * through ACES to an irradiance of about 6.0, against a stated fill+bounce+rim+ibl
+     * sum of 1.54. The extra was the three terms being SUMMED on faces that all four
+     * of them happened to reach at once, on a hull with almost no geometry between
+     * them.
+     *
+     * So the key stays where the solve put it and the ambient comes down hard:
+     *
+     *   fill    0.40 -> 0.16    bounce 0.16 -> 0.05
+     *   rim     0.82 -> 0.42    ibl    0.16 -> 0.10   grade lift 0.045 -> 0.018
+     *
+     * Key-to-fill goes 35:1 -> 84:1. The key itself comes 14.0 -> 11.5 to hold a fully
+     * lit face at 0.71 rather than 0.765, because with the ambient gone the SPECULAR
+     * lobe is a larger share of what is left and the previous number was landing the
+     * brightest armour on the ACES shoulder where a 30% irradiance change moves the
+     * value by four points and nothing separates.
+     *
+     * Predicted, from `tools/surface.mjs`'s own model (see the run log in the stream
+     * report): NdotL 1.0 -> 0.71, the 45 degree deck -> 0.55, a face turned away from
+     * the key -> 0.10. That is §4's three-value read with the bottom value ACTUALLY AT
+     * THE BOTTOM, which is the thing two passes of this file have failed to deliver.
+     */
+    key: { color: 0xfff0d8, intensity: 11.5, angularRadius: 0.009 },
     /*
      * KEY-TO-FILL RATIO IS THE WHOLE LOOK, AND IT WAS WRONG.
      *
@@ -528,8 +563,8 @@ export const POI_PALETTES = {
      * fill is close to ice with a blue cast, the two-temperature read survives, and
      * the faces it owns keep a value rather than becoming a colour.
      */
-    fill: { color: 0x3f63b4, intensity: 0.40, broad: 0.62 },
-    bounce: { color: 0x6f8ed8, intensity: 0.16 },
+    fill: { color: 0x3f63b4, intensity: 0.16, broad: 0.62 },
+    bounce: { color: 0x6f8ed8, intensity: 0.05 },
     // The kicker. Tracks the camera, sits behind the subject, and is the only thing
     // separating a grey hull from a black sky when the key is on the far side. It is
     // the second half of the cobalt problem - on a face the key misses, the rim is
@@ -537,11 +572,11 @@ export const POI_PALETTES = {
     // be cold and it is directional enough to describe an edge rather than fill a
     // face. Stepped down with the key raised: 0.82 against 6.0 is a 7:1 ratio where
     // 0.95 against 4.6 was 5:1.
-    rim: { color: 0x8fb4ff, intensity: 0.82, broad: 0.30 },
+    rim: { color: 0x8fb4ff, intensity: 0.42, broad: 0.30 },
     shadow: 0x050912,
     fog: { color: 0x16223c, density: 0.000012 },
     accent: 0x8fb4ff,
-    ibl: { zenith: 0x0a1024, horizon: 0x24406e, ground: 0x070b16, sun: 0xfff3e0, sunSize: 0.055, intensity: 0.16 },
+    ibl: { zenith: 0x0a1024, horizon: 0x24406e, ground: 0x070b16, sun: 0xfff3e0, sunSize: 0.055, intensity: 0.10 },
     grade: {
       exposure: 1.0, bloom: 0.42, godrays: 0.30, vignette: 0.44,
       /**
@@ -567,7 +602,7 @@ export const POI_PALETTES = {
        * Lowering it would have been tuning a constant against a hunch that the
        * measurement contradicts, which is the failure mode this project keeps logging.
        */
-      lift: 0x35558c, gain: 0xffe8c8, liftAmount: 0.045, gainAmount: 0.30, saturation: 1.02,
+      lift: 0x35558c, gain: 0xffe8c8, liftAmount: 0.018, gainAmount: 0.22, saturation: 1.02,
     },
   },
 

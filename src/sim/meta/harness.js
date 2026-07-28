@@ -96,6 +96,7 @@ const say = (s = '') => out.push(s);
 
 say(rule('1. VOLUME — every registered module, m3, derived from mass and class'));
 await import('../../art/geometry/modules/index.js');
+await import('../../art/geometry/ships/index.js');
 say(`${pad('MODULE', 27)}${pad('CLASS', 9)}${pad('MASS t', 8)}${pad('VOL m3', 8)}HOLD SHARE OF 2400 m3`);
 const mods = allModules().slice().sort((a, b) => moduleVolume(b) - moduleVolume(a));
 for (const m of mods) {
@@ -170,7 +171,8 @@ say(rule('3. SCARCITY — four claims on one pool'));
 const holdBefore = { ...w.materials };
 say(`available              : ${JSON.stringify(holdBefore)}`);
 const claims = [
-  ['hardpoint repair (600 structure)', { alloy: 150 }],
+  // refit.js#repairHardpoint: ceil(missing * 0.25) alloy, for 600 points of structure.
+  ['hardpoint structure repair 600', { alloy: 150 }],
   ['pattern: port_cannon_bank', patternCost(getModule('port_cannon_bank'))],
   ['perk: reinforced_mounts 1', PERK_DEFS[0].cost(0)],
   ['fabricate 1 decoy', { alloy: 10, electronics: 12 }],
@@ -206,10 +208,11 @@ say(`cutting                : ${bulky.name} (${moduleVolume(bulky)} m3)`);
 const r2 = salv2._store(fake);
 say(`result                 : ${r2.kind === 'module' ? 'stored as a module' : `TORN UP -> ${r2.units} ${r2.grade} scrap`}`);
 say(`  the part existed, it survived the kill, and it was lost to a decision about volume.`);
-econ2.ventScrap('plate', 3000);
-say(`after venting 3000 plate: ${hold2.freeM3().toFixed(0)} m3 free`);
+const dumped = econ2.ventScrap('plate');
+say(`vented ${dumped} plate scrap : ${hold2.freeM3().toFixed(0)} m3 free`);
 const r3 = salv2._store({ ...fake, id: 'test/section2' });
-say(`same cut again         : ${r3.kind === 'module' ? `STORED (${r3.volume} m3)` : 'torn up'}`);
+say(`same cut again         : ${r3.kind === 'module' ? `STORED (${r3.volume} m3, ${hold2.freeM3().toFixed(0)} m3 left)` : 'torn up'}`);
+say(`  throwing the tier-0 stock overboard is what buys room for the tier-3 part.`);
 
 // --- 5. items ------------------------------------------------------------
 
@@ -352,7 +355,7 @@ for (const r of perks.describe().filter((x) => x.gate)) {
 say(rule('9. OBJECTIVES — read off the faction war, with a clock and an arrival price'));
 const { installWorldSim } = await import('../../world/index.js');
 const w3 = makeWorld('harness/meta/objectives');
-makePlayer(w3);
+const p3 = makePlayer(w3);
 const salv3 = new SalvageSystem(w3);
 w3.register('salvage', salv3);
 w3.engine.add(salv3);
@@ -387,10 +390,34 @@ if (intercept) {
 } else {
   say(`\n(no intercept open at this instant — ${obj.log.filter((l) => l.kind === 'intercept').length} have opened and closed)`);
 }
-say(`\nhistory (last 8):`);
-for (const h of obj.history().slice(-8)) {
-  say(`  ${pad(h.kind, 11)}${pad(h.poiName, 20)}${pad(h.outcome, 10)}tier ${h.tier ?? '--'}  paid ${JSON.stringify(h.paid ?? {})}`);
+// Now actually go somewhere. Presence is the trigger; there is no accept button.
+say(`\nFLY TO ONE. Presence is the only trigger — there is no accept button.`);
+const target = obj.active.find((o) => o.kind === 'prospect') ?? obj.active[0];
+if (target) {
+  const node = w3.systems.system.nodes.find((n) => n.id === target.poiId);
+  const matsBefore = { ...w3.materials };
+  say(`  flying to ${target.poiName} (${(node.position.length() / 1000).toFixed(0)} km out, radius ${(node.radius / 1000).toFixed(0)} km)`);
+  p3.position.copy(node.position);
+  advance(w3.engine, 30, 1 / 12);
+  const rec = obj.history().find((h) => h.poiId === target.poiId);
+  say(`  outcome               : ${rec?.outcome ?? 'still open'}  tier ${rec?.tier ?? '--'}`);
+  say(`  materials before      : ${JSON.stringify(matsBefore)}`);
+  say(`  materials after       : ${JSON.stringify(w3.materials)}`);
+  say(`  paid                  : ${JSON.stringify(rec?.paid ?? {})}`);
 }
+
+// Let the rest run out so expiry is visible too.
+advance(w3.engine, 1500, 1 / 12);
+say(`\nafter another 1500 s   : ${opened} opened, ${closed} closed, ${obj.active.length} open`);
+say(`\nhistory (last 10)      :`);
+say(`  ${pad('KIND', 11)}${pad('POI', 20)}${pad('OUTCOME', 10)}${pad('TIER', 8)}PAID`);
+for (const h of obj.history().slice(-10)) {
+  say(`  ${pad(h.kind, 11)}${pad(h.poiName, 20)}${pad(h.outcome, 10)}${pad(h.tier ?? '--', 8)}${JSON.stringify(h.paid ?? {})}`);
+}
+const completed = obj.history().filter((h) => h.outcome === 'complete').length;
+const expired = obj.history().filter((h) => h.outcome === 'expired').length;
+say(`\n${completed} completed, ${expired} expired. An expired objective is the price of `
+  + `being somewhere else, and it is the only thing in the game that charges for that.`);
 
 // --- 10. determinism -----------------------------------------------------
 
