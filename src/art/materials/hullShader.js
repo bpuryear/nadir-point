@@ -234,8 +234,10 @@ const MAP_FRAGMENT = /* glsl */`
 	// Low-frequency value drift. This is what stops two repeats of the plate tile
 	// from being the same patch, which is how the eye detects tiling at all.
 	diffuseColor.rgb *= 1.0 + (nadirMacroTexel.r - 0.5) * nadirMacro.y;
-	// Anything sunk below the neutral plane is a hole, and a hole is darker.
-	diffuseColor.rgb *= 1.0 - nadirCavity * 0.34;
+	// Anything sunk below the neutral plane is a hole, and a hole is darker. Scaled by
+	// the same per-tier relief weight as everything else derived from the height, so a
+	// surface that opts out of relief does not pick up a stain instead.
+	diffuseColor.rgb *= 1.0 - nadirCavity * nadirRelief.y * 0.46;
 	// Soot, then marks. Marks go last because a hazard band that has been sooted
 	// over is a hazard band nobody can see.
 	diffuseColor.rgb = mix( diffuseColor.rgb, nadirSootColor, nadirMacroTexel.b * nadirMacro.z );
@@ -341,6 +343,23 @@ export const HULL_MACRO_DEFAULTS = {
   /** Domain-warp period in metres and amplitude in metres. */
   warpPeriodM: 68,
   warpAmpM: 5.2,
+  /**
+   * Metres of relief a full 0..1 swing of the macro height channel represents. 44 m
+   * means the neutral plane is 0.5 and the channel can author a 14 m recess at 0.34
+   * or a 9 m proud frame at 0.60 — the depths ship-language.md §3 asks for ("a recess
+   * deeper than 8 m") stated in the units the document uses.
+   */
+  reliefM: 44,
+  /** How much indirect light a full-depth cavity loses. */
+  cavity: 0.72,
+  /** Extra tiling-detail contrast and relief inside a structure band. */
+  detailGain: 1.15,
+  /**
+   * Metres of relief per screen pixel the gradient is allowed to reach. Past this it
+   * is a macro region boundary, not a surface. 0.9 is about the slope of a 45 degree
+   * wall seen at one metre per pixel, which is steeper than anything authored.
+   */
+  slopeClamp: 0.9,
 };
 
 /**
@@ -368,6 +387,14 @@ export function applyHullMacro(material, p = {}) {
     nadirMacroMap: { value: o.macroTexture },
     nadirMacro: { value: new THREE.Vector4(1 / o.macroM, o.drift, o.soot, o.ink) },
     nadirWarp: { value: new THREE.Vector4(tileM / o.warpPeriodM, o.warpAmpM / tileM, o.roughDrift, 0) },
+    nadirRelief: {
+      value: new THREE.Vector4(
+        o.reliefM * (o.reliefScale ?? 1),
+        o.cavity * (o.reliefScale ?? 1),
+        o.detailGain * (o.detailScale ?? 1),
+        o.slopeClamp,
+      ),
+    },
     nadirInkColor: { value: new THREE.Color().setHex(o.inkColor ?? 0xc9ccd0, THREE.SRGBColorSpace) },
     nadirHazardColor: { value: new THREE.Color().setHex(o.hazardColor ?? 0xbfa53a, THREE.SRGBColorSpace) },
     nadirSootColor: { value: new THREE.Color().setHex(o.sootColor ?? 0x151517, THREE.SRGBColorSpace) },
@@ -397,6 +424,17 @@ export function applyHullMacro(material, p = {}) {
       '#include <clipping_planes_fragment>',
       '#include <clipping_planes_fragment>\n'
       + '\tvec4 nadirMacroTexel = texture2D( nadirMacroMap, nadirMacroUV( vNadirObjPos, normalize( vNadirObjNrm ) ) );\n'
+      // The macro height, in metres, and its screen-space gradient. Computed ONCE
+      // here; four chunks below read it. The clamp is load-bearing - see the header.
+      + '\tfloat nadirH = ( nadirMacroTexel.g - 0.5 ) * nadirRelief.x;\n'
+      + '\tvec2 nadirDH = clamp( vec2( dFdx( nadirH ), dFdy( nadirH ) ), -nadirRelief.w, nadirRelief.w );\n'
+      // How far below the neutral plane this texel sits, 0..1. Only the sunk half
+      // counts: a proud frame is not a cavity.
+      + '\tfloat nadirCavity = clamp( ( 0.5 - nadirMacroTexel.g ) * 2.4, 0.0, 1.0 );\n'
+      // Detail gain: 1.0 on open armour, up to 1 + nadirRelief.z inside a structure
+      // band, and slightly BELOW 1 on the calmest faces so the reserve is real.
+      + '\tfloat nadirStruct = clamp( abs( nadirMacroTexel.g - 0.5 ) * 3.2, 0.0, 1.0 );\n'
+      + '\tfloat nadirDetail = mix( 0.72, 1.0 + nadirRelief.z, nadirStruct );\n'
       // vMapUv only exists under USE_MAP. Every hull-family material has one, but a
       // compile error here would take down the whole scene, so it is guarded.
       + '\t#ifdef USE_MAP\n'

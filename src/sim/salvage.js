@@ -4,6 +4,11 @@ import { scratch } from '../core/world.js';
 import { RANGE } from '../core/units.js';
 import { getModule, allModules } from '../core/contracts.js';
 import { FreeBody } from './physics.js';
+import { installProgression, storeSection, breakDownItem, gradeForKind } from './meta/index.js';
+import {
+  clamp01, salvageState, conditionLabel, cutQuality, burnRate, scrapYield, CONDITION,
+} from './condition.js';
+import { ammoSalvage, ammoClassOf, AMMO_SPEC } from './stores.js';
 
 /**
  * Salvage.
@@ -19,25 +24,46 @@ import { FreeBody } from './physics.js';
  * the whole reason subsystem targeting exists.
  */
 
-/** A cuttable section of a wreck. One section, one part. */
+/**
+ * A cuttable section of a wreck. One section, one part.
+ *
+ * `condition` is the universal 0..1 from condition.js and it is the SAME number that
+ * was on the hull section while you were shooting at it, that will be on the part in
+ * your hold, and that will be on the mount when you install it. `integrity` remains as
+ * an alias so nothing that already reads it has to change.
+ */
 export class WreckSection {
-  constructor({ id, moduleId, label, localPosition, radius, integrity = 1, materials = 0 }) {
+  constructor({ id, moduleId, label, localPosition, radius, condition = 1, integrity, materials = 0, ammo = null, ammoRounds = 0 }) {
     this.id = id;
     this.moduleId = moduleId;      // null means it only yields raw materials
     this.label = label;
     this.localPosition = localPosition.clone();
     this.worldPosition = new THREE.Vector3();
     this.radius = radius;
-    this.integrity = integrity;    // 0..1; below cutThreshold it is scrap only
+    /** 0..1 universal condition. Below CONDITION.scrap it is materials only. */
+    this.condition = clamp01(integrity ?? condition);
     this.materials = materials;
+    /** Salvageable ammunition, when this section was a magazine. */
+    this.ammo = ammo;
+    this.ammoRounds = ammoRounds;
     this.cutProgress = 0;
     this.detached = false;
     this.object = null;            // geometry, if the wreck built one
   }
 
+  /** Legacy alias. Everything that used `integrity` keeps working. */
+  get integrity() { return this.condition; }
+  set integrity(v) { this.condition = clamp01(v); }
+
   get cuttable() {
-    return !this.detached && this.integrity > 0.02;
+    return !this.detached && this.condition > 0.02;
   }
+
+  /** INTACT / DAMAGED / SCRAP, the same vocabulary the targeting ring uses. */
+  get state() { return salvageState(this.condition); }
+
+  /** True when cutting this out will actually produce an installable part. */
+  get yieldsModule() { return !!this.moduleId && this.condition >= CONDITION.scrap; }
 }
 
 export class Wreck {
@@ -52,6 +78,16 @@ export class Wreck {
     this.name = `${ship.classDef.name} hulk`;
     this.root = root ?? ship.root;
     this.integrity = ship.salvageIntegrity;
+
+    /**
+     * RESIDUAL HEAT. A hull that went up with its reactor is still burning when you
+     * get there, and a torch cut through a burning wreck cooks what you are cutting
+     * out of it (condition.js#cutQuality). It decays over about ninety seconds, so
+     * waiting is a genuine option - and waiting is exactly what a response timer or a
+     * second hostile makes expensive. The wreck is a clock you can choose to read.
+     */
+    this.residualHeat = 0;
+    this.heatDecay = 1 / 90;
 
     // Wrecks tumble. Slowly, and forever, because nothing stops them.
     this.body = new FreeBody({ mass: ship.classDef.mass, radius: ship.radius });
@@ -73,21 +109,29 @@ export class Wreck {
   /**
    * Turn what survived into cuttable sections.
    *
-   * Every intact weapon subsystem becomes a real module the player can install. A
-   * destroyed one becomes scrap. The integrity multiplier from how the ship died gates
-   * whether a section survived at all, so a catastrophic reactor kill leaves a hull
-   * that is worth exactly as much as its raw alloy.
+   * This used to be a die roll: every subsystem rolled against ONE hull-wide integrity
+   * number, so the destroyer whose engines you surgically removed and the destroyer you
+   * hosed from bow to stern produced statistically identical loot. Now each section
+   * arrives carrying the condition it accumulated during the fight, section by section.
+   * Shoot the engines out cleanly and the weapon batteries come off at 0.9; brawl at
+   * knife range and everything comes off at 0.4.
    */
   _buildSections(ship, rng) {
     const pool = allModules();
     let index = 0;
 
     for (const sub of ship.subsystems.values()) {
-      const survived = !sub.destroyed && rng.next() < this.integrity;
+      const section = ship.sections?.get(sub.def.id);
+      // Section condition is the accumulated damage record. A destroyed subsystem is
+      // scrap regardless of what the plating around it looks like.
+      const condition = sub.destroyed
+        ? Math.min(section?.condition ?? 0.25, 0.18)
+        : clamp01(section?.condition ?? this.integrity);
       const localPos = new THREE.Vector3(...sub.def.position);
 
       let moduleId = null;
-      if (survived && (sub.def.kind === 'weapon' || sub.def.kind === 'reactor' || sub.def.kind === 'hangar' || sub.def.kind === 'sensor')) {
+      if (condition >= CONDITION.scrap
+        && (sub.def.kind === 'weapon' || sub.def.kind === 'reactor' || sub.def.kind === 'hangar' || sub.def.kind === 'sensor')) {
         // Match a registered module of this faction whose role fits the subsystem.
         const candidates = pool.filter((m) => m.faction === this.faction && matchesKind(m, sub.def.kind));
         if (candidates.length) moduleId = rng.pick(candidates).id;
@@ -99,27 +143,53 @@ export class Wreck {
         label: sub.def.label ?? sub.def.id,
         localPosition: localPos,
         radius: sub.def.radius,
-        integrity: survived ? 1 : rng.range(0.1, 0.4),
-        materials: Math.round((sub.def.salvageValue ?? 0.2) * 100 * this.integrity),
+        condition,
+        materials: Math.round((sub.def.salvageValue ?? 0.2) * 100 * condition),
+      }));
+    }
+
+    // Magazines. A hull that died with rounds still in it is worth cutting open for
+    // them, which is what keeps a dry player looking for a specific KIND of target
+    // rather than any target at all.
+    const carried = new Map();
+    for (const mount of ship.weapons ?? []) {
+      const cls = mount.ammoClass ?? ammoClassOf(mount.def);
+      if (!cls) continue;
+      carried.set(cls, (carried.get(cls) ?? 0) + (ship.stores?.rounds(cls) ?? 0));
+    }
+    for (const [cls, held] of carried) {
+      const rounds = Math.round(Math.min(held, ammoSalvage(cls)) * this.integrity);
+      if (rounds <= 0) continue;
+      this.sections.push(new WreckSection({
+        id: `${this.id}/mag_${cls}`,
+        moduleId: null,
+        label: `${AMMO_SPEC[cls].label} MAGAZINE`,
+        localPosition: new THREE.Vector3(rng.signed() * ship.radius * 0.3, 0, rng.signed() * ship.radius * 0.3),
+        radius: ship.radius * 0.12,
+        condition: clamp01(this.integrity),
+        materials: 12,
+        ammo: cls,
+        ammoRounds: rounds,
       }));
     }
 
     // Plain hull plating is always worth something, which is what keeps a blown-up
-    // ship from being a total loss.
-    const plateCount = Math.max(1, Math.round(3 * this.integrity));
-    for (let i = 0; i < plateCount; i++) {
+    // ship from being a total loss. Plating carries the condition of the run of hull
+    // it came from, so which side of the ship you shot decides which plates are worth
+    // the cutting time.
+    const plates = ['plate_fore', 'plate_mid', 'plate_aft'];
+    for (let i = 0; i < plates.length; i++) {
+      const hull = ship.sections?.get(plates[i]);
+      const condition = clamp01(hull?.condition ?? this.integrity);
+      if (condition < 0.05) continue;
       this.sections.push(new WreckSection({
-        id: `${this.id}/plate${i}`,
+        id: `${this.id}/${plates[i]}`,
         moduleId: null,
-        label: 'hull plating',
-        localPosition: new THREE.Vector3(
-          rng.signed() * ship.radius * 0.5,
-          rng.signed() * ship.radius * 0.18,
-          rng.signed() * ship.radius * 0.8,
-        ),
+        label: hull?.label ?? 'hull plating',
+        localPosition: hull ? hull.localPosition.clone() : new THREE.Vector3(0, 0, (i - 1) * ship.radius * 0.55),
         radius: ship.radius * 0.18,
-        integrity: 1,
-        materials: Math.round(rng.range(30, 70)),
+        condition,
+        materials: Math.round(rng.range(30, 70) * condition),
       }));
     }
   }
@@ -171,6 +241,19 @@ export class SalvageSystem {
     this.cargoCapacity = 6;      // raised by cargo expansion modules
 
     this.bus.on(EV.SHIP_DESTROYED, ({ ship }) => this._spawnWreck(ship));
+
+    // The progression, economy and objective layer installs from here.
+    //
+    // `src/game.js` is integration's file and its `import.meta.glob` list has no entry
+    // that would find `sim/meta/index.js`, so there is no other seam available to this
+    // stream. Salvage is constructed unconditionally in `bootGame`, which makes it a
+    // reliable one. The installer is idempotent, so lifting this call into `bootGame`
+    // later is a two-line change that cannot double-install.
+    try {
+      installProgression(world, { salvage: this });
+    } catch (err) {
+      console.warn('[salvage] progression layer failed to install', err);
+    }
   }
 
   get player() { return this.world.player; }
@@ -273,6 +356,16 @@ export class SalvageSystem {
 
   _store(section) {
     const w = this.world;
+
+    // THE ECONOMY SEAM. When the progression layer is installed, storing a section is
+    // a volume decision and a materials decision rather than a slot check: see
+    // `sim/meta/index.js#storeSection`. The path below is kept intact as the fallback
+    // so this file still works standalone.
+    if (w.systems.economy) {
+      const result = storeSection(w, section, this);
+      if (result.kind !== 'none') return result;
+    }
+
     if (section.moduleId && w.inventory.length < this.cargoCapacity) {
       const def = getModule(section.moduleId);
       if (def) {

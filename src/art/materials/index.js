@@ -91,18 +91,19 @@ const HULL_VARIANTS = {
   // tile with almost no greeble. Its relief is dropped to match - a big armour face
   // has plate steps of a few centimetres over tens of metres, and carrying the old
   // 0.62 across a tile 2.2x larger turned an armour belt into corrugation.
-  hull: { variant: 'hull', normalScale: 0.40, envMapIntensity: 0.70, macro: 1.0 },
-  hullDark: { variant: 'hullDark', normalScale: 0.54, envMapIntensity: 0.55, macro: 0.9 },
-  plating: { variant: 'plating', normalScale: 0.62, envMapIntensity: 0.75, macro: 0.85 },
+  hull: { variant: 'hull', normalScale: 0.62, envMapIntensity: 0.55, macro: 1.0, relief: 1.0, detail: 1.35 },
+  hullDark: { variant: 'hullDark', normalScale: 0.60, envMapIntensity: 0.45, macro: 0.9, relief: 0.9, detail: 1.1 },
+  plating: { variant: 'plating', normalScale: 0.70, envMapIntensity: 0.55, macro: 0.85, relief: 1.0, detail: 1.2 },
   // Greeble is genuinely bare hardware, so it keeps a strong relief and a real
   // environment response. It is the frequency contrast against the calm hull, and it
   // takes only a whisper of macro - machinery is not where soot and stencils live.
-  greeble: { variant: 'greeble', normalScale: 1.0, envMapIntensity: 0.85, macro: 0.35 },
-  trim: { variant: 'trim', normalScale: 0.45, envMapIntensity: 0.60, macro: 0.5 },
+  greeble: { variant: 'greeble', normalScale: 1.0, envMapIntensity: 0.85, macro: 0.35, relief: 0.25, detail: 0.55 },
+  trim: { variant: 'trim', normalScale: 0.45, envMapIntensity: 0.60, macro: 0.5, relief: 0.5, detail: 0.7 },
   // The fin's own relief IS the surface, so it keeps a strong normal. It takes the
-  // macro layer's drift and soot (a radiator gets filthy) but no marks worth the name.
-  radiator: { variant: 'radiator', normalScale: 0.9, envMapIntensity: 0.35, macro: 0.55 },
-  derelictHull: { variant: 'derelictHull', normalScale: 0.80, envMapIntensity: 0.60, macro: 0.9 },
+  // macro layer's drift and soot (a radiator gets filthy) but no relief and no marks:
+  // a 14 m recess authored into a 3 m thick panel is a lie the eye catches at once.
+  radiator: { variant: 'radiator', normalScale: 0.9, envMapIntensity: 0.30, macro: 0.55, relief: 0, detail: 0 },
+  derelictHull: { variant: 'derelictHull', normalScale: 0.80, envMapIntensity: 0.50, macro: 0.9, relief: 0.9, detail: 1.0 },
   // Debris is instanced, so every fragment shares one object space and would carry
   // one identical macro layer. It gets none; `instanceColor` is its variation.
   debris: { variant: 'debris', normalScale: 0.75, envMapIntensity: 0.70, macro: 0 },
@@ -278,6 +279,20 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
       roughDrift: HULL_MACRO_DEFAULTS.roughDrift * spec.macro,
       soot: HULL_MACRO_DEFAULTS.soot * spec.macro,
       ink: HULL_MACRO_DEFAULTS.ink * spec.macro,
+      /**
+       * How much of the macro layer's RELIEF this tier takes, and how hard its own
+       * tiling detail is amplified inside a structure band.
+       *
+       * Not the same dial as `macro` (which is about paint) and it must not be, for a
+       * mechanical reason: the calm armour tier wants ALL the relief — the recesses and
+       * frames are the only events it is allowed to have — while the dense machinery
+       * tier wants almost none, because it is already the busiest surface in the game
+       * and amplifying it further is round one's uniform-noise failure returning by
+       * another route. A thin radiator fin takes none at all: a 14 m recess in a 3 m
+       * panel is a lie the eye catches immediately.
+       */
+      reliefScale: spec.relief ?? 1,
+      detailScale: spec.detail ?? 1,
     });
     return material;
   }

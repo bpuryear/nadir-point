@@ -396,13 +396,29 @@ export class CombatSystem {
     let bearing = 0;
     let total = 0;
     let minError = Infinity;
+    let ready = 0;
+    let hot = 0;
+    let dry = 0;
     for (const m of fromShip.weapons) {
-      if (!m.online || m.def.type === 'pd') continue;
+      if (m.def.type === 'pd') continue;
       total++;
-      if (m.canBear(fromShip.position, fromShip.heading, point)) bearing++;
-      else minError = Math.min(minError, m.arcError(fromShip.heading, point));
+      if (!m.usable) {
+        if (m.offlineReason === 'heat') hot++;
+        continue;
+      }
+      const blocked = fromShip.stores ? fromShip.stores.blockedReason(m) : null;
+      if (blocked === 'DRY') dry++;
+      if (m.canBear(fromShip.position, fromShip.heading, point)) {
+        bearing++;
+        if (!blocked) ready++;
+      } else {
+        minError = Math.min(minError, m.arcError(fromShip.heading, point));
+      }
     }
-    return { bearing, total, minError: bearing > 0 ? 0 : minError };
+    // `bearing` is how many mounts can SEE it; `ready` is how many can actually shoot
+    // it right now. The gap between those two numbers is the stores and heat systems
+    // showing up in the one readout the player already watches.
+    return { bearing, ready, hot, dry, total, minError: bearing > 0 ? 0 : minError };
   }
 
   /** For the tactical overlay: every arc on a ship, as world-space wedge descriptions. */
@@ -411,11 +427,17 @@ export class CombatSystem {
     for (const m of ship.weapons) {
       out.push({
         origin: m.worldPosition,
-        centre: ship.heading + m.yawCentre,
-        width: m.yawWidth,
+        centre: ship.heading + m.yawCentre + m.arcOffset,
+        width: m.halfArc * 2,
         range: m.def.range,
         type: m.def.type,
         online: m.online,
+        usable: m.usable,
+        offlineReason: m.offlineReason,
+        frozen: m.parts.traverseFrozen,
+        heat: m.thermal ? m.thermal.heat : 0,
+        condition: m.condition,
+        blocked: ship.stores ? ship.stores.blockedReason(m) : null,
         bearing: !!(ship.target && !ship.target.dead && m.canBear(ship.position, ship.heading, ship.target.position)),
       });
     }
