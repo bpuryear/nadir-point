@@ -359,7 +359,26 @@ export const POI_PALETTES = {
   'giant-orbit': {
     id: 'giant-orbit',
     name: 'Gas Giant Orbit',
-    key: { color: 0xfff0d8, intensity: 13.5, angularRadius: 0.009 },
+    /*
+     * KEY INTENSITY IS SOLVED, NOT GUESSED.
+     *
+     * This was 13.5, and cutting the fill terms to a 17:1 ratio did not fix the white
+     * hull, because the key alone was already overdriving it. Working it through:
+     * the hull albedo 0x666d75 is 0.133 linear, so a Lambertian face pointing at the
+     * key returns 0.133/PI * I. Through the ACES curve at exposure 1.0 that lands a
+     * fully-lit face at sRGB 0.83 for I = 13.5 - white paper before a single
+     * highlight is added, which is exactly what the review frames showed.
+     *
+     *   I = 13.5 -> 0.83    I = 8 -> 0.72    I = 6 -> 0.65    I = 4.6 -> 0.57
+     *
+     * 4.6 puts a directly-lit face near 0.57, which leaves the whole midtone range
+     * for faces at an angle and real headroom above for trim, emissives and specular.
+     * That is what makes a terminator exist at all.
+     *
+     * Celestials are in the far scene and carry their own lighting, so this does not
+     * darken the gas giant.
+     */
+    key: { color: 0xfff0d8, intensity: 4.6, angularRadius: 0.009 },
     /*
      * KEY-TO-FILL RATIO IS THE WHOLE LOOK, AND IT WAS WRONG.
      *
