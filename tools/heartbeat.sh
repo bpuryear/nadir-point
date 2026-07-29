@@ -16,7 +16,8 @@ WF="/root/.claude/projects/-home-user-nadir-point/b4b215f7-9140-591b-bb31-5a5849
 STALL_SECONDS=1500     # 25 min with agents outstanding and no transcript write
 BEAT_SECONDS=3600      # positive confirmation once an hour
 POLL=120
-LIVE_WINDOW=5400        # a workflow is only "live" if an agent wrote within 90 min
+LIVE_WINDOW=3600        # a workflow is only "live" if an agent wrote within 60 min
+ALERTED="/tmp/nadir-heartbeat-alerted"   # one alert per workflow, not one per poll
 
 last_beat=0
 
@@ -29,35 +30,43 @@ while true; do
   # so counting every journal on disk would fire a permanent false stall. A workflow is
   # only considered live if one of its own agent transcripts was written recently; an
   # older one is finished history, however incomplete it looks.
+  # Staleness is measured PER WORKFLOW, not across all of them. Comparing the newest
+  # write anywhere would let one hung workflow hide behind a busy one - which is
+  # precisely the shape of the outage this script exists to catch, since the art pass
+  # was writing happily while two other waves were dead.
   incomplete=0
   detail=""
+  oldest_live_age=0
   for j in "$WF"/*/journal.jsonl; do
     [ -f "$j" ] || continue
     dir=$(dirname "$j")
+    name=$(basename "$dir")
 
     recent=$(find "$dir" -name 'agent-*.jsonl' -newermt "-${LIVE_WINDOW} seconds" 2>/dev/null | head -1)
     [ -n "$recent" ] || continue
 
     s=$(grep -c '"type":"started"' "$j" 2>/dev/null); s=${s:-0}
     r=$(grep -c '"type":"result"' "$j" 2>/dev/null); r=${r:-0}
-    if [ "$s" -gt "$r" ] 2>/dev/null; then
-      incomplete=1
-      detail="$detail $(basename "$dir")=$r/$s"
+    [ "$s" -gt "$r" ] 2>/dev/null || continue
+
+    incomplete=1
+    wf_newest=$(find "$dir" -name 'agent-*.jsonl' -printf '%T@\n' 2>/dev/null | sort -n | tail -1 | cut -d. -f1)
+    wf_age=0
+    [ -n "$wf_newest" ] && wf_age=$(( now - wf_newest ))
+    detail="$detail $name=$r/$s@$((wf_age/60))m"
+    [ "$wf_age" -gt "$oldest_live_age" ] && oldest_live_age=$wf_age
+
+    # Alert ONCE per workflow. A run that finished with an agent error looks exactly
+    # like a hung one from here - it stops writing and its journal keeps started > result
+    # forever, because an errored agent never emits a result line. Re-alerting every poll
+    # would bury a real stall in noise from a run that is simply over, which is the
+    # fastest way to train someone to ignore the alarm.
+    if [ "$wf_age" -gt "$STALL_SECONDS" ] && ! grep -qxF "$name" "$ALERTED" 2>/dev/null; then
+      echo "STALL: $name has $((s-r)) agent(s) outstanding and has not written for $((wf_age/60))m — hung, or finished with an agent error"
+      echo "$name" >> "$ALERTED"
     fi
   done
-
-  # --- when did any agent in a LIVE workflow last write? ---
-  newest=$(find "$WF" -name 'agent-*.jsonl' -newermt "-${LIVE_WINDOW} seconds" -printf '%T@\n' 2>/dev/null \
-           | sort -n | tail -1 | cut -d. -f1)
-  if [ -n "$newest" ]; then
-    age=$(( now - newest ))
-  else
-    age=0
-  fi
-
-  if [ "$incomplete" -eq 1 ] && [ "$age" -gt "$STALL_SECONDS" ]; then
-    echo "STALL: agents outstanding ($detail ) but no transcript write for $((age/60))m"
-  fi
+  age=$oldest_live_age
 
   # --- self-heal: sweep vite servers old enough to be orphans ---
   orph=$(ps -eo pid,etimes,args | awk '$2 > 3600 && $0 ~ /vite (preview )?--port/' | wc -l)
