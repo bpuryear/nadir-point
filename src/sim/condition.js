@@ -13,7 +13,18 @@
  *
  * Condition is never decoration. Every function below is consumed by combat, refit
  * or salvage, and each one is a multiplier on a value that already existed.
+ *
+ * WHY THIS FILE IMPORTS THE MATERIAL TABLE. `scrapYield` below is the published
+ * preview of what breaking a part down pays, and it is read on every repair-plan row
+ * (`refit.js:552`) so the player can compare "restore it" against "melt it". It used
+ * to compute its own rate — `mass * 0.4 * condition` of finished stock — while the
+ * path that actually runs, `meta/index.js#breakDownItem`, produced `mass * 0.10 *
+ * condition` of GRADED SCRAP which then refines lossily. Measured on the same module,
+ * the two disagreed by 14x. A preview that is wrong by 14x is worse than no preview,
+ * so this file now derives its answer from the one rate and the one refining table.
  */
+
+import { REFINE_YIELD, MATERIAL_VOLUME, gradeForModule } from './meta/materials.js';
 
 /**
  * The four bands. Thresholds come from beta-decay-systems.md §6.1 and are the same
@@ -151,21 +162,54 @@ export function repairCost(massT, from, to = 1) {
 }
 
 /**
- * What a part yields when broken down.
+ * Scrap units a part of `massT` tonnes at condition `c` tears down into.
  *
- * The alloy and composite rates are bit-for-bit the rates `salvage.scrapInventoryItem`
- * already used, so the inventory screen's published arithmetic stays true. The exotic
- * bonus is new and is deliberately only available on a clean part: cutting carefully
- * pays a second time even when you intend to melt the thing down.
+ * THE ONE RATE. `meta/index.js#breakDownItem` and `refit.js#scrapInstalled` both go
+ * through here, so there is no second implementation to diverge from.
  */
-export function scrapYield(massT, c) {
-  const v = clamp01(c);
-  const value = Math.round((massT ?? 200) * 0.4 * v);
-  return {
-    alloy: value,
-    composite: Math.round(value * 0.35),
-    exotic: v >= 0.75 ? 1 : 0,
+export const SCRAP_UNITS_PER_TONNE = 0.10;
+
+export function scrapUnits(massT, c) {
+  return Math.max(1, Math.round((massT ?? 200) * SCRAP_UNITS_PER_TONNE * clamp01(c)));
+}
+
+/**
+ * What a part yields when broken down, in REFINED units — i.e. after the scrap it
+ * actually produces has been through the refinery.
+ *
+ * Two things changed here and both were printers.
+ *
+ *   1. The rate. This used to pay `mass * 0.4 * condition` of finished alloy straight
+ *      into `world.materials`, bypassing the hold, the queue and the refining loss.
+ *      The path the game actually runs pays `mass * 0.10 * condition` of graded scrap.
+ *      Same 340 t cannon bank: 168 alloy one way, 12 the other. It now computes the
+ *      second answer, so the repair-versus-scrap comparison on every refit row is a
+ *      comparison between two real numbers.
+ *   2. The exotic. `exotic: v >= 0.75 ? 1 : 0` MINTED exotic out of a clean part, which
+ *      closed a loop with `patterns.build`: build a module for 147 alloy + 34
+ *      electronics, install it, scrap it for 143 alloy + 50 composite + 1 exotic. Seven
+ *      turns of that crank bought the entire perk tree's exotic demand for 28 alloy.
+ *      Exotic now comes only out of refining core scrap, at 0.015 per unit, which is
+ *      what makes an intact reactor section worth going out of your way for.
+ *
+ * @param {number} massT
+ * @param {number} c        condition 0..1
+ * @param {string|Object} [grade]  scrap grade, or the ModuleDef to derive it from
+ */
+export function scrapYield(massT, c, grade = 'machine') {
+  const g = typeof grade === 'string' ? grade : gradeForModule(grade);
+  const units = scrapUnits(massT, c);
+  const table = REFINE_YIELD[g] ?? REFINE_YIELD.machine;
+  const out = {
+    alloy: 0, composite: 0, electronics: 0, exotic: 0,
+    /** What actually lands in the hold, before any refining. */
+    scrapUnits: units,
+    grade: g,
+    /** Cubic metres that scrap occupies on the way to the crucible. */
+    m3: units * (MATERIAL_VOLUME[g] ?? 0.34),
   };
+  for (const k in table) out[k] = Math.floor(table[k] * units);
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,11 +239,17 @@ export function degrade(current, amount, toughness) {
  *   - whether they chose the fast cut, which is quicker and worse
  *
  * This is the line that makes "a part cut from a burning wreck is visibly worse".
+ *
+ * `beamPenalty` is the fourth input and it is a PERK DRAWBACK, not an accident of the
+ * situation: `cutting_optics` collimates the torch harder, sections come free faster,
+ * and every one of them comes off scorched. It is passed in by `salvage.js` from
+ * `SalvageSystem.cutConditionPenalty` so the projection the cut panel already draws
+ * (`cutStatus().projected`) shows the cost of the perk before the cut, not after.
  */
-export function cutQuality(sectionCondition, wreckHeat, fast = false) {
+export function cutQuality(sectionCondition, wreckHeat, fast = false, beamPenalty = 0) {
   const burn = clamp01(wreckHeat) * 0.35;
   const haste = fast ? 0.12 : 0;
-  return clamp01(sectionCondition - burn - haste);
+  return clamp01(sectionCondition - burn - haste - Math.max(0, beamPenalty));
 }
 
 /** Condition loss per second of cutting while the wreck is still burning. */

@@ -4,9 +4,12 @@ import { scratch } from '../core/world.js';
 import { RANGE } from '../core/units.js';
 import { getModule, allModules } from '../core/contracts.js';
 import { FreeBody } from './physics.js';
-import { installProgression, storeSection, breakDownItem } from './meta/index.js';
 import {
-  clamp01, salvageState, conditionLabel, cutQuality, burnRate, scrapYield, CONDITION,
+  installProgression, storeSection, breakDownItem, sectionPreview,
+  gradeForKind, gradeForModule,
+} from './meta/index.js';
+import {
+  clamp01, salvageState, conditionLabel, cutQuality, burnRate, CONDITION,
 } from './condition.js';
 import { ammoSalvage, ammoClassOf, AMMO_SPEC } from './stores.js';
 
@@ -33,10 +36,22 @@ import { ammoSalvage, ammoClassOf, AMMO_SPEC } from './stores.js';
  * an alias so nothing that already reads it has to change.
  */
 export class WreckSection {
-  constructor({ id, moduleId, label, localPosition, radius, condition = 1, integrity, materials = 0, ammo = null, ammoRounds = 0 }) {
+  constructor({ id, moduleId, label, localPosition, radius, condition = 1, integrity, materials = 0, ammo = null, ammoRounds = 0, grade = null }) {
     this.id = id;
     this.moduleId = moduleId;      // null means it only yields raw materials
     this.label = label;
+    /**
+     * SCRAP GRADE — plate / machine / core. Stamped by whoever builds the section.
+     *
+     * This field was READ and never WRITTEN. `items.js:413` chose a device drop table
+     * with `section.grade && DROP_TABLE[section.grade] ? section.grade : 'machine'`,
+     * and because nothing anywhere assigned it, that expression was permanently falsy:
+     * every device in the game came out of `DROP_TABLE.machine`, and `boarding_charge`
+     * and `scan_pulse` — 2 of the 5 items — could not drop at all. It is stamped here
+     * from the subsystem kind, and `materials.js#gradeForSection` still derives a grade
+     * when it is absent, so the two paths agree and neither can silently produce null.
+     */
+    this.grade = grade;
     this.localPosition = localPosition.clone();
     this.worldPosition = new THREE.Vector3();
     this.radius = radius;
@@ -147,6 +162,10 @@ export class Wreck {
         radius: sub.def.radius,
         condition,
         materials: Math.round((sub.def.salvageValue ?? 0.2) * 100 * condition),
+        // A reactor, sensor stack or hangar is CORE; a weapon or drive is MACHINE.
+        // When the section still names a module, the module wins - a sensor mast whose
+        // section kind says `weapon` is still a sensor mast in the crucible.
+        grade: moduleId ? gradeForModule(getModule(moduleId)) : gradeForKind(sub.def.kind),
       }));
     }
 
@@ -172,6 +191,7 @@ export class Wreck {
         materials: 12,
         ammo: cls,
         ammoRounds: rounds,
+        grade: 'machine',   // feed gear and shell casings
       }));
     }
 
@@ -192,6 +212,7 @@ export class Wreck {
         radius: ship.radius * 0.18,
         condition,
         materials: Math.round(rng.range(30, 70) * condition),
+        grade: 'plate',
       }));
     }
   }
@@ -250,6 +271,7 @@ export class DetachedModule {
       radius: radius ?? 24,
       condition,
       materials: 40,
+      grade: gradeForModule(getModule(moduleId)),
     })];
     this.towedBy = null;
   }
@@ -360,6 +382,14 @@ export class SalvageSystem {
      */
     this.cutMode = 'clean';
     this.fastCutRate = 1.75;
+
+    /**
+     * Condition burned off every completed cut by a hotter torch. SET by
+     * `perks.apply()` from the `cutting_optics` rank and by nothing else: the perk buys
+     * +18% cut rate per rank and pays for it here, so "cut faster" is a trade against
+     * "cut better" rather than a free upgrade. Zero without the perk.
+     */
+    this.cutConditionPenalty = 0;
     this._detachIndex = 0;
     this._cutRows = [];
 
@@ -509,7 +539,7 @@ export class SalvageSystem {
       c.section.cutProgress = 1;
       // The cut itself has a quality. A hasty torch through a hot hull is the worst
       // case and it is visible on the part the moment it lands in the hold.
-      c.section.condition = cutQuality(c.section.condition, heat, fast);
+      c.section.condition = cutQuality(c.section.condition, heat, fast, this.cutConditionPenalty);
       this.inTow.push({
         wreck: c.wreck,
         section: c.section,
@@ -580,29 +610,29 @@ export class SalvageSystem {
     this.bus.emit(EV.SALVAGE_ACQUIRED, { kind: 'materials', amount: mats, section });
   }
 
-  /** Break a stored part down into materials. The repair economy runs on this. */
+  /**
+   * Break a stored part down into materials. The repair economy runs on this.
+   *
+   * ONE PATH. There used to be a fallback here that wrote `world.materials` directly at
+   * `mass * 0.4 * condition` when the economy was absent — except the economy is never
+   * absent in the assembled game (`installProgression` runs from this class's own
+   * constructor), so the fallback was dead code that nonetheless defined a second,
+   * 14x-richer rate. `refit.scrapInstalled` called into the same rate through
+   * `condition.js#scrapYield` and that one was NOT dead. Deleting the branch is what
+   * makes "how much is this part worth melted" a question with one answer.
+   *
+   * If the economy really is missing, the part stays in the hold rather than
+   * evaporating: paying nothing for a part we have already spliced out is a worse
+   * failure than refusing.
+   */
   scrapInventoryItem(uid) {
     const w = this.world;
     const i = w.inventory.findIndex((it) => it.uid === uid);
     if (i < 0) return false;
+    if (!w.systems.economy) return false;
     const [item] = w.inventory.splice(i, 1);
-
-    // Breaking a part down yields tier-0 scrap, not finished stock. Two tiers, and the
-    // refinery is the only way across the gap.
-    if (w.systems.economy) {
-      const out = breakDownItem(w, item);
-      if (out) return true;
-    }
-
-    // Canonical breakdown rates live in condition.js. The alloy and composite figures
-    // are bit-for-bit what this function already produced; the exotic is new and is
-    // only paid on a clean part, so cutting carefully pays even when you melt the thing.
-    const def = getModule(item.moduleId);
-    const out = scrapYield(def?.mass ?? 200, item.condition ?? 1);
-    w.materials.alloy += out.alloy;
-    w.materials.composite += out.composite;
-    w.materials.exotic += out.exotic;
-    this.bus.emit(EV.SALVAGE_ACQUIRED, { kind: 'materials', amount: out.alloy, yield: out, scrapped: def });
+    const out = breakDownItem(w, item);
+    if (!out) { w.inventory.splice(i, 0, item); return false; }
     return true;
   }
 
@@ -614,12 +644,21 @@ export class SalvageSystem {
    *   { id, name, faction, detachedModule, integrity, residualHeat, coolIn,
    *     distance, sections: [{ id, label, state, grade, condition, moduleId,
    *                            moduleName, ammo, ammoRounds, materials, cutProgress,
-   *                            cuttable, inRange, etaClean, etaFast, worldPosition }] }
+   *                            cuttable, inRange, etaClean, etaFast, worldPosition,
+   *                            economy }] }
    *
    * `state` is INTACT / DAMAGED / SCRAP - the same three words the targeting ring uses
    * while the ship is still alive, so the player learns one vocabulary, not two.
    * `etaClean` / `etaFast` are seconds, so the fast-cut decision is arithmetic the
    * player can actually do.
+   *
+   * `grade` is a CONDITION word (NOMINAL / WORN), not a scrap grade — it has been that
+   * since this row was written and renaming it would break every panel that reads it.
+   * The materials grade the whole chain is built on lives on `sec.economy`, which is
+   * `meta/index.js#sectionPreview` and carries `scrapGrade`, `scrapUnits`, `m3IfTaken`
+   * and `willFit`. Nothing in `src/ui/` ever called `gradeForSection`, so "which section
+   * do I cut" was a decision the player could not see the inputs to. Now it is on the
+   * row. `sec.economy` is null when the progression layer is not installed.
    */
   describeWrecks() {
     const rows = this._cutRows;
@@ -663,7 +702,9 @@ export class SalvageSystem {
         sr.etaClean = remaining / baseRate;
         sr.etaFast = remaining / (baseRate * this.fastCutRate);
         // What the fast cut would cost, in condition, if started now.
-        sr.fastPenalty = s.condition - cutQuality(s.condition, wreck.residualHeat ?? 0, true);
+        sr.fastPenalty = s.condition - cutQuality(s.condition, wreck.residualHeat ?? 0, true, this.cutConditionPenalty);
+        // What cutting it is worth: grade, bulk, and whether the hold can take it.
+        sr.economy = this.world.systems.economy ? sectionPreview(this.world, s) : null;
         secs.push(sr);
       }
       rows.push(row);
@@ -686,7 +727,8 @@ export class SalvageSystem {
       state: c.section.state,
       burning: heat > 0.05,
       burnPerSecond: burnRate(heat) * (this.cutMode === 'fast' ? 1.4 : 1),
-      projected: cutQuality(c.section.condition, heat, this.cutMode === 'fast'),
+      beamPenalty: this.cutConditionPenalty,
+      projected: cutQuality(c.section.condition, heat, this.cutMode === 'fast', this.cutConditionPenalty),
     };
   }
 }

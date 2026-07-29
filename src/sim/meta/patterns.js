@@ -63,9 +63,22 @@ export class PatternSystem {
 
     /** Multiplied into every rebuild cost. A perk lowers it. */
     this.costMultiplier = 1;
+
+    /**
+     * Multiplied into the condition a rebuilt part comes off the line at. The
+     * `pattern_archive` perk lowers it: the archive is cheaper because its tolerances
+     * are looser, so the saving shows up on the part rather than nowhere. SET from the
+     * perk rank on every `perks.apply()`, so it is idempotent.
+     */
+    this.rebuildConditionMul = 1;
   }
 
   has(moduleId) { return this.known.has(moduleId); }
+
+  /** Condition a rebuilt part arrives at, after the archive perk's drawback. */
+  get rebuildCondition() {
+    return Math.round(REBUILD_CONDITION * this.rebuildConditionMul * 100) / 100;
+  }
 
   /** Learn a pattern outright. Used by objective payouts and by the harness. */
   learn(moduleId, reason = '') {
@@ -131,7 +144,7 @@ export class PatternSystem {
     rec.builds++;
     const item = {
       moduleId,
-      condition: REBUILD_CONDITION,
+      condition: this.rebuildCondition,
       uid: `pattern:${moduleId}#${rec.builds}`,
       volume: moduleVolume(def),
       rebuilt: true,
@@ -169,7 +182,7 @@ export class PatternSystem {
         volumeM3: moduleVolume(def),
         buildable: check.ok,
         reason: check.ok ? null : check.reason,
-        condition: REBUILD_CONDITION,
+        condition: this.rebuildCondition,
       };
     });
   }

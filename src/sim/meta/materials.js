@@ -83,12 +83,31 @@ export function gradeForKind(kind) {
 }
 
 /**
+ * What grade of scrap a MODULE tears down into. One rule, two callers.
+ *
+ * This used to exist twice. `gradeForSection` below had this branch inline, and
+ * `breakDownItem` (index.js) carried a second copy that omitted `grants.thrust` and
+ * `grants.jumpRange` — so an engine module cut off a wreck was `machine` scrap and the
+ * same module broken down in the hold was `plate`. Two grades for one object is exactly
+ * the divergence the audit now fails on, so there is one function and both call it.
+ */
+export function gradeForModule(def) {
+  if (!def) return 'plate';
+  const g = def.grants ?? {};
+  if (g.powerOutput || g.sensorRange || g.hangarBays) return 'core';
+  if (def.weapon || g.thrust || g.jumpRange) return 'machine';
+  return 'plate';
+}
+
+/**
  * What grade of scrap a wreck section tears down into.
  *
- * Derived rather than stamped. `WreckSection` is owned by the salvage stream and is
- * being actively rewritten; deriving the grade here means this file needs no field on
- * their class and cannot be broken by a change to it. A section that DOES carry an
- * explicit `grade` wins, so stamping it later is a pure upgrade.
+ * `WreckSection` now STAMPS `grade` in its constructor (salvage.js), so the first
+ * branch is the normal path rather than a future upgrade. The derivation below is kept
+ * because it is what makes the stamp checkable — the two must agree, and a section
+ * built by some other path still gets a correct grade instead of silently falling into
+ * one drop table. `items.js#rollDrop` read `section.grade` directly for exactly as long
+ * as nothing wrote it, and two of the five devices could not drop as a result.
  *
  * The order matters: the module it yields is the strongest signal, then whether it was
  * a magazine, then the label the hull gave it.
@@ -97,12 +116,7 @@ export function gradeForSection(section) {
   if (section?.grade && SCRAP_GRADES.includes(section.grade)) return section.grade;
 
   const def = section?.moduleId ? getModule(section.moduleId) : null;
-  if (def) {
-    const g = def.grants ?? {};
-    if (g.powerOutput || g.sensorRange || g.hangarBays) return 'core';
-    if (def.weapon || g.thrust || g.jumpRange) return 'machine';
-    return 'plate';
-  }
+  if (def) return gradeForModule(def);
   if (section?.ammo) return 'machine';
 
   const label = String(section?.label ?? '').toLowerCase();
@@ -156,8 +170,16 @@ export const MATERIAL_DEFS = [
   {
     id: 'exotic', tier: 1, name: 'Exotic Lattice',
     description: 'Pre-collapse lattice recovered intact from a core. Nothing else makes it.',
-    source: 'Refined from core scrap only, at roughly one part in seventy.',
-    consumedBy: 'Permanent hull perks. Nothing else may spend it.',
+    // This card is player-facing and it was wrong in four places. It said "Nothing else
+    // may spend it" while `patterns.js:50` charged 1 for every tier-3 rebuild,
+    // `refit.js:411` charged 1 to rebuild a destroyed traverse or feed part, and
+    // `condition.js:148` charged 1 to repair anything below 0.25 — and it omitted that
+    // `condition.js:167` MINTED one out of scrapping a clean part, which is the printer
+    // that has since been closed. `economyAudit.mjs` section 5 now fails if a file
+    // spends exotic without appearing here.
+    source: 'Refined from core scrap only, at roughly one part in seventy. Nothing mints it.',
+    consumedBy: 'Permanent hull perks, tier-3 pattern rebuilds, replacing a destroyed '
+      + 'traverse or feed part, and repair of anything below quarter condition.',
   },
 ];
 
@@ -409,6 +431,23 @@ export class EconomySystem {
     const table = REFINE_YIELD[grade] ?? {};
     const out = {};
     for (const k in table) out[k] = Math.floor(table[k] * units * (1 + this.yieldBonus));
+    return out;
+  }
+
+  /**
+   * The same preview, UNROUNDED.
+   *
+   * `previewRefine` floors, which is honest about what a single batch delivers but
+   * lies about exotic: core refines at 0.015 exotic per unit, so any batch under 67
+   * core units previews as `exotic: 0` while the refinery's `_pending` carry does in
+   * fact accumulate the fraction and eventually pay it. A player reading the floored
+   * preview would conclude exotic is unobtainable from the batches they can actually
+   * carry. This is what a readout that has to be truthful about a trickle uses.
+   */
+  previewRefineExact(grade, units) {
+    const table = REFINE_YIELD[grade] ?? {};
+    const out = {};
+    for (const k in table) out[k] = table[k] * units * (1 + this.yieldBonus);
     return out;
   }
 }

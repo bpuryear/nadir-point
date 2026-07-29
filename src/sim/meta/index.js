@@ -1,7 +1,8 @@
 import { EV } from '../../core/events.js';
 import { getModule } from '../../core/contracts.js';
 import { MEV } from './events.js';
-import { EconomySystem, gradeForSection, gradeForKind, MATERIAL_DEFS, SCRAP_GRADES, REFINED_POOLS, REFINE_YIELD } from './materials.js';
+import { EconomySystem, gradeForSection, gradeForKind, gradeForModule, MATERIAL_DEFS, SCRAP_GRADES, REFINED_POOLS, REFINE_YIELD, MATERIAL_VOLUME } from './materials.js';
+import { scrapUnits, scrapYield, salvageState } from '../condition.js';
 import { CargoHold, moduleVolume, volumeClassOf } from './cargo.js';
 import { ItemSystem } from './items.js';
 import { CodexSystem } from './codex.js';
@@ -16,9 +17,9 @@ import { PersistenceSystem, SAVE_VERSION } from '../../core/persistence.js';
 export {
   EconomySystem, CargoHold, ItemSystem, CodexSystem, PatternSystem, PerkSystem, ObjectiveSystem,
   SortieSystem, RefitGateSystem, DerelictSystem, PersistenceSystem,
-  MEV, MATERIAL_DEFS, SCRAP_GRADES, REFINED_POOLS, REFINE_YIELD, PERK_DEFS, ARRIVAL_TIERS,
-  REFIT_GATE, DERELICT, SAVE_VERSION,
-  moduleVolume, volumeClassOf, patternCost, gradeForSection, gradeForKind,
+  MEV, MATERIAL_DEFS, SCRAP_GRADES, REFINED_POOLS, REFINE_YIELD, MATERIAL_VOLUME,
+  PERK_DEFS, ARRIVAL_TIERS, REFIT_GATE, DERELICT, SAVE_VERSION,
+  moduleVolume, volumeClassOf, patternCost, gradeForSection, gradeForKind, gradeForModule,
 };
 
 /**
@@ -118,6 +119,16 @@ export function installProgression(world, deps = {}) {
         berth: world.systems.travel?.status?.() ?? null,
       };
     },
+
+    /**
+     * The cut decision, per wreck section. `salvage.describeWrecks()` gives the rows;
+     * this gives what each one is worth. See `sectionPreview` above for the split
+     * between what every player sees and what `salvagers_eye` buys.
+     */
+    sectionPreview: (section) => sectionPreview(world, section),
+
+    /** What breaking a stored or installed part down would pay. No side effects. */
+    scrapPreview: (item, condition = null) => scrapPreview(world, item, condition),
 
     dispose() {
       for (const off of offs) off?.();
@@ -226,50 +237,182 @@ export function storeSection(world, section, salvage) {
 }
 
 /**
- * Break a stored module down. Called by `SalvageSystem.scrapInventoryItem`.
+ * Resolve any of the three shapes a "part" arrives in into `{def, condition, uid}`.
  *
- * A module gives back roughly a tenth of its tonnage in scrap, scaled by condition -
- * so scrapping a good part to repair the hull is a real and painful trade, which is the
- * scarcity the scope decision asked for.
+ * There are three because three different systems hold parts and none of them can be
+ * asked to change: the hold carries `{moduleId, condition, uid}` records, a hardpoint
+ * carries a module INSTANCE with `.def` and `.condition`, and the refit stream's pinned
+ * handover passes a bare `ModuleDef` with the condition alongside. Accepting all three
+ * here is what lets `breakDownItem` be the single breakdown path without a second
+ * function per caller — and a second function per caller is exactly how the 14x
+ * divergence got in.
  */
-export function breakDownItem(world, item) {
-  const economy = world.systems.economy;
-  if (!economy) return null;
-  const def = getModule(item.moduleId);
-  const mass = def?.mass ?? 200;
-  const grade = def?.weapon ? 'machine'
-    : (def?.grants?.powerOutput || def?.grants?.sensorRange || def?.grants?.hangarBays) ? 'core'
-      : 'plate';
-  const units = Math.max(1, Math.round(mass * 0.10 * (item.condition ?? 1)));
-  const accepted = economy.addScrap(grade, units, item.uid);
-  world.systems.codex?.markModule(item.moduleId, 'salvaged');
-  world.bus?.emit(EV.SALVAGE_ACQUIRED, { kind: 'materials', amount: accepted, grade, scrapped: def });
-  return { grade, units: accepted, vented: units - accepted };
+function resolveScrappable(item, conditionOverride = null) {
+  if (!item) return { def: null, condition: 1, uid: null };
+  // A module instance from a hardpoint: `{def, condition}`.
+  if (item.def) {
+    return { def: item.def, condition: conditionOverride ?? item.condition ?? 1, uid: item.uid ?? null };
+  }
+  // A hold record: `{moduleId, condition, uid}`.
+  if (item.moduleId) {
+    return { def: getModule(item.moduleId), condition: conditionOverride ?? item.condition ?? 1, uid: item.uid ?? null };
+  }
+  // A bare ModuleDef. It carries no condition, so one must be supplied or it is assumed
+  // pristine — which is why the refit handover passes the mount's condition explicitly.
+  if (item.id) return { def: item, condition: conditionOverride ?? 1, uid: null };
+  return { def: null, condition: conditionOverride ?? 1, uid: null };
 }
 
 /**
- * Projected yield of a wreck section, before you cut it.
+ * Break a part down. THE ONLY BREAKDOWN PATH.
  *
- * Gated on the `salvagers_eye` hull perk, which is itself gated on codex knowledge:
- * this is the payoff loop that makes reading the codex worth doing. Returns null when
- * the player has not earned the readout, and a UI must render that absence honestly
- * rather than showing the numbers anyway.
+ * Called by `SalvageSystem.scrapInventoryItem` for a stored part and by
+ * `RefitSystem.scrapInstalled` for one that is still bolted on. Both arrive here so
+ * that "what does melting this pay" has exactly one answer. It used to have two, 13-35x
+ * apart, and the expensive one wrote `world.materials` directly — bypassing hold
+ * volume, the refinery queue and the refining loss, and minting an exotic on top.
+ *
+ * A module gives back roughly a tenth of its tonnage in scrap, scaled by condition, and
+ * that scrap has to fit and has to be refined - so scrapping a good part to repair the
+ * hull is a real and painful trade, which is the scarcity the scope decision asked for.
+ *
+ * @param {Object} world
+ * @param {Object} item              hold record, module instance, or ModuleDef
+ * @param {number|null} [condition]  overrides the condition carried by `item`
  */
-export function projectedYield(world, section) {
-  if (!world.systems.perks?.seesProjectedYield) return null;
+export function breakDownItem(world, item, condition = null) {
+  const economy = world.systems.economy;
+  if (!economy) return null;
+  const r = resolveScrappable(item, condition);
+  if (!r.def) return null;
+  const grade = gradeForModule(r.def);
+  const units = scrapUnits(r.def.mass ?? 200, r.condition);
+  const accepted = economy.addScrap(grade, units, r.uid);
+  const vented = units - accepted;
+  world.systems.codex?.markModule(r.def.id, 'salvaged');
+  world.bus?.emit(EV.SALVAGE_ACQUIRED, { kind: 'materials', amount: accepted, grade, scrapped: r.def });
+  if (vented > 0) {
+    // The hold refused part of it. Say so in the same voice the anchorage refusals use,
+    // on the channel `ui/index.js:263` already renders — a silent loss is the one
+    // outcome a scarcity system may never produce.
+    world.bus?.emit(EV.NOTIFY, {
+      text: `${String(r.def.name ?? r.def.id).toUpperCase()} BROKEN DOWN — ${vented} of ${units} units vented, `
+        + `${Math.round(world.systems.cargo?.freeM3() ?? 0)} m3 free`,
+      important: true,
+    });
+  }
+  return {
+    grade,
+    units: accepted,
+    vented,
+    moduleId: r.def.id,
+    refined: economy.previewRefine(grade, accepted),
+  };
+}
+
+/**
+ * What breaking a part down WOULD pay, without doing it. No side effects.
+ *
+ * This is the number the hold row and the refit transaction confirmation must print.
+ * `ui/inventory.js:28` currently computes its own `mass * 0.4 * condition` and prints
+ * "168 AL" for a part that yields 12 alloy after refining; `ui/refit.js:271` reprints
+ * it as the confirmation. Both should call this instead.
+ */
+export function scrapPreview(world, item, condition = null) {
+  const r = resolveScrappable(item, condition);
+  if (!r.def) return null;
+  const grade = gradeForModule(r.def);
+  const units = scrapUnits(r.def.mass ?? 200, r.condition);
+  const econ = world?.systems?.economy ?? null;
+  const cargo = world?.systems?.cargo ?? null;
+  const free = cargo ? cargo.freeM3() : Infinity;
+  const m3 = units * (MATERIAL_VOLUME[grade] ?? 0.34);
+  return {
+    moduleId: r.def.id,
+    name: r.def.name ?? r.def.id,
+    condition: r.condition,
+    grade,
+    scrapUnits: units,
+    m3,
+    /** Scrap is bulky. A full hold vents the overflow, so this can be false. */
+    fits: m3 <= free + 1e-6,
+    freeM3: free,
+    refined: econ ? econ.previewRefine(grade, units) : scrapYield(r.def.mass ?? 200, r.condition, grade),
+    refinedExact: econ ? econ.previewRefineExact(grade, units) : null,
+  };
+}
+
+/**
+ * WHAT CUTTING THIS SECTION WILL ACTUALLY GIVE YOU. Read before the cut.
+ *
+ * This is the read API the salvage cut panel needs and the reason it lives here rather
+ * than in `salvage.js`: the grade, the volume and the refined projection are all
+ * economy facts, and the cut row would otherwise have to reach across three systems to
+ * assemble them. `salvage.js#describeWrecks` publishes the geometry and the clock; this
+ * publishes the consequence.
+ *
+ * IT IS SPLIT IN TWO ON PURPOSE.
+ *
+ *   UNGATED — grade, scrap units, the cubic metres it will occupy, whether the part
+ *             itself will fit. `materials.js:17-31` says the whole point of the chain is
+ *             that scrap is graded by source, so "which section do I cut" is a materials
+ *             decision. Nothing in `src/ui/` called `gradeForSection`, so that decision
+ *             was unavailable to the player. It cannot be a perk; it is the mechanic.
+ *
+ *   GATED on `salvagers_eye` — the projected REFINED yield after the crucible's lossy
+ *             pass, the unrounded exotic trickle, and whether the section still has a
+ *             pattern to teach. This is the readout the ungated path genuinely does not
+ *             show. The perk previously bought `projectedYield()`, which had zero call
+ *             sites anywhere in `src/`, while `ui/theme.js:344-351` handed every player
+ *             a projected salvage state for free. A capstone that buys a dead function
+ *             is worse than no capstone.
+ *
+ * @returns {Object} always a row; `refined` is null until the perk is held.
+ */
+export function sectionPreview(world, section) {
+  if (!section) return null;
   const grade = gradeForSection(section);
   const units = Math.max(1, Math.round(section.materials ?? 0));
   const def = section.moduleId ? getModule(section.moduleId) : null;
-  const cargo = world.systems.cargo;
+  const cargo = world?.systems?.cargo ?? null;
+  const econ = world?.systems?.economy ?? null;
   const room = def && cargo ? cargo.canTakeModule(def) : null;
+  const condition = section.condition ?? section.integrity ?? 0;
+  const detailed = !!world?.systems?.perks?.seesProjectedYield;
+
   return {
-    grade,
+    sectionId: section.id ?? null,
+    label: section.label ?? null,
+    condition,
+    state: salvageState(condition),
+
+    // --- ungated: the materials decision -----------------------------------
+    scrapGrade: grade,
     scrapUnits: units,
-    refined: world.systems.economy?.previewRefine(grade, units) ?? {},
-    module: def ? { id: def.id, name: def.name, volumeM3: moduleVolume(def) } : null,
-    condition: section.integrity,
-    state: section.integrity >= 0.6 ? 'INTACT' : section.integrity >= 0.25 ? 'DAMAGED' : 'SCRAP',
-    teachesPattern: !!(def && section.integrity >= 0.6 && !world.systems.patterns?.has(def.id)),
+    /** Cubic metres the SCRAP occupies if the part does not survive or does not fit. */
+    m3IfTaken: units * (MATERIAL_VOLUME[grade] ?? 0.34),
+    moduleId: def?.id ?? null,
+    moduleName: def?.name ?? null,
+    moduleVolumeM3: def ? moduleVolume(def) : 0,
+    /** Does the whole part fit? A full hold turns a rare part into scrap. */
     willFit: room ? room.ok : true,
+    freeM3: cargo ? cargo.freeM3() : Infinity,
+
+    // --- gated: the salvager's eye -----------------------------------------
+    detailed,
+    refinedPreview: detailed && econ ? econ.previewRefine(grade, units) : null,
+    refinedExact: detailed && econ ? econ.previewRefineExact(grade, units) : null,
+    teachesPattern: detailed
+      ? !!(def && condition >= 0.6 && !world.systems.patterns?.has(def.id))
+      : null,
   };
+}
+
+/**
+ * Back-compatible alias. `projectedYield` is what `perks.js:99` promised and what
+ * nothing ever called; `sectionPreview` is the shape that replaced it.
+ */
+export function projectedYield(world, section) {
+  if (!world.systems.perks?.seesProjectedYield) return null;
+  return sectionPreview(world, section);
 }

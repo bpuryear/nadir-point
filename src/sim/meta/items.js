@@ -2,6 +2,7 @@ import { registerItem, getItem, allItems } from '../../core/contracts.js';
 import { RANGE } from '../../core/units.js';
 import { EV } from '../../core/events.js';
 import { MEV } from './events.js';
+import { gradeForSection } from './materials.js';
 
 /**
  * ITEMS AND EQUIPMENT — five of them, and no more.
@@ -409,11 +410,27 @@ export class ItemSystem {
   /**
    * A cut section may free a device. Only intact sections do, which gives the careful
    * kill a third payoff after the part itself and its condition.
+   *
+   * THE GRADE COMES FROM `gradeForSection`, NOT FROM `section.grade`.
+   *
+   * This line used to read `section.grade && DROP_TABLE[section.grade] ? section.grade
+   * : 'machine'`. `WreckSection` never assigned `.grade` — the only `.grade =` in
+   * `src/sim` were on read-rows (`salvage.js:652`, `ship.js:400`) — so the guard was
+   * permanently false and EVERY device in the game came out of `DROP_TABLE.machine`.
+   * `boarding_charge` (plate) and `scan_pulse` (core), 2 of the 5 items, could not drop
+   * at all and were fabrication-only; the codex entries for both sat at `unknown`
+   * because `markItem` only fires on ITEM_ACQUIRED/ITEM_USED (`codex.js:147-148`).
+   *
+   * The section now stamps its grade AND this derives one when it is missing, so the
+   * bug needs two independent failures to come back. `items.js:215-219`'s stated design
+   * — which grade of section yields which device — is true for the first time: cutting
+   * a reactor or sensor stack is how you find survey pulses.
    */
   rollDrop(section, rng = this.rng) {
     if (!section || section.integrity < 0.55) return null;
     if (rng.next() > ITEM_DROP_CHANCE) return null;
-    const grade = section.grade && DROP_TABLE[section.grade] ? section.grade : 'machine';
+    const derived = gradeForSection(section);
+    const grade = DROP_TABLE[derived] ? derived : 'machine';
     const itemId = rng.pick(DROP_TABLE[grade]);
     const stored = this.hold?.addItem(itemId, 1);
     return stored?.ok ? itemId : null;

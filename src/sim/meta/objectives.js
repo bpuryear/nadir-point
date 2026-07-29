@@ -1,5 +1,7 @@
 import { EV } from '../../core/events.js';
+import { KM } from '../../core/units.js';
 import { MEV } from './events.js';
+import { REFINE_YIELD, MATERIAL_VOLUME } from './materials.js';
 
 /**
  * OBJECTIVES — systemic, generated, expiring. Not missions.
@@ -35,6 +37,33 @@ import { MEV } from './events.js';
  * This system NEVER writes to the war. It reads `world.systems.factionWar` and pays out
  * of the materials economy, which is this stream's to spend.
  */
+
+/**
+ * WHAT AN OBJECTIVE PAYS IN, by kind.
+ *
+ * `_pay` used to call `econ.credit(...)`, which adds REFINED units straight into
+ * `world.materials` — a faucet bolted onto the one system the scope decision names as a
+ * SINK. It bypassed hold volume, the refinery queue and the lossy yields, so an
+ * objective reward was strictly better than the same value cut off a hull. It now
+ * arrives as graded scrap that has to fit in the hold and has to go through the
+ * crucible like everything else, which also means the grade is a consequence of what
+ * you did: cutting warships pays machine, picking over a field pays plate, a survey
+ * pays core.
+ */
+const PAYOUT_GRADE = {
+  intercept: 'machine',
+  strip: 'plate',
+  blockade: 'machine',
+  prospect: 'core',
+};
+
+/** Refined units per unit of scrap, by grade. Used to price a reward back into scrap. */
+const REFINED_PER_SCRAP = {};
+for (const g in REFINE_YIELD) {
+  let s = 0;
+  for (const k in REFINE_YIELD[g]) s += REFINE_YIELD[g][k];
+  REFINED_PER_SCRAP[g] = s;
+}
 
 /** Sim seconds between generation passes. Coarse: this is a war, not a tick. */
 const GEN_INTERVAL = 12;
@@ -245,6 +274,102 @@ export class ObjectiveSystem {
     return null;
   }
 
+  // =========================================================================
+  // THE OTHER HALF OF THE OFFER — what going there costs
+  // =========================================================================
+
+  /**
+   * PRICE THE BURN.
+   *
+   * `describe()` published a reward and a position and nothing about the propellant it
+   * takes to reach either — while `travel._anchorageRows()` (travel.js:1143-1174) had
+   * been doing exactly this arithmetic for berths all along, including the load-bearing
+   * `reachable` flag. Without it "which of the four open offers" is a preference, not a
+   * decision: the harness opened 20 objectives over ~2400 s and closed 16, of which 14
+   * EXPIRED, and nothing on the row could tell you which of those 14 were ever worth
+   * taking. With the burn priced, an offer whose fuel costs more than it pays is
+   * visibly a bad offer and refusing it is a decision.
+   *
+   * ABSTRACTS THE ROUTE. One straight-line round trip at the current rate from the
+   * current position, exactly as `_anchorageRows` does. No pathfinder, no fuel-optimal
+   * solver, no waypoint graph.
+   *
+   * Writes into `o._route` rather than allocating: `describe()` is a per-frame read.
+   */
+  _routeFor(o) {
+    const route = o._route ?? (o._route = {});
+    const travel = this.world.systems.travel ?? null;
+    const player = this.world.player ?? null;
+    route.km = null;
+    route.propellantOut = null;
+    route.propellantRoundTrip = null;
+    route.propellantSilentRoundTrip = null;
+    route.reachable = null;
+    route.propellantPerUnit = null;
+    route.alloyCostOfFuel = null;
+    route.netAfterFuel = null;
+    if (!travel || !player) return route;
+
+    const node = this._nodeFor(o.poiId);
+    const dx = (node ? node.position.x : o.x) - player.position.x;
+    const dz = (node ? node.position.z : o.z) - player.position.z;
+    const metres = Math.sqrt(dx * dx + dz * dz);
+    const km = metres / KM;
+    const perKm = travel.propellantPerKm ?? 0;
+
+    route.km = km;
+    route.propellantOut = km * perKm;
+    route.propellantRoundTrip = route.propellantOut * 2;
+    // `sortie.live()` already accounts for the SILENT rate; the row should too, because
+    // running quiet is the thing a player does when an objective is deep in hostile space.
+    route.propellantSilentRoundTrip = km * 2 * 0.5;
+
+    const prop = this.world.propellant;
+    if (prop) {
+      const spendable = Math.max(0, (prop.current ?? 0) - (prop.reserve ?? 0));
+      route.reachable = route.propellantRoundTrip <= spendable;
+      route.spendable = spendable;
+    }
+
+    // What refilling that propellant costs in alloy, at the berth you would buy it
+    // from. 0.62/u at Cinderport against 1.35/u at Ironhold is a 118% swing, and it
+    // should be able to change which objective is correct.
+    let perUnit = null;
+    if (travel.docked) perUnit = travel.services?.(travel.dockedAt)?.propellantPerUnit ?? null;
+    if (perUnit == null) {
+      const rows = travel.status?.()?.anchorages ?? [];
+      for (const r of rows) {
+        if (r.propellantPerUnit == null) continue;
+        if (perUnit == null || r.propellantPerUnit < perUnit) perUnit = r.propellantPerUnit;
+      }
+    }
+    if (perUnit != null) {
+      route.propellantPerUnit = perUnit;
+      route.alloyCostOfFuel = route.propellantRoundTrip * perUnit;
+    }
+    return route;
+  }
+
+  /**
+   * What a payout actually turns into: units of graded scrap, and the volume they take.
+   *
+   * The reward tables are authored in refined units, which is the number the player
+   * should still see. This converts that back into the scrap that would refine into it,
+   * so the reward keeps its authored value while passing through the hold and the
+   * crucible on the way — and so a full hold can refuse part of it.
+   */
+  _payoutPlan(o, refined) {
+    const grade = PAYOUT_GRADE[o.kind] ?? 'plate';
+    let total = 0;
+    for (const k in refined) {
+      if (k === 'pattern' || k === 'reputation') continue;
+      total += refined[k] ?? 0;
+    }
+    const per = REFINED_PER_SCRAP[grade] || 0.5;
+    const units = Math.max(1, Math.round(total / per));
+    return { grade, units, m3: units * (MATERIAL_VOLUME[grade] ?? 0.34), refinedValue: total };
+  }
+
   /** Is the player standing inside this objective's POI right now? */
   _playerAt(o) {
     const p = this.world.player;
@@ -342,6 +467,15 @@ export class ObjectiveSystem {
   /**
    * Pay out. Everything here is materials, a pattern, or standing - the three things
    * this stream owns. Nothing is invented and nothing is a currency.
+   *
+   * PAID IN SCRAP, NOT IN STOCK. `econ.credit(...)` put refined units straight into
+   * `world.materials`; this hands over graded scrap instead, so an objective reward has
+   * to fit in the hold and has to be refined like everything else. That makes some
+   * objectives unpayable when the hold is full, which is the intended pressure — but
+   * ONLY if the refusal is legible, so the shortfall is announced on `EV.NOTIFY`, which
+   * `ui/index.js:263-270` already renders into the six-slot notification stack. The
+   * string is also recorded on `paid.refusal` so a richer panel can draw it later; it
+   * does not depend on that panel existing.
    */
   _pay(o) {
     const mul = o.rewardScales ? (o.arrivalTier?.multiplier ?? 1) : 1;
@@ -349,7 +483,22 @@ export class ObjectiveSystem {
     for (const k in o.reward) paid[k] = Math.round(o.reward[k] * mul);
 
     const econ = this.world.systems.economy;
-    econ?.credit(paid, `objective:${o.kind}`);
+    if (econ) {
+      const plan = this._payoutPlan(o, paid);
+      const accepted = econ.addScrap(plan.grade, plan.units, `objective:${o.id}`);
+      const vented = plan.units - accepted;
+      paid.scrapGrade = plan.grade;
+      paid.scrapUnits = accepted;
+      paid.scrapVented = vented;
+      paid.scrapM3 = plan.m3;
+      if (vented > 0) {
+        const free = Math.round(this.world.systems.cargo?.freeM3() ?? 0);
+        paid.refusal = `${o.title} PAID IN SCRAP — ${plan.units} units of `
+          + `${plan.grade.toUpperCase()} (${Math.round(plan.m3)} m3), you have ${free} m3 free`
+          + ` — ${vented} units vented`;
+        this.bus?.emit(EV.NOTIFY, { text: paid.refusal, important: true });
+      }
+    }
 
     // A field you stripped properly sometimes teaches you something, which is how an
     // objective feeds the pattern system rather than being a second currency faucet.
@@ -384,7 +533,14 @@ export class ObjectiveSystem {
       const tier = o.arrivalTier ?? this._tierFor(o);
       const mul = o.rewardScales ? tier.multiplier : 1;
       const projected = {};
-      for (const k in o.reward) projected[k] = Math.round(o.reward[k] * mul);
+      let projectedTotal = 0;
+      for (const k in o.reward) {
+        projected[k] = Math.round(o.reward[k] * mul);
+        projectedTotal += projected[k];
+      }
+      const route = this._routeFor(o);
+      const plan = this._payoutPlan(o, projected);
+      const cargo = this.world.systems.cargo ?? null;
       return {
         id: o.id,
         kind: o.kind,
@@ -413,6 +569,29 @@ export class ObjectiveSystem {
         },
         reward: o.reward,
         projectedReward: projected,
+
+        // --- THE OTHER HALF OF THE EQUATION ------------------------------
+        // The arrival-tier fork above prices being early. These price going at all.
+        // Null when there is no travel system to ask, never a guessed number.
+        km: route.km,
+        propellantOut: route.propellantOut,
+        propellantRoundTrip: route.propellantRoundTrip,
+        propellantSilentRoundTrip: route.propellantSilentRoundTrip,
+        /** The sortie's boundary condition, drawn before it bites. */
+        reachable: route.reachable,
+        propellantPerUnit: route.propellantPerUnit,
+        alloyCostOfFuel: route.alloyCostOfFuel,
+        /** Projected reward minus what the round trip's propellant costs to replace. */
+        netAfterFuel: route.alloyCostOfFuel == null
+          ? null : projectedTotal - route.alloyCostOfFuel,
+
+        // --- what the payout physically is -------------------------------
+        payoutGrade: plan.grade,
+        payoutScrapUnits: plan.units,
+        payoutM3: plan.m3,
+        /** False means the reward will be partly vented. Say so before they go. */
+        payoutFits: cargo ? plan.m3 <= cargo.freeM3() + 1e-6 : true,
+
         here: this._playerAt(o),
       };
     });

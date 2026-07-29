@@ -18,8 +18,11 @@ import { World } from '../core/world.js';
 import { Ship } from './ship.js';
 import { CombatSystem } from './combat.js';
 import { SalvageSystem, Wreck } from './salvage.js';
+import { breakDownItem } from './meta/index.js';
 import { registerShipClass, getShipClass, registerModule, getModule } from '../core/contracts.js';
 import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join, relative } from 'node:path';
 import { SIM } from '../core/units.js';
 import {
   fireRateMul, traverseMul, damageMul, misfeedChance, repairCost, scrapYield, cutQuality,
@@ -95,6 +98,24 @@ function defineClasses() {
     yawWidth: Math.PI * 0.7, subsystemAccuracy: 0.92, mount, yawCentre,
   });
 
+  // HANDEDNESS. `yawCentre` below is LOCAL FIXTURE DATA, not the shipped convention.
+  //
+  // W1-A asked for `desiredHeading = atan2(1200,1200) - PI*0.5` at line ~205 to be
+  // flipped to `+ PI*0.5` on the grounds that it bakes in the handedness bug being
+  // fixed in the same wave. Measured, it does not: this file imports nothing from
+  // `src/art/geometry`, registers its own `test_cruiser`/`test_destroyer`, and gets its
+  // `yawCentre` from the two literals below — so the 14 sign flips in `hardpoints.js`
+  // and `ships/{coalition,concord}.js` cannot reach it. Flipping the heading alone
+  // takes this harness from 51/51 to 49/51, because the port battery then bears on
+  // nothing. Flipping the whole convention consistently (both literals below and all
+  // four `desiredHeading` sites) leaves 50/51: the port mount comes to bear from the
+  // opposite side, the ship's slew to get there grows from 0.79 rad to 2.36 rad, and
+  // peak mount heat falls 0.519 -> 0.271 against `THERMAL.elevatedAt` 0.50 — so
+  // 'the status word actually changes' fails on approach geometry, not on thermals.
+  //
+  // Filed back rather than applied. See this agent's report; the correct change is a
+  // five-line one made together with a fix for that check's 3.8% margin, not a
+  // one-liner, and nothing in the shipped convention depends on it.
   registerShipClass({
     id: 'test_cruiser', name: 'Test Cruiser', faction: 'player', role: 'cruiser',
     length: 1400, mass: 42000, maxSpeed: 120, accel: 12, turnRate: 0.2, hullHP: 9000,
@@ -624,10 +645,57 @@ function testRepair() {
     console.log(`   partial 0.35->0.55 costs ${partial.alloy}a; full 0.35->1.00 costs ${full.alloy}a`);
     check('buying only what you need is much cheaper', partial.alloy * 2 < full.alloy);
 
+    // THE TWO SCRAP PATHS MUST AGREE.
+    //
+    // This check used to be `scrapped.ok && scrapped.yield.alloy > 0`. That is true of
+    // any number above zero, so it passed for the whole life of the file while the
+    // mount path paid FOURTEEN TIMES what the hold path paid for the identical part —
+    // and, worse, it blessed the richer of the two as correct. A one-sided assertion
+    // over an economy with two implementations is not a check; it is a rubber stamp.
+    //
+    // MOUNT PATH  `refit.scrapInstalled` -> `condition.js#scrapYield` -> refined.
+    // HOLD PATH   `breakDownItem` -> graded scrap -> the refinery -> refined.
+    //
+    // The hold path is run end to end through a real `EconomySystem`, so integer
+    // flooring and the fractional carry are included rather than assumed away.
+    const scrapCondition = mount.condition;
     const scrapped = refit.scrapInstalled('port');
-    console.log(`   scrapping the repaired module instead pays ${JSON.stringify(scrapped.yield)}`);
+    const POOLS = ['alloy', 'composite', 'electronics', 'exotic'];
+    let mountTotal = 0;
+    for (const k of POOLS) mountTotal += scrapped.yield[k] ?? 0;
+
+    const holdWorld = makeWorld('repair/holdpath');
+    // `SalvageSystem`'s constructor installs the progression layer, which is where the
+    // hold, the economy and the refinery come from. Same seam the game boots through.
+    const holdSalvage = new SalvageSystem(holdWorld);
+    holdWorld.register('salvage', holdSalvage);
+    const holdOut = breakDownItem(holdWorld, { def: stubModule, condition: scrapCondition });
+    holdWorld.systems.economy.enqueueAll();
+    holdWorld.systems.economy.refineAll();
+    let holdTotal = 0;
+    for (const k of POOLS) holdTotal += holdWorld.materials[k] ?? 0;
+
+    console.log(`   scrapping the repaired module at condition ${fmt(scrapCondition)}:`);
+    console.log(`     off the mount : ${scrapped.yield.scrapUnits} units of ${scrapped.yield.grade} scrap `
+      + `-> ${mountTotal} refined units`);
+    console.log(`     from the hold : ${holdOut.units} units of ${holdOut.grade} scrap `
+      + `-> ${JSON.stringify(holdOut.refined)} = ${holdTotal} refined units`);
+    if (scrapped.yield.grade !== holdOut.grade) {
+      // Not a rate divergence — the unit counts match — but `refit.js:419` calls the
+      // two-argument `scrapYield`, so it takes the `'machine'` default instead of the
+      // module's real grade. Printed rather than asserted because the fix is one token
+      // in `sim/refit.js`, which this stream does not own. See economyAudit section 1.
+      console.log(`     NOTE: grade mismatch ${scrapped.yield.grade} vs ${holdOut.grade} — `
+        + 'refit.js:419 does not pass the grade argument');
+    }
     check('scrapping an installed module is available and pays materials',
-      scrapped.ok && scrapped.yield.alloy > 0);
+      scrapped.ok && mountTotal > 0, `${mountTotal} refined units`);
+    check('both scrap paths pay the same for the same part',
+      Math.abs(mountTotal - holdTotal) <= Math.max(1, mountTotal * 0.10),
+      `mount ${mountTotal} vs hold ${holdTotal}`);
+    check('breaking a part down no longer mints exotic',
+      (scrapped.yield.exotic ?? 0) === 0 && (holdWorld.materials.exotic ?? 0) === 0,
+      `mount ${scrapped.yield.exotic ?? 0}, hold ${holdWorld.materials.exotic ?? 0}`);
   });
 }
 
@@ -671,15 +739,47 @@ function testDeterminism() {
   // (`Math.random === undefined`) was cut to fit a single no-op line in strikecraft.js.
   // An allowlist shaped like one line of code is not a check, and prose about the rule
   // in a comment or a log string should never have had to be smuggled past it.
+  //
+  // THE ROOT WAS THREE LINES TOO NARROW, AND HAD BEEN SINCE IT WAS WRITTEN.
+  //
+  // This was `readdirSync(new URL('.', import.meta.url))` filtered to `.js` — a NON
+  // RECURSIVE listing of `src/sim`, eleven files. It never saw `src/sim/meta/**` (the
+  // whole progression and economy layer, 15 files), `src/sim/ai/**`, `src/art/**` or
+  // `src/vfx/**`, and it reported "no Math.random anywhere in src/sim" with enough
+  // confidence that four subtrees were assumed covered for the life of the file. The
+  // determinism claim in `ARCHITECTURE.md:16-17` is project-wide; the scanner is now
+  // project-wide too, `src` and `tools` both, and it counts what it scanned so a future
+  // narrowing shows up as a falling sample size rather than as a still-green check.
   const CALL = /Math\.random\s*\(/;
   const ALIAS = /[=:]\s*Math\.random\b\s*[^(]/;
-  const files = readdirSync(new URL('.', import.meta.url)).filter((f) => f.endsWith('.js'));
+  const ROOTS = ['src', 'tools'];
+  const repo = fileURLToPath(new URL('../..', import.meta.url));
+  const walk = (dir, out = []) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full, out);
+      else if (entry.name.endsWith('.js') || entry.name.endsWith('.mjs')) out.push(full);
+    }
+    return out;
+  };
+  const files = [];
+  for (const root of ROOTS) files.push(...walk(join(repo, root)));
   const offenders = files.filter((f) => {
-    const src = readFileSync(new URL(f, import.meta.url), 'utf8');
+    const src = readFileSync(f, 'utf8');
     return CALL.test(src) || ALIAS.test(src);
-  });
-  console.log(`   scanned ${files.length} files in src/sim for Math.random: ${offenders.length ? offenders.join(', ') : 'none'}`);
-  check('no Math.random anywhere in src/sim', offenders.length === 0, offenders.join(', '));
+  }).map((f) => relative(repo, f));
+  const bySubtree = new Map();
+  for (const f of files) {
+    const key = relative(repo, f).split('/').slice(0, 2).join('/');
+    bySubtree.set(key, (bySubtree.get(key) ?? 0) + 1);
+  }
+  console.log(`   scanned ${files.length} files across ${ROOTS.join(' and ')} for Math.random `
+    + `(was 11, non-recursive, src/sim only)`);
+  console.log(`   coverage: ${[...bySubtree.entries()].sort().map(([k, v]) => `${k} ${v}`).join(', ')}`);
+  console.log(`   offenders: ${offenders.length ? offenders.join(', ') : 'none'}`);
+  check('the determinism scan covers the whole tree', files.length >= 100, `${files.length} files`);
+  check('no Math.random anywhere in src or tools', offenders.length === 0, offenders.join(', '));
 }
 
 // ---------------------------------------------------------------------------
