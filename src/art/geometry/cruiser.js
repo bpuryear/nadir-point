@@ -940,11 +940,12 @@ export function hullParts({ rng, lod = 0 }) {
   // These three are, and all three are cheap:
   //
   //   the hangar mouth   54 x 34 m, i.e. three fighters wide (a fighter is 18 m)
-  //   the boat bay hatch 26 x 18 m, exactly one fighter
   //   the window band    5 m glazing, one storey                (built above)
   //
-  // The hangar is on the PORT flank only and the hatch is on the starboard foredeck,
-  // because a matched pair would read as styling rather than as function.
+  // There were three. The 26 x 18 m boat-bay hatch on the starboard foredeck is gone:
+  // one human-scale cue on each of two surfaces is a calibration, three is a habit,
+  // and the hatch was the smallest and least legible of them. The hangar is on the
+  // PORT flank only, because a matched pair would read as styling, not as function.
   // =========================================================================
   // The tunnel is bottomless on purpose: the hull's own tumblehome flank, which sits
   // 17 m down it and is not perpendicular to the mouth, is what you see at the end.
@@ -955,8 +956,9 @@ export function hullParts({ rng, lod = 0 }) {
     { pos: [-117, 6, -60], rot: [0, -Math.PI * 0.5, 0] });
 
   // =========================================================================
-  // 4. SPONSONS. Deliberately NOT mirrored: port owns z +60..+200, starboard owns
-  //    z -60..+80, so a fully fitted hull is never bilaterally symmetric (§6 M6).
+  // 4. SPONSONS. Deliberately NOT mirrored: port owns z +18..+102, starboard owns
+  //    z -152..-68 - 170 m apart - so a fully fitted hull is never bilaterally
+  //    symmetric (§6 M6). Both sit ON a cradle frame; see the note at the shelf.
   // =========================================================================
   for (const [s, cz] of [[-1, 60], [1, -110]]) {
     // THE SPONSON LANDS ON A CRADLE FRAME, and that is not a detail. Sitting between

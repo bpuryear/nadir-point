@@ -854,6 +854,27 @@ bare cruiser at **0.764**, which is the tightest margin in the set and the numbe
 — it is the 150-triangle proxy at the one distance where silhouette is the only
 information available. Everything else sits at 0.795–0.982.
 
+**REOPENED AND CLOSED AGAIN, DIFFERENTLY — the gate was the wrong instrument.** Blind
+round-one review looked at the LOD2 proxy this entry passed at 0.764 and called it "a
+fish with a caudal fin": the ventral bay throat, the ship's single identifying feature,
+had been closed into a solid rectangle, the superstructure deleted and the hooked cutter
+yoke straightened into a spike. **IoU cannot see any of that, and not because 0.72 is too
+low a floor.** Filling a hole adds the same pixels to the intersection and to the union,
+so closing the one void nothing else in the game has moves the ratio by less than the gap
+between two adjacent thresholds. A metric that is structurally blind to the defect it is
+supposed to catch cannot be tuned into seeing it.
+
+`tools/silhouette.mjs` still prints IoU — a level that shrinks or drifts is a real defect
+and IoU catches that — but the **gate** is now four direct questions asked of the LOD2
+mask itself, one per identity feature: the bay present as a through-void with its clear
+span intact (114 m, against R2.7's 87 m), the island present as a stepped stack (counted
+as plateaux along the mask's top edge, 5 against a floor of 3), the cutter yoke hooking
+(the outline must come back UP forward of its lowest point, −234 m to −200 m), and the
+stern block stepping in (transom half-beam against the waist's, 63 px to 28 px). The
+proxy was rebuilt outward from those four rather than inward from LOD0's volume, at
+214 → 370 triangles across the same two draw calls, and IoU rose to 0.811 as a side
+effect rather than as a target.
+
 ---
 
 ## Pass 10 — surface and material identity, round three
