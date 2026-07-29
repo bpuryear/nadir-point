@@ -1,0 +1,92 @@
+[
+  {
+    "id": "close",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.1694,
+      "contrast": 0.2624,
+      "clippedPct": 0,
+      "nearBlackPct": 68.31
+    },
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/wave2/close.png",
+    "stats": {
+      "fps": 67.98640271945614,
+      "cpuMs": 4.400000011920838,
+      "stepMs": 0,
+      "renderMs": 0.6000000238418579,
+      "steps": 1,
+      "calls": 135,
+      "triangles": 72553,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 72,
+      "textures": 78
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "wide",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.052,
+      "contrast": 0.1047,
+      "clippedPct": 0,
+      "nearBlackPct": 69.64
+    },
+    "description": "The cruiser as a small bright hull against a ringed gas giant, seen ACROSS the combat plane. The shot that sells the game: scale comes from a recognisable object in front of an enormous one, so the ship has to stay identifiable and the giant has to fill the frame.",
+    "hud": false,
+    "file": "docs/review/wave2/wide.png",
+    "stats": {
+      "fps": 78.58546168774691,
+      "cpuMs": 3.300000011920929,
+      "stepMs": 0.10000002384185791,
+      "renderMs": 0.6000000238418579,
+      "steps": 1,
+      "calls": 104,
+      "triangles": 88229,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 64,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "engagement",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0313,
+      "contrast": 0.0358,
+      "clippedPct": 0,
+      "nearBlackPct": 15.18
+    },
+    "description": "Cruiser under way with hostiles on the plane. Tests scale cues and the fight read.",
+    "hud": true,
+    "file": "docs/review/wave2/engagement.png",
+    "stats": {
+      "fps": 80.96366508117006,
+      "cpuMs": 4.999999964237304,
+      "stepMs": 0,
+      "renderMs": 0.5999999642372131,
+      "steps": 0,
+      "calls": 112,
+      "triangles": 70179,
+      "points": 7200,
+      "lines": 0,
+      "programs": 54,
+      "geometries": 58,
+      "textures": 70
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

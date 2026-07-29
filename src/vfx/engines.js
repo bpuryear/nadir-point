@@ -73,7 +73,24 @@ const FRAG = /* glsl */ `
   varying float vSeed;
 
   void main() {
-    float t = vUv.y;                        // 0 at the bell, 1 at the tail
+    // 0 at the bell, 1 at the tail.
+    //
+    // THE CLAMP IS LOAD-BEARING. It used to be a bare vUv.y, and the pow(t, 0.72) a few
+    // lines down is undefined for a negative base in GLSL -- it returns NaN. A NaN in an
+    // additively-blended plume poisons everything composited after it, so the whole frame
+    // went black rather than the plume merely looking wrong.
+    //
+    // That is defect D67, and it is why the 'close' shot in tools/shots.json -- the frame
+    // the hull's surface is judged from, and the evidence for D-INT1 -- rendered at
+    // contrast 0.0129 with 99.31% near-black pixels for two full waves of work. That
+    // framing contains no visible engine plume at all, which is exactly why nobody looked
+    // here: the geometry at fault is off-screen and it still took the picture down.
+    //
+    // Measured by: node tools/widediag.mjs close --assert
+    // which patches this one line into the live material at runtime and re-measures.
+    // Guards fired without it: FRAME IS FLAT OR EMPTY, FRAME IS ESSENTIALLY BLACK.
+    // Guards fired with it: none.
+    float t = clamp(vUv.y, 0.0, 1.0);
     float across = abs(vUv.x * 2.0 - 1.0);
 
     // Bell-mouth flare then a long taper. Fully parabolic looks like a cone of
