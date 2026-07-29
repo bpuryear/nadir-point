@@ -839,11 +839,45 @@ export class HUD {
       P.pips(x + 104, cy - 1, Math.max(1, rep.total), rep.bearing,
         { size: 5, gap: 3, color: bearing ? C.friendly : C.warn, empty: C.track });
 
+      /**
+       * THE SALVO, ON THE LINE THAT IS ALREADY HERE.
+       *
+       * `sim/combat.js#bearingReport` now publishes `salvoReady` (barrels the ripple
+       * would schedule on the engaged flank, dead and frozen ones included), `salvoIn`
+       * (seconds until that could be non-zero, 0 meaning press it) and `side`. The
+       * ripple is the game's central firing verb and it was legible only behind the X
+       * key, in a window that is closed by default.
+       *
+       * IT COSTS NOTHING TO PUT IT HERE, AND THAT IS WHY IT IS HERE. This block is
+       * WELDED chrome, and welded chrome is the thing `tools/uicheck.mjs#checkChrome`
+       * measures and the thing the owner's note is about. So the salvo does not get a
+       * row, a bar, a pip run or a plate: it replaces the STRING on a line that was
+       * already drawn, already measured and already clipped to `iw`. Same box count,
+       * same rectangle, same three chrome percentages. The full readout — one pip per
+       * slot, dead barrels, frozen rings — lives in the ARMAMENT window, which is not
+       * chrome and which the player opened on purpose.
+       *
+       * `advice` still wins whenever nothing bears, because "turn to open a mount" is
+       * an instruction and "the battery is ready" is a status: an instruction the
+       * player can act on outranks a status they cannot.
+       */
+      const advice = this.ui.bearingAdvice(player, target, rep);
+      let line = advice;
+      let ink = bearing ? C.friendly : C.warn;
+      // The CLOCK outranks the count, because `salvoPreview` can report barrels ready
+      // and a lockout still running at the same time — `wait = slots > 0 ? lockout : …`
+      // — and in that second the honest answer to "can I fire" is "not yet".
+      if (bearing && rep.salvoIn > 0.05) {
+        line = `${advice} · BATTERY ${rep.salvoIn.toFixed(1)}S`;
+        ink = C.inkDim;
+      } else if (bearing && rep.salvoReady > 0) {
+        const flank = rep.side === 'port' ? 'PORT' : rep.side === 'starboard' ? 'STBD' : 'ALL';
+        line = `${advice} · SALVO ${flank} ${rep.salvoReady}`;
+      }
       // On its own line at full width. Squeezed in beside the pip row it was clipped
       // to an ellipsis, and the advice is the only instruction in the block.
-      const advice = this.ui.bearingAdvice(player, target, rep);
-      P.text(clip(P, advice, F.microBold, iw), x, cy + 20, {
-        font: F.microBold, color: bearing ? C.friendly : C.warn, track: TRACK.label,
+      P.text(clip(P, line, F.microBold, iw), x, cy + 20, {
+        font: F.microBold, color: ink, track: TRACK.label,
       });
     }
   }

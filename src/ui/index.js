@@ -90,6 +90,7 @@ const PANEL_KEYS = {
  *   src/input/controls.js  space, digit1-3, bracketleft, bracketright, home, keyf,
  *                          keyv, keyh, escape, keyz, keyw/a/s/d, keyq/e, arrows,
  *                          shift, alt   (F1-F5 are the power stances)
+ *                          keyr, comma, period, keyl   ← the salvo verbs, see below
  *   src/ui/index.js        keym (refit, CAPTURE phase), backquote, backslash, equal,
  *                          keyx, keyc, keyj, keyg, keyk, keyp, keyb, digit4-8
  *
@@ -99,10 +100,25 @@ const PANEL_KEYS = {
  * to move the refit screen first, in this file, by agreement — not by adding a second
  * handler that will never fire.
  *
+ * FOUR MORE CAME OFF, AND A PUBLISHED LIST THAT IS NOT RE-DERIVED IS THE STALE DOC IT
+ * WAS WRITTEN TO REPLACE. `src/input/controls.js:53-56` now binds `keyr` (salvo,
+ * Shift+R for guns that do not bear yet), `comma` and `period` (an explicit port /
+ * starboard flank) and `keyl` (hold to wind a CHARGE mount). MMB-click also salvos —
+ * `controls.js:182`, distinguished from the MMB-drag pan by six pixels of travel.
+ * Re-grepped from both binding files on this commit, so it is a measurement and not a
+ * memory. `I N O T U Y` are what is left.
+ *
+ * ONE OVERLAP NEITHER LIST SHOWS ON ITS OWN: `ui/refit.js:345` also answers `keyr`,
+ * for REPAIR MOUNT. It is reachable only through `_onKeyDown` below, which consults
+ * `refit.onKey` exclusively while `screen === 'refit'` and then stops propagation — so
+ * R repairs while the refit screen is open and salvos while it is not, and the two can
+ * never both fire. That is a real division of one key between two verbs by screen
+ * state. Anyone moving either binding has to read both sites.
+ *
  * Exported so a later wave can bind against a measured list instead of a stale doc.
  * `B` came off it for the SORTIE window below; the rest are still free.
  */
-export const FREE_KEYS = Object.freeze(['I', 'L', 'N', 'O', 'R', 'T', 'U', 'Y', ',', '.']);
+export const FREE_KEYS = Object.freeze(['I', 'N', 'O', 'T', 'U', 'Y']);
 /** Single letters this stream holds. Anything here needs agreement before reuse. */
 export const UI_BOUND_KEYS = Object.freeze(['M', 'X', 'C', 'J', 'G', 'K', 'P', 'B', '`', '\\', '=', '4', '5', '6', '7', '8']);
 

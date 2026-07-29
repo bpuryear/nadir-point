@@ -27,22 +27,90 @@
  * THERMAL is drawn in the reference's own idiom, transcribed from its frame: the word
  * `STATUS NOMINAL` flipping to `STATUS OVERHEATED`, an `EXT 87.8 / 94.4` figure, a large
  * vertical bar, and a signed rate chip (`2.4%/s`). Those are its numbers, wired to ours.
+ *
+ * ---------------------------------------------------------------------------
+ * THE FLANK BAND — the one axis six hardpoint cells cannot express
+ * ---------------------------------------------------------------------------
+ *
+ * `sim/salvo.js` made the broadside a per-SIDE event that spans several mounts and
+ * several barrels within a mount, and every cell in this panel is keyed by hardpoint.
+ * So the wave itself — the thing the player commits to with one key — had no readout at
+ * all. Two rows above the cells fix that, and the pip run is the whole point:
+ *
+ *   ONE PIP PER SLOT, IN HULL ORDER FORE TO AFT, so the row you read left-to-right is
+ *   spatially the same wave the guns fire and in the same order they fire it.
+ *
+ * The pip vocabulary is value and pattern, never hue, and it is one sentence long:
+ *
+ *   solid            a round leaves this barrel
+ *   hollow, bright   scheduled, not resolved yet
+ *   hollow, amber    FROZEN — it will fire down a dead bearing, spending the round and
+ *                    the heat and landing nothing (`salvo.js` schedules it on purpose)
+ *   hollow, dim      DROPPED — it was in the wave and it did not go
+ *   a strike, no box DEAD barrel. A hole. The slot count does NOT go down, which is the
+ *                    entire mechanic: `tools/ripple.mjs` check 4 asserts 10 -> 10.
+ *
+ * WHAT IS A PREVIEW AND WHAT IS A MEASUREMENT, because they must not look alike.
+ * Before the first wave, `salvoPreview` publishes a COUNT and no per-slot identity, so
+ * the band draws that many solid pips and says so with `READY n/m`. From the moment a
+ * wave is armed, `salvoReport().slots` carries the real thing — hardpoint, order, dead,
+ * frozen, state — and the row switches to drawing it, and keeps drawing the LAST wave
+ * after it completes, because a battery's last broadside is its damage report.
+ *
+ * THIS PANEL READS `salvoReport` / `salvoPreview` AND NOTHING ELSE OUT OF `salvo.js`.
+ * The controller's underscored fields are scheduler working state. Both reports are
+ * cached-and-mutated objects whose rows are REUSED, so every field this file wants to
+ * hold across a frame is copied into the preallocated rows below, at 5 Hz.
  */
 
 import * as THREE from 'three';
 import { HARDPOINTS, allItems } from '../core/contracts.js';
-import { THERMAL, thermalReport } from '../sim/heat.js';
+import { THERMAL, SALVO_THERMAL, thermalReport } from '../sim/heat.js';
+import { salvoReport, salvoPreview } from '../sim/salvo.js';
+import { angleDelta } from '../sim/physics.js';
 import { storesReport, AMMO_SPEC } from '../sim/stores.js';
 import { CONDITION } from '../sim/condition.js';
 import { C, F, TRACK, factionInk, fmtPct } from './theme.js';
 import { Panel, PAD, TITLE_H } from './panels.js';
 import { moduleName, itemName, MOUNT_EMPTY } from './names.js';
 
+/**
+ * THE FLANK BAND IS PAID FOR, NOT ADDED.
+ *
+ * The project owner's standing note on this interface is "that UI looks very messy and
+ * condensed at that screen resolution… otherwise the game becomes more UI than
+ * graphics", so a new readout that simply grew the window would be answering a
+ * measurement with a shrug. Three sizes came down to pay for the band:
+ *
+ *   CELL_H     130 -> 124   the dead strip between the persistent-chip row (its glyph
+ *                           box ends at y+99.5) and the sub-part squares, which sit at
+ *                           `y + h - sq - 5`. MEASURED `sq`: 9 at 1280x720, 11 at
+ *                           1600x900, 10 at 1920x1080. Its ceiling is 15, not the 16 in
+ *                           the `Math.min` — `baseW` caps the body at 746 px, so `cellW`
+ *                           cannot exceed 98 — and at `sq` 15 the squares start at y+104
+ *                           with the chip row's glyphs ending at y+99.5. 4.5 px of air
+ *                           at the worst case this window can reach.
+ *   HOTBAR_H    36 -> 32    the slot's two baselines are 12 px apart; 32 is the height
+ *                           at which they stop having 8 px of air between them
+ *   legend band 34 -> 24    one label, one rule and the gap to the hotbar
+ *
+ * MEASURED, before and after, on the real frame: the window goes from 597x261 to
+ * 597x267 at 1280x720 — width unchanged — which is 17.19 % of the frame to 17.45 %,
+ * 25.55 % of the central half to 26.05 %, and 0 % of the ship's box to 0 %. Note that
+ * `tools/uicheck.mjs#checkChrome` rasters `ui._weldedRegions(P)` ONLY, so it cannot see
+ * a floating window at all and reports all three of its percentages unchanged. Quoting
+ * that as evidence would be quoting a check that did not measure the thing that moved.
+ */
 const CELL_W = 98;
-const CELL_H = 130;
+const CELL_H = 124;
 const THERM_W = 152;
-const HOTBAR_H = 36;
-const BODY_H = CELL_H + 18 + 14 + HOTBAR_H + 8;
+const HOTBAR_H = 32;
+/** One row per flank. 13 px: a 10 px box plus 2.5 px of air, so the audit stays quiet. */
+const FLANK_ROW_H = 13;
+const FLANK_H = FLANK_ROW_H * 2;
+/** SUB-PARTS label, its rule, and the gap down to the device hotbar. */
+const LEGEND_H = 24;
+const BODY_H = FLANK_H + CELL_H + LEGEND_H + HOTBAR_H + 6;
 
 /** Abbreviated to fit the cell header beside the weapon archetype. */
 const MOUNT_LABEL = {
@@ -57,6 +125,92 @@ const PART_LEGEND = 'O OUTPUT · F FEED · T TRAVERSE · C COOLING · M PAD';
 /** Device hotbar keys. 1–3 are the time scale and ] [ step it; 4–8 are free. */
 const HOTBAR_KEYS = ['4', '5', '6', '7', '8'];
 const HOTBAR_CODES = ['digit4', 'digit5', 'digit6', 'digit7', 'digit8'];
+
+/**
+ * Ship-local bearing of each flank's beam, and the arc test that decides whether a gun
+ * is ON that flank at all.
+ *
+ * THIS IS THE ONE PIECE OF ARITHMETIC THIS PANEL DOES NOT ASK THE SIM FOR, and it is
+ * deliberate rather than lazy. The published read API answers "how many barrels would
+ * fire RIGHT NOW" (`salvoPreview().slots`) and nothing answers "how many does this
+ * flank own when everything works" — which is the denominator in `READY 6/10`, and
+ * without it the numerator is a number with no scale. `yawCentre` and `yawWidth` are
+ * `WeaponMount` fields that `ui/tactical.js` already draws firing arcs from; they are
+ * not salvo state. The rule below is the same one `sim/salvo.js#bearsOnFlank` uses,
+ * measured against the AUTHORED `yawWidth` and never against `halfArc` — `halfArc`
+ * collapses to 0.07 rad when the traverse ring is destroyed (`ship.js:192-194`), so
+ * using it would quietly drop every frozen gun out of the flank it is still bolted to.
+ *
+ * THE DRIFT GUARD: every count this band PRINTS as a numerator comes from the sim.
+ * The local walk only ever produces the capacity, and `_refreshFlank` raises that
+ * capacity to the sim's own number if the two ever disagree, so `READY n/m` cannot
+ * print n > m no matter which side rots first.
+ */
+const BEAM = { port: -Math.PI * 0.5, starboard: Math.PI * 0.5 };
+
+/**
+ * How many barrels one mount puts into a wave.
+ *
+ * ModuleDef data, not salvo state: `muzzles` is declared statically on the def (never
+ * read off the built mesh, which is LOD-gated and would make a sim quantity depend on
+ * the graphics setting), and `tools/ripple.mjs` check 13 asserts every weapon module
+ * declares exactly `shotsPerBurst` of them. The `min` is therefore an identity today
+ * and a safety net if that ever stops being true.
+ */
+function emittersOf(mount) {
+  const declared = mount.moduleDef?.muzzles?.length ?? 1;
+  return Math.max(1, Math.min(declared, mount.def.shotsPerBurst ?? 1));
+}
+
+/**
+ * Pips this band will draw for one flank before it stops and prints the remainder.
+ *
+ * A UI capacity, NOT the sim's. `salvo.js` exports `MAX_SLOTS` and exports it for the
+ * tools and the input layer explicitly — not for a panel — so importing it here to size
+ * an array would be this file quietly acquiring a second dependency on the scheduler's
+ * shape. 24 is generous against the 18-slot worst case `tools/ripple.mjs` prints over
+ * the whole registry, and overflow is SAID (`+n`) rather than silently dropped.
+ */
+const PIP_CAP = 24;
+const PIP_W = 5;
+const PIP_PITCH = 7;
+/** Left lane for the side name. `STBD` measures 30.5 px at micro with TRACK.label. */
+const FLANK_LABEL_W = 36;
+
+/** One flank row, allocated once per panel. Nothing below ever allocates again. */
+function makeFlankRow(side, name) {
+  const pips = [];
+  for (let i = 0; i < PIP_CAP; i++) pips.push({ state: 'pending', dead: false, frozen: false });
+  return {
+    side,
+    name,
+    /** What the row is showing: a live/last WAVE, or a PREVIEW count. */
+    live: false,
+    /** True only while the sweep is actually running. See `_drawFlankRow`. */
+    active: false,
+    pips,
+    n: 0,
+    overflow: 0,
+    /** Barrels that would fire now, and what the flank owns when nothing is wrong. */
+    ready: 0,
+    capacity: 0,
+    guns: 0,
+    /** Seconds until `ready` could become non-zero. 0 means press it. */
+    wait: 0,
+    /** Resolved counts, only meaningful while `live`. */
+    fired: 0,
+    dropped: 0,
+    dead: 0,
+    frozen: 0,
+    /** Projected peak mount heat on this flank after a full wave. See `_refreshFlank`. */
+    proj: 0,
+    cooks: false,
+    /** No gun on the hull covers this beam at all. */
+    bears: false,
+    /** True when this row is standing in for the no-target `all` case. */
+    noFlank: false,
+  };
+}
 
 /**
  * Mount states, most urgent first. The first one that matches becomes the solid chip.
@@ -88,10 +242,51 @@ const STATE = {
   OFFLINE: { tone: 'starved', note: 'SUBSYSTEM DOWN' },
   INERT: { tone: 'starved', note: 'WILL NOT FIRE' },
 
+  // COMMANDED. Four states that exist only because there is now something to command:
+  // a gun can be winding up, sitting out by the player's own order, cooling from the
+  // last wave, or loaded and waiting for the next one.
+  //
+  // `HOLD` MUST NOT BE `starved`. theme.js:166-168 defines starved as an ABSENCE — out
+  // of rounds, out of charge, out of power, drawn in neutral ink with a struck bar to
+  // say "there is nothing here". A loaded gun waiting for an order is the opposite of
+  // an absence, and drawing it as one would tell the player their battery was empty at
+  // the exact moment it was ready. It gets its own tone: an outlined chip with a solid
+  // left cap, at full ink. Present, inert, and unmistakably loaded.
+  //
+  // `short` IS A WIDTH BUDGET, NOT A STYLE, and the budget is measured rather than
+  // guessed. `COOLDOWN` at `F.microBold` with `TRACK.label` is 60.96 px. A cell is 65 px
+  // wide at 1280x720, 73 at 1600x900 and 68 at 1920x1080 — so the long word does fit at
+  // all three gate viewports, by two pixels a side at the narrowest. It stops fitting
+  // the moment `cellW` reaches its own `Math.max(52, …)` floor, which happens below
+  // roughly 500 logical px of frame (a small window, or a high `UI_SCALES` step on a
+  // small one): the cell is then 48 px of drawing and two adjacent 8-letter words
+  // OVERLAP BY 9 PX ON A SHARED BASELINE. That is not overflow into nothing, it is the
+  // `STARBOARD NACELLEENGINE` defect `tools/uicheck.mjs` was written to catch. Four
+  // letters is 30.5 px and clears the 52 px floor whatever the frame does. The long key
+  // is what a click reads out, so nothing is lost.
+  CHARGING: { tone: 'heatLow', note: 'WINDING UP', short: 'WIND' },
+  // EXCLUDED OUTRANKS HOLD, against the brief's own ordering, and the reason is
+  // mechanical rather than aesthetic: HOLD asserts "this gun answers the salvo key",
+  // and `salvo.js#salvoPreview` skips `mount.excluded` outright. An excluded mount
+  // that printed HOLD would be the one lie this ladder is not allowed to tell.
+  EXCLUDED: { tone: 'out', note: 'HELD OUT OF THE SALVO', short: 'OUT' },
+  COOLDOWN: { tone: 'hold', note: 'RECOVERING', short: 'COOL' },
+  HOLD: { tone: 'hold', note: 'AWAITING ORDER' },
+
   READY: { tone: 'ok', note: '' },
   PASSIVE: { tone: 'idle', note: 'NO WEAPON' },
   EMPTY: { tone: 'idle', note: 'NOTHING FITTED' },
 };
+
+/**
+ * Below this the cooldown is ordinary operation and not a state worth a word.
+ *
+ * Without it an AUTO mount firing steadily would flip READY/COOLDOWN at its own rate of
+ * fire — a cell strobing at 3 Hz, which is noise dressed as information. COOLDOWN is
+ * only ever shown on a COMMANDABLE mount, where the clock is the thing standing between
+ * the player and the next order.
+ */
+const COOLDOWN_FLOOR = 0.25;
 
 /** tone -> the ink it is allowed. See SEMANTIC in theme.js. */
 const TONE_INK = {
@@ -99,9 +294,22 @@ const TONE_INK = {
   heat: C.warn,
   heatLow: C.warnLow,
   starved: C.inkFaint,
+  hold: C.ink,
+  out: C.inkDim,
   ok: C.inkDim,
   idle: C.inkFaint,
 };
+
+/**
+ * The word under the fire-mode chip, per archetype.
+ *
+ * `LOCKED` IS PD AND ONLY PD. The recon brief asks for it on mining too; the code
+ * disagrees and the code wins — `ship.js:170-176` pins the getter to AUTO and makes the
+ * setter a no-op for `type === 'pd'` alone, and `salvo.js#schedulable` refuses `pd`
+ * alone. A mining mount can be put in SALVO and will be scheduled, so labelling it
+ * LOCKED would describe a restriction that does not exist.
+ */
+const MODE_LABEL = { AUTO: 'AUTO', SALVO: 'SALVO', CHARGE: 'CHARGE' };
 
 export class ArmamentPanel extends Panel {
   constructor(ui) {
@@ -120,6 +328,30 @@ export class ArmamentPanel extends Panel {
     /** Device rows, rebuilt at 5 Hz because `canUse` allocates and this is per frame. */
     this._devices = [];
     this._devicesAt = -1;
+
+    /**
+     * THE TWO FLANK ROWS, ALLOCATED ONCE.
+     *
+     * `salvoReport().slots[i]` hands back objects the controller OWNS and rewrites
+     * every wave — W2-A's note is explicit that a caller may not retain a row — so the
+     * five fields this band draws are copied into these pips at 5 Hz. That is also the
+     * whole of the caching the wave plan asks for: the reports themselves allocate
+     * nothing, but `_capacity` walks the weapon list and this draws every frame.
+     */
+    this._flank = [makeFlankRow('port', 'PORT'), makeFlankRow('starboard', 'STBD')];
+    this._flankAt = -1;
+
+    /**
+     * Does this hull have a salvo controller at all?
+     *
+     * `HOLD` is a claim that a loaded gun is waiting for an ORDER, and that is only true
+     * once something exists to give one. `salvo.js` is explicit that attaching a
+     * controller is what withholds a SALVO mount from the automatic firing path — with
+     * no controller the gun fires itself and `READY` is the honest word. The published
+     * API answers this without a second entry point: `salvoPreview().side` is `null`
+     * exactly when there is no controller, and a flank name otherwise.
+     */
+    this._commanded = false;
   }
 
   // =========================================================================
@@ -153,25 +385,285 @@ export class ArmamentPanel extends Panel {
     const thermW = THERM_W;
     const cellW = Math.max(52, Math.floor((w - thermW - 6) / HARDPOINTS.length));
 
-    this._drawThermal(P, x, y, thermW, CELL_H, therm, stores);
-    P.vline(x + thermW + 2, y, CELL_H, C.ruleDim);
+    // THE FLANK BAND SITS ABOVE EVERYTHING, at full body width, because it is the
+    // summary of the row underneath it: two rows that say what one key does, over six
+    // cells that say why. Reading downward is reading from the decision to its causes.
+    this._drawFlank(P, x, y, w, player, hit);
+    const cy0 = y + FLANK_H;
+
+    this._drawThermal(P, x, cy0, thermW, CELL_H, therm, stores);
+    P.vline(x + thermW + 2, cy0, CELL_H, C.ruleDim);
 
     this._collect(player);
     let cx = x + thermW + 6;
     for (const cell of this._cells) {
-      this._drawCell(P, cx, y, cellW - 4, CELL_H, cell, player, stores, hit);
+      this._drawCell(P, cx, cy0, cellW - 4, CELL_H, cell, player, stores, hit);
       cx += cellW;
     }
 
     // The sub-part legend. Five letters carrying five different failure modes is a
     // vocabulary, and an unexplained vocabulary is just noise.
-    P.label('SUB-PARTS', x, y + CELL_H + 14, { color: C.inkDim });
-    P.label(PART_LEGEND, x + thermW + 6, y + CELL_H + 14,
+    P.label('SUB-PARTS', x, cy0 + CELL_H + 12, { color: C.inkDim });
+    P.label(PART_LEGEND, x + thermW + 6, cy0 + CELL_H + 12,
       { color: C.inkFaint, maxW: w - thermW - 6 });
 
-    P.hline(x, y + CELL_H + 20, w, C.rule);
-    this._drawHotbar(P, x, y + CELL_H + 34, w, HOTBAR_H, hit);
+    P.hline(x, cy0 + CELL_H + 17, w, C.rule);
+    this._drawHotbar(P, x, cy0 + CELL_H + 24, w, HOTBAR_H, hit);
     void h;
+  }
+
+  // =========================================================================
+  // The flank band
+  // =========================================================================
+
+  /**
+   * Rebuild both rows from the published salvo read API. 5 Hz.
+   *
+   * ORDER OF PREFERENCE, and it is the whole design: a REAL wave beats a preview. From
+   * the moment one is armed until the next one replaces it, `salvoReport` carries the
+   * hardpoint, the hull order, the dead barrels and the frozen rings, so the row shows
+   * the thing that actually happened. Only a hull that has not fired yet shows a count.
+   */
+  _refreshFlank(now) {
+    const rows = this._flank;
+    if (now - this._flankAt < 0.2) return rows;
+    this._flankAt = now;
+
+    const player = this.world.player;
+    for (const row of rows) {
+      row.live = false; row.active = false; row.n = 0; row.overflow = 0;
+      row.ready = 0; row.capacity = 0; row.guns = 0; row.wait = 0;
+      row.fired = 0; row.dropped = 0; row.dead = 0; row.frozen = 0;
+      row.proj = 0; row.cooks = false; row.bears = false; row.noFlank = false;
+      row.name = row.side === 'port' ? 'PORT' : 'STBD';
+    }
+    if (!player) return rows;
+
+    // `salvoPreview` returns ONE shared object and rewrites it on every call, so the
+    // four fields are copied out before the second call is made. Reading them in the
+    // other order would have both rows reporting the starboard flank.
+    this._commanded = false;
+    for (const row of rows) {
+      const pv = salvoPreview(player, row.side);
+      if (pv.side !== null) this._commanded = true;
+      row.ready = pv.slots;
+      row.guns = pv.mounts;
+      row.wait = pv.wait;
+      this._capacity(player, row);
+    }
+
+    const rep = salvoReport(player);
+    if (rep.slotCount > 0 && rep.side) {
+      // `side === 'all'` is not a third flank: `salvo.js#engagedFlank` returns it when
+      // there is NO TARGET, so there is no engaged side to speak of. The band says that
+      // in words rather than splitting a wave across two rows it does not belong to.
+      const target = rep.side === 'starboard' ? rows[1] : rows[0];
+      this._fillWave(target, rep);
+      if (rep.side === 'all') {
+        target.name = 'ALL';
+        const other = target === rows[0] ? rows[1] : rows[0];
+        other.noFlank = true;
+      }
+    }
+    return rows;
+  }
+
+  /**
+   * Copy one wave's slots into a row. Every field is copied, never referenced: the rows
+   * `salvoReport` hands back belong to the controller and are rewritten in place.
+   */
+  _fillWave(row, rep) {
+    row.live = true;
+    row.active = rep.active;
+    row.fired = rep.fired;
+    row.dropped = rep.dropped;
+    const n = Math.min(rep.slotCount, PIP_CAP);
+    row.overflow = rep.slotCount - n;
+    for (let i = 0; i < n; i++) {
+      const src = rep.slots[i];
+      const pip = row.pips[i];
+      pip.state = src.state;
+      pip.dead = src.dead;
+      pip.frozen = src.frozen;
+      if (src.dead) row.dead++;
+      else if (src.frozen) row.frozen++;
+    }
+    row.n = n;
+    // A wave that is still in flight has its own clock: nothing else can be armed
+    // until the lockout runs out, and that is the number the player is waiting on.
+    if (rep.active || rep.lockout > 0) row.wait = Math.max(row.wait, rep.lockout);
+  }
+
+  /**
+   * What this flank owns, and what a full wave off it would cost thermally.
+   *
+   * The heat projection is the UPPER BOUND — every mount on the flank firing every
+   * barrel — and it is deliberately the upper bound, because the decision it informs is
+   * "will this broadside cook a gun", and a warning that errs low is not a warning. The
+   * arithmetic is `heat.js`'s own, term for term (`MountThermal.onShot`):
+   *
+   *     heat += perShot * (0.75 + 0.35 * powerFactorWeapons) * SALVO_THERMAL.heatMul
+   *
+   * with `powerFactorWeapons` read exactly as `combat.js:180` reads it. Nothing here is
+   * a transcribed constant; `perShot` and both multipliers come out of `sim/`.
+   */
+  _capacity(player, row) {
+    const beam = BEAM[row.side];
+    const pf = player.power?.unlocked ? Math.max(0.25, player.power.factor('weapons')) : 1;
+    const mul = (0.75 + 0.35 * pf) * SALVO_THERMAL.heatMul;
+    let slots = 0;
+    let proj = 0;
+    for (const mount of player.weapons) {
+      if (mount.def.type === 'pd') continue;
+      if (mount.fireMode !== 'SALVO') continue;
+      // The AUTHORED arc, not `halfArc`. See BEAM above.
+      if (Math.abs(angleDelta(mount.yawCentre, beam)) > mount.yawWidth * 0.5 + 1e-6) continue;
+      // An EXCLUDED mount stays in the capacity on purpose: `READY 6/10` is then the
+      // player reading back their own decision, which is the point of the control.
+      const emitters = emittersOf(mount);
+      slots += emitters;
+      /**
+       * THE PROJECTION IS NOT THE CAPACITY, and conflating them printed a false alarm.
+       *
+       * Measured in the UI probe before this guard existed: the cruiser's dorsal rail
+       * is already COOKED, `heat` pinned at `tripAt`, and adding two more rounds to it
+       * put `PROJ COOK` on BOTH flanks — off a mount `salvo.js#schedulable` refuses to
+       * put in either wave, because a mount that is offline for heat never gets a slot.
+       * A warning that fires on rounds that will not be fired is worse than no warning.
+       *
+       * `usable` is `online && !inert && !detached && condition >= 0.2` (`ship.js:207`),
+       * which drops the tripped, the detached and the wrecked — and also drops a mount
+       * whose OUTPUT sub-part is destroyed (`offlineReason 'output'`). That last one is
+       * scheduled by the ripple and is right to leave out anyway: dead barrels put no
+       * round downrange, so they cost no heat. They are the holes in the pip run.
+       */
+      const th = mount.thermal;
+      if (th && mount.usable && !mount.excluded) {
+        const after = th.heat + emitters * th.perShot * mul;
+        if (after > proj) proj = after;
+      }
+    }
+    // THE DRIFT GUARD. The numerator is the sim's; if the local arc walk ever disagrees
+    // with it the sim wins, so this cannot print `READY 12/10` while someone works out
+    // which of the two rules moved — and `NO MOUNTS BEAR` is decided by the guarded
+    // number, so the row can never claim nothing bears while it is offering barrels.
+    row.capacity = Math.max(slots, row.ready);
+    row.bears = row.capacity > 0;
+    row.proj = proj;
+    row.cooks = proj >= THERMAL.tripAt;
+  }
+
+  _drawFlank(P, x, y, w, player, hit) {
+    const rows = player ? this._refreshFlank(this.ui.time) : this._flank;
+    for (let i = 0; i < rows.length; i++) {
+      this._drawFlankRow(P, x, y + i * FLANK_ROW_H, w, rows[i], hit);
+    }
+  }
+
+  _drawFlankRow(P, x, y, w, row, hit) {
+    const by = y + 9;
+    if (hit) hit.push({ kind: 'armament:flank', panel: this.id, side: row.side, x, y, w, h: FLANK_ROW_H });
+
+    P.label(row.name, x, by, { color: row.bears ? C.inkDim : C.inkFaint });
+
+    // A flank with nothing on it is SAID, at full ink and struck, never faded away.
+    // `theme.js#struck` exists because the old idiom — fade it until it disappears —
+    // put `NO MODULE` at 1.38:1 and made a first-hour player's screen unreadable.
+    if (row.noFlank) {
+      P.struck('NO ENGAGED FLANK — NO TARGET', x + FLANK_LABEL_W, by,
+        { font: F.micro, color: C.inkFaint });
+      return;
+    }
+    if (!row.bears && row.n === 0) {
+      P.struck('NO MOUNTS BEAR', x + FLANK_LABEL_W, by, { font: F.micro, color: C.inkFaint });
+      return;
+    }
+
+    // --- the figures, right to left, each dropped if it does not fit ---------
+    // Same degradation rule the mount cells use: measure, and drop whole rather than
+    // squeeze. A clipped figure is a figure that reads as a different number.
+    let right = x + w;
+    // The cooldown clock. Neutral ink, not amber: waiting for a battery is an ABSENCE
+    // under theme.js's colour contract, and amber is reserved for what is costing the
+    // player something this second. (`C.warnLow` is also not on the TEXT_INK whitelist
+    // — it is a bar fill — so it could not go under a glyph even if it were right.)
+    const clock = row.wait > 0.05 ? `${row.wait.toFixed(1)}S` : '';
+    if (clock) {
+      P.text(clock, right, by, { font: F.microBold, color: C.inkDim, align: 'right', track: TRACK.label });
+      right -= P.measure(clock, F.microBold, TRACK.label) + 10;
+    }
+
+    const projStr = row.proj > 0 ? (row.cooks ? 'PROJ COOK' : `PROJ ${row.proj.toFixed(2)}`) : '';
+    /**
+     * `k/n OUT` ONLY WHILE THE SWEEP IS RUNNING.
+     *
+     * Measured in the probe: a completed wave keeps its slots on the controller — that
+     * is deliberate, and it is why the pip run can go on being the battery's damage
+     * report — but keying the FIGURE off `live` meant that from the first salvo onward
+     * the row printed the last wave's tally forever and `READY n/m` was never seen
+     * again. The pips answer "what did the last one do"; the figure answers "what
+     * happens if I press it now", and only during the sweep are those the same question.
+     */
+    const countStr = row.active
+      ? `${row.fired}/${row.n + row.overflow} OUT`
+      : `READY ${row.ready}/${row.capacity}`;
+    const countW = P.measure(countStr, F.micro, TRACK.label);
+    const projW = projStr ? P.measure(projStr, F.micro, TRACK.label) + 10 : 0;
+
+    // The pip run gets whatever the figures leave, and the figures are laid out from
+    // the right edge inward, so the run never has to guess where it ends. PROJ is the
+    // first thing dropped when the window is narrow: it is the only figure here that is
+    // a projection rather than a measurement, and the run and the count are both.
+    const pipLeft = x + FLANK_LABEL_W;
+    const showProj = projW > 0 && (right - pipLeft - countW - projW - 8) >= PIP_PITCH * 2;
+    if (showProj) {
+      P.text(projStr, right - countW - 10, by, {
+        font: F.micro, color: row.cooks || row.proj > THERMAL.softCap ? C.warn : C.inkDim,
+        align: 'right', track: TRACK.label,
+      });
+    }
+    const lane = right - pipLeft - countW - (showProj ? projW : 0) - 8;
+    P.text(countStr, right, by, {
+      font: F.micro, color: row.ready > 0 || row.active ? C.inkDim : C.inkFaint,
+      align: 'right', track: TRACK.label,
+    });
+
+    // --- the pips -----------------------------------------------------------
+    let room = Math.max(0, Math.floor((lane + PIP_PITCH - PIP_W) / PIP_PITCH));
+    const n = row.live ? row.n : Math.min(row.ready, PIP_CAP);
+    // The `+n` tail shares this baseline with the figures, so its width comes OUT of
+    // the run rather than out of the gap. Four pips is 28 px against 23 px for `+99`.
+    if (n > room) room = Math.max(0, room - 4);
+    const shown = Math.min(n, room);
+    const py = y + 3;
+    for (let i = 0; i < shown; i++) {
+      const px = pipLeft + i * PIP_PITCH;
+      if (row.live) this._pip(P, px, py, row.pips[i]);
+      // A preview has no per-slot identity to draw — `salvoPreview` publishes a count
+      // and nothing else — so every pip is a round going out, which is exactly what the
+      // count means. The moment a wave is armed this row stops guessing.
+      else P.fill(px, py, PIP_W, PIP_W, C.ink);
+    }
+    const over = (row.live ? row.overflow : 0) + (n - shown);
+    if (over > 0) {
+      P.text(`+${over}`, pipLeft + shown * PIP_PITCH, by,
+        { font: F.micro, color: C.inkFaint, track: TRACK.label });
+    }
+  }
+
+  /** One slot. The vocabulary is written out in this file's header. */
+  _pip(P, x, y, pip) {
+    if (pip.dead) {
+      // A HOLE. No box at all, and the count did not go down — that identity is the
+      // feature (`tools/ripple.mjs` check 4: slots 10 -> 10, four of them dead).
+      P.rule(x, y + PIP_W * 0.5 - P.hair, PIP_W, P.hair * 2, C.inkFaint);
+      return;
+    }
+    if (pip.state === 'fired') { P.fill(x, y, PIP_W, PIP_W, C.ink); return; }
+    if (pip.state === 'dropped') { P.frame(x, y, PIP_W, PIP_W, C.ruleDim); return; }
+    // Pending. A frozen ring still fires — down a dead bearing, spending the round and
+    // the heat — so it is amber and hollow rather than absent.
+    P.frame(x, y, PIP_W, PIP_W, pip.frozen ? C.warnDim : C.ruleBright);
   }
 
   // =========================================================================
@@ -250,7 +742,20 @@ export class ArmamentPanel extends Panel {
     P.label('LOAD', tx, y + 74, { color: C.inkFaint });
     P.bar(vx, y + 68, right - vx, 5, therm.load, { color: C.inkDim, track: C.track, segments: 4 });
     P.label('RAD', tx, y + 86, { color: C.inkFaint });
-    P.bar(vx, y + 80, right - vx, 5, therm.radiate, { color: C.inkDim, track: C.track, segments: 4 });
+    // THE SHIP-LEVEL PRICE OF A BROADSIDE, drawn with no words at all. For
+    // `SALVO_THERMAL.surchargeTime` after a wave is armed, `heat.js` multiplies the
+    // radiator budget by `1 - radiatorSurcharge` — so the ghost marker is where the bar
+    // WOULD be standing, and the gap between the marker and the fill is what the salvo
+    // took. A marker costs no height and no glyph, which is the only reason it fits.
+    P.bar(vx, y + 80, right - vx, 5, therm.radiate, {
+      color: C.inkDim,
+      track: C.track,
+      segments: 4,
+      ghost: therm.surcharge > 0
+        ? Math.min(1, therm.radiate / (1 - SALVO_THERMAL.radiatorSurcharge))
+        : null,
+      ghostColor: C.warnDim,
+    });
 
     // Coolant purges. Small, finite, and the thing you press when the bar is climbing.
     const coolant = stores ? stores.coolant : therm.coolant;
@@ -307,6 +812,18 @@ export class ArmamentPanel extends Panel {
     if (blocked === 'RELOAD') return 'RELOAD';
     if (!mount.online) return 'OFFLINE';
     if (mount.thermal && mount.thermal.heat > THERMAL.softCap) return 'HOT';
+
+    // COMMANDED STATES. Everything above this line is a fault or a heat warning; these
+    // four are what a working gun is doing about the player's orders. They sit below
+    // the faults because a cooked mount is not "on cooldown", it is cooked.
+    if (mount.charging || mount.charge > 0) return 'CHARGING';
+    if (mount.excluded) return 'EXCLUDED';
+    const commandable = mount.fireMode !== 'AUTO';
+    if (commandable && mount.cooldown > COOLDOWN_FLOOR) return 'COOLDOWN';
+    // A SALVO gun that is ready is not READY, it is HOLDING: it will not fire until the
+    // player commits, which `salvo.js` enforces by withholding an attached mount from
+    // the automatic path entirely. Printing READY on it would describe an AUTO mount.
+    if (mount.fireMode === 'SALVO' && this._commanded) return 'HOLD';
     return 'READY';
   }
 
@@ -353,6 +870,7 @@ export class ArmamentPanel extends Panel {
 
     // --- the state chip ----------------------------------------------------
     const chipY = y + 28;
+    const word = spec.short ?? state;
     if (spec.tone === 'lost' || spec.tone === 'heat') {
       // A filled plate with dark text. Reserved for the two categories that are
       // actually costing the player something this second.
@@ -370,9 +888,48 @@ export class ArmamentPanel extends Panel {
       P.ctx.globalAlpha = 1;
     } else if (spec.tone === 'heatLow') {
       P.fill(x + 4, chipY, w - 8, 15, C.panel);
+      // CHARGING fills its own outline as the lance winds up, the same way RELOAD does
+      // below. The wind-up is the number the shot is scaled by — `salvo.js` measured a
+      // half-wound lance at 0.6792 of full damage — so a bare word would be throwing
+      // away the one quantity the player is deciding about while they hold the key.
+      if (state === 'CHARGING' && mount) {
+        const k = THREE.MathUtils.clamp(mount.charge ?? 0, 0, 1);
+        if (k > 0) P.fill(x + 5, chipY + 1, (w - 10) * k, 13, C.warnGhost);
+      }
       P.frame(x + 4, chipY, w - 8, 15, ink);
-      P.text(state, x + w * 0.5, chipY + 11, {
+      P.text(word, x + w * 0.5, chipY + 11, {
         font: F.microBold, color: C.warn, align: 'center', track: TRACK.label,
+      });
+    } else if (spec.tone === 'hold') {
+      // HOLD / COOLDOWN. An outlined chip with a SOLID LEFT CAP and full ink — present,
+      // inert and unmistakably loaded. It must not look like the starved branch below,
+      // which is the same outline in dimmer ink: the two mean opposite things, and
+      // theme.js's contract is that value and pattern carry that, never hue.
+      P.frame(x + 4, chipY, w - 8, 15, C.ruleBright);
+      if (state === 'COOLDOWN' && mount) {
+        // Fills back up as the gun recovers, so a mount coming back reads as one.
+        const total = Math.max(0.001, mount.def.cooldown ?? 1);
+        const k = 1 - THREE.MathUtils.clamp(mount.cooldown / total, 0, 1);
+        P.fill(x + 5, chipY + 1, (w - 10) * k, 13, C.track);
+      } else {
+        P.fill(x + 5, chipY + 1, 3, 13, ink);
+      }
+      P.text(word, x + w * 0.5, chipY + 11, {
+        font: F.microBold, color: state === 'HOLD' ? C.ink : C.inkDim,
+        align: 'center', track: TRACK.label,
+      });
+    } else if (spec.tone === 'out') {
+      // EXCLUDED. The player took this gun out of the wave themselves, so the chip is
+      // hatched — and hatched through `hatchUnder`, which punches the glyph box back
+      // out of the pattern. The sealed-banner defect this file's neighbours spent a
+      // wave fixing was a hatch drawn straight over a row of type; a texture may say
+      // "inert" and may not make the word it is describing unreadable.
+      const exW = P.measure(word, F.microBold, TRACK.label);
+      P.hatchUnder(x + 5, chipY + 1, w - 10, 13, C.track,
+        [{ x: x + w * 0.5 - exW * 0.5, y: chipY + 2, w: exW, h: 11 }], { spacing: 4, weight: 1 });
+      P.frame(x + 4, chipY, w - 8, 15, C.ruleDim);
+      P.text(word, x + w * 0.5, chipY + 11, {
+        font: F.microBold, color: C.inkDim, align: 'center', track: TRACK.label,
       });
     } else if (spec.tone === 'starved') {
       // An outline and a strike, in neutral ink. RELOAD fills the outline as it
@@ -473,7 +1030,38 @@ export class ArmamentPanel extends Panel {
       sx = P.chipOutline('WORN', sx, y + 88, { color: C.inkDim, border: C.ruleBright, h: 13, padX: 3 }) + 2;
     }
     if (th && th.trips > 0 && sx < x + w - 20) {
-      P.chipOutline(`×${th.trips}`, sx, y + 88, { color: C.warn, border: C.warnDim, h: 13, padX: 3 });
+      sx = P.chipOutline(`×${th.trips}`, sx, y + 88, { color: C.warn, border: C.warnDim, h: 13, padX: 3 }) + 2;
+    }
+
+    /**
+     * THE FIRE-MODE CHIP — which key, if any, fires this gun.
+     *
+     * It comes LAST on this row, after the structural chips, and it is drawn only if it
+     * still fits. That order is this file's existing rule and it is the right one: a
+     * frozen ring is permanent and changes how the ship must be flown, while the mode is
+     * recoverable in one keystroke — and on the cell where the mode is squeezed out, the
+     * state chip has already said HOLD or WIND or OUT, which is the same answer.
+     *
+     * MEASURED, so the fit rule is not a guess. The chip lane between this row's
+     * margins is 57 px at 1280x720, 65 at 1600x900 and 60 at 1920x1080. `SALVO` is
+     * 38.10 px of glyph and `CHARGE`/`LOCKED` are 45.72, so at `padX: 2` every mode
+     * word fits at every gate viewport with the row otherwise empty — which is the
+     * common case, because the structural chips only appear on a hurt mount. With a
+     * `FROZEN` chip already on the row (45.72 + 6 + 2 = 53.7 px) nothing else fits at
+     * any of the three, and the mode is the thing that yields. That is the intended
+     * order and it is why this is a measured test rather than a fixed offset.
+     *
+     * LOCKED is point defence and only point defence — see MODE_LABEL.
+     */
+    const modeStr = mount.def.type === 'pd' ? 'LOCKED' : (MODE_LABEL[mount.fireMode] ?? mount.fireMode);
+    const modeW = P.measure(modeStr, F.microBold, TRACK.label) + 4;
+    if (sx + modeW <= x + w - 4) {
+      P.chipOutline(modeStr, sx, y + 88, {
+        // Neutral, always: the mode is a setting, not a cost. Amber in this panel means
+        // "this is burning you right now" and a gun sitting in SALVO is not.
+        color: mount.fireMode === 'AUTO' ? C.inkFaint : C.inkDim,
+        border: C.ruleDim, h: 13, padX: 2,
+      });
     }
 
     // --- sub-parts ----------------------------------------------------------
@@ -624,6 +1212,33 @@ export class ArmamentPanel extends Panel {
       this.ui.useDevice(region.itemId);
       return true;
     }
+    if (region.kind === 'armament:flank') {
+      // THE PIP LEGEND, ON DEMAND rather than printed as a permanent row of type. The
+      // panel already teaches its sub-part letters this way and the owner's standing
+      // note is that this interface is too dense, so a vocabulary that costs nothing
+      // until it is asked for is the version that gets to exist.
+      const row = this._flank.find((r) => r.side === region.side);
+      if (!row) return false;
+      if (row.noFlank) {
+        this.ui.orderBar.say('NO ENGAGED FLANK — SELECT A TARGET AND THE BATTERY PICKS ITS SIDE', 'info');
+      } else if (!row.bears && row.n === 0) {
+        this.ui.orderBar.say(`${row.name} — NO MOUNTS BEAR`, 'error');
+      } else if (row.live) {
+        const total = row.n + row.overflow;
+        this.ui.orderBar.say(
+          `${row.name} — ${total} SLOT${total === 1 ? '' : 'S'} · ${row.fired} OUT · ${row.dropped} DROPPED`
+          + ` · ${row.dead} DEAD BARREL${row.dead === 1 ? '' : 'S'} · ${row.frozen} FROZEN`,
+          row.dead + row.frozen > 0 ? 'error' : 'info',
+        );
+      } else {
+        this.ui.orderBar.say(
+          `${row.name} — ${row.ready} OF ${row.capacity} BARRELS READY ACROSS ${row.guns} GUN${row.guns === 1 ? '' : 'S'}`
+          + (row.wait > 0.05 ? ` · ${row.wait.toFixed(1)}S` : ''),
+          row.ready > 0 ? 'info' : 'error',
+        );
+      }
+      return true;
+    }
     if (region.kind === 'armament:mount' || region.kind === 'armament:part') {
       const label = MOUNT_LABEL[region.mount] ?? region.mount;
       const player = this.world.player;
@@ -640,8 +1255,11 @@ export class ArmamentPanel extends Panel {
       }
       const state = this._stateOf(this._cells.find((c) => c.id === region.mount) ?? {}, player);
       const spec = STATE[state] ?? STATE.READY;
+      // `'alarm'` is not a tone this ladder has ever emitted — TONE_INK has never
+      // carried the key — so every click on a BREACHED or COOKED mount reported itself
+      // as `info`. The severe tones are the two that get a filled plate.
       this.ui.orderBar.say(`${label} — ${state}${spec.note ? ` · ${spec.note}` : ''}`,
-        spec.tone === 'alarm' ? 'error' : 'info');
+        spec.tone === 'lost' || spec.tone === 'heat' ? 'error' : 'info');
       return true;
     }
     return false;
