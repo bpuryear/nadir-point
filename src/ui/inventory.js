@@ -59,9 +59,9 @@ export class InventoryPanel {
     let cy = y + 12;
 
     if (!items.length) {
-      P.text('HOLD EMPTY', x, cy + 16, { font: F.small, color: C.inkGhost, track: TRACK.label });
+      P.text('HOLD EMPTY', x, cy + 16, { font: F.small, color: C.inkFaint, track: TRACK.label });
       P.text('CUT SECTIONS OFF A HULK TO FILL IT', x, cy + 30,
-        { font: F.micro, color: C.inkGhost, track: TRACK.label });
+        { font: F.micro, color: C.inkFaint, track: TRACK.label });
       return cy + 44;
     }
 
@@ -88,7 +88,7 @@ export class InventoryPanel {
 
       // Tier pips, right-aligned on the first line.
       const tier = def?.tier ?? 1;
-      P.pips(x + w - 3 - tier * 7, cy + 6, 3, tier, { size: 4, gap: 3, color: C.ink, empty: C.inkGhost });
+      P.pips(x + w - 3 - tier * 7, cy + 6, 3, tier, { size: 4, gap: 3, color: C.ink, empty: C.track });
 
       // Line two is a fixed four-column grid, because a variable-width faction name
       // followed by a variable-width mass will always eventually collide with the
@@ -98,7 +98,7 @@ export class InventoryPanel {
       P.text(fmtMass(def?.mass ?? 0), x + 168, cy + 26, { font: F.micro, color: C.inkFaint, align: 'right' });
 
       const cond = item.condition ?? 1;
-      P.bar(x + 178, cy + 20, 40, 4, cond, { color: cond < 0.5 ? C.warn : C.inkDim, track: C.inkGhost });
+      P.bar(x + 178, cy + 20, 40, 4, cond, { color: cond < 0.5 ? C.warn : C.inkDim, track: C.track });
       P.text(fmtPct(cond), x + 250, cy + 26, { font: F.micro, color: C.inkFaint, align: 'right' });
 
       const v = scrapValue(item);
@@ -113,7 +113,7 @@ export class InventoryPanel {
     // Empty slots, so the hold reads as a physical space with a limit.
     for (let i = items.length; i < cap; i++) {
       P.frame(x, cy + 4, w, ROW_H - 14, C.ruleDim);
-      P.label('EMPTY CRADLE', x + 9, cy + 18, { color: C.inkGhost });
+      P.label('EMPTY CRADLE', x + 9, cy + 18, { color: C.inkFaint });
       cy += ROW_H * 0.55;
     }
 

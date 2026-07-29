@@ -156,11 +156,14 @@ export function heightToNormalBytes(height, size, strength = 1) {
   return out;
 }
 
-/** Write RGBA bytes into a canvas and return it. */
-export function bytesToCanvas(bytes, size) {
-  const canvas = makeCanvas(size);
+/**
+ * Write RGBA bytes into a canvas and return it. Square unless a height is given —
+ * the macro atlas is 3 x 2 regions and is the only non-square map in the game.
+ */
+export function bytesToCanvas(bytes, size, height = size) {
+  const canvas = makeCanvas(size, height);
   const ctx = ctx2d(canvas);
-  const img = ctx.createImageData(size, size);
+  const img = ctx.createImageData(size, height);
   img.data.set(bytes);
   ctx.putImageData(img, 0, 0);
   return canvas;

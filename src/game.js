@@ -36,6 +36,14 @@ const STREAM_MODULES = {
   ...import.meta.glob('./world/*/index.js'),
   ...import.meta.glob('./world/index.js'),
   ...import.meta.glob('./sim/ai/index.js'),
+  // The progression layer. Without this entry `optional('./sim/meta/index.js')` can
+  // never resolve, so the seam below it was dead and the boot report announced
+  // `missing: progression` for a layer that was in fact installed — by a backstop in
+  // SalvageSystem's constructor, which exists only because this line was absent
+  // (see the WIRING NOTE in sim/meta/index.js). A status line that reports a live
+  // system as missing is worse than no status line. The installer is idempotent, so
+  // whichever seam runs first wins and the other is a no-op.
+  ...import.meta.glob('./sim/meta/index.js'),
   ...import.meta.glob('./vfx/index.js'),
   ...import.meta.glob('./ui/index.js'),
   ...import.meta.glob('./audio/index.js'),
@@ -155,6 +163,23 @@ export async function bootGame(world, params) {
   } else {
     note('refit', false);
   }
+
+  /*
+   * The progression and economy layer: volume-based cargo, tiered materials, the
+   * codex, salvaged patterns, items, hull perks and objectives.
+   *
+   * This is installed AFTER salvage and refit because CargoHold and EconomySystem
+   * take over stores those two already own - the hold stops being a six-slot array
+   * and becomes cubic metres, and materials stop being three flat pools. Installing
+   * it earlier would have salvage write into a hold that is about to be replaced.
+   *
+   * It is loaded through `optional()` like every other stream so a partial build
+   * still boots; the systems stream that wrote it was not allowed to edit this file,
+   * which is why the wiring lands here rather than there.
+   */
+  const metaMod = await optional('./sim/meta/index.js', 'progression');
+  if (metaMod?.installProgression) metaMod.installProgression(world, { salvage });
+  note('progression', !!metaMod?.installProgression);
 
   // Ships integrate themselves; one system drives them all so ordering is explicit.
   engine.add({

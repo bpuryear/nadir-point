@@ -1,0 +1,125 @@
+[
+  {
+    "id": "close",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.1437,
+      "contrast": 0.2491,
+      "clippedPct": 0,
+      "nearBlackPct": 72.51
+    },
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/ad-form/close.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 25.400000002235174,
+      "stepMs": 1.5999999977648258,
+      "renderMs": 5.100000001490116,
+      "steps": 6,
+      "calls": 131,
+      "triangles": 72627,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 71,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "three-quarter",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0651,
+      "contrast": 0.1374,
+      "clippedPct": 0,
+      "nearBlackPct": 71.02
+    },
+    "description": "Mid tactical range, raking key. The everyday playing view. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/ad-form/three-quarter.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 22.599999999976717,
+      "stepMs": 1.0999999977648258,
+      "renderMs": 13.100000001490116,
+      "steps": 6,
+      "calls": 134,
+      "triangles": 95171,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 71,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "wide",
+    "ok": false,
+    "warnings": [
+      "FRAME IS FLAT OR EMPTY (contrast < 0.02)",
+      "FRAME IS ESSENTIALLY BLACK (>97% near-black)"
+    ],
+    "frame": {
+      "meanLuma": 0.0107,
+      "contrast": 0.0165,
+      "clippedPct": 0,
+      "nearBlackPct": 98.47
+    },
+    "description": "Maximum tactical zoom. Cruiser a bright speck against the gas giant. The shot that sells the game.",
+    "hud": true,
+    "file": "docs/review/ad-form/wide.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 9.799999998533167,
+      "stepMs": 1,
+      "renderMs": 8.399999998509884,
+      "steps": 6,
+      "calls": 100,
+      "triangles": 65821,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 63,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "cinematic",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0922,
+      "contrast": 0.1792,
+      "clippedPct": 0,
+      "nearBlackPct": 53.19
+    },
+    "description": "Chase camera. Tests the cinematic framing and the sense of mass.",
+    "hud": true,
+    "file": "docs/review/ad-form/cinematic.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 23.100000001490116,
+      "stepMs": 0.8000000007450581,
+      "renderMs": 8.800000000745058,
+      "steps": 6,
+      "calls": 123,
+      "triangles": 71871,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 71,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

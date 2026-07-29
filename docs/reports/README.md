@@ -75,6 +75,58 @@ masonry or bathroom tile rather than ship plating"* and identified the real prob
 absence of a **frequency hierarchy**: Homeworld's hulls are roughly 60% calm, 30% medium,
 10% dense, plus hand-placed asymmetric marks. Ours is 100% medium everywhere.
 
+### Round two — the masonry was structural, and one fix had never worked
+
+A second blind comparison scored this stream 3/10 and named the mechanism precisely:
+*"bevelled rectangular blocks in running bond at the SAME block scale on every part."*
+It was right, and it was not a tuning problem. Three properties of the recursive-BSP
+generator made that outcome unavoidable: a BSP has **no preferred direction**, so the
+field is isotropic where real plating is strongly directional; every leaf **bevelled up
+from groove height on all four sides**, which is a highlight ring around every block
+under any key; and recursion **concentrates leaves at one size**, so the calm reserve
+§3 demands could not exist. `textures/panelLines.js` is rewritten around **strakes and
+butts** — continuous fore-aft seams, subordinate butt joints phase-offset per strake,
+flush joints with the groove stated in metres (0.26 m), and relief from weld beads,
+plate lips and fastener rows along strake seams only.
+
+**The find that mattered most was not visible at all.** The macro layer — the
+non-tiling object-space map that closed D4 and carries the value drift, the soot and
+the marks — packed four channels into a `CanvasTexture`. A 2D canvas backing store is
+**premultiplied**, and alpha is 0 over ~99% of that atlas because marks are sparse by
+design. Measured in the browser the game runs in: writing `RGB(200,150,100)` at `A=0`
+reads back `RGB(0,0,0)`. Three of the four channels had been multiplied by zero since
+the day they were written, so D4 was closed on a mechanism that could not have been
+working, and round two's *"no macro value drift survives the mip drop"* was literally
+true — there was none to survive. The atlas is a `DataTexture` now.
+
+**Everything is measured, and three tools were built to measure it.** `tools/maps.mjs`
+draws the generated maps at 1:1 with a metre ruler without booting the game;
+`tools/surface.mjs` reports the §3/§4 statistics on a hull mask; `tools/shadowcheck.mjs`
+answers "does the ship self-shadow" by diffing the frame against itself with
+`castShadow` off. That last one settled a question two passes had argued from
+screenshots — shadows were **live all along** (5.3% of lit pixels, mean delta 51/255);
+they did not READ because the frame's lit deck sat at sRGB 0.36.
+
+**Still weak, in its own words.** The 180 m structural rhythm is a value band in the
+macro layer, which survives mips but cannot cast a shadow — §3 wants geometry and the
+geometry stream has to build it. The macro layer's mark anchors are the PLAYER
+CRUISER's, and one atlas serves a whole faction, so a 480 m destroyer picks up bay-rail
+stripes at stations where its own structure is something else; the honest fix needs the
+geometry stream to publish per-class feature stations. Texture memory still has no
+per-distance reduction and no cap (D8), and the macro atlas is a debit against it.
+`tools/surface.mjs`'s anisotropy statistic is dominated by silhouette rather than
+surface over a whole frame and is only trustworthy on a crop — that limitation is
+written into the tool because the first reading of it was nearly quoted as evidence.
+
+**Two of this pass's own mistakes, recorded because they are instructive.** Raising the
+key exposed that Concord's hull albedo was 78% reflectance and clipped to white the
+moment the light was correct (D48) — caught by the material chart, which is what a
+material chart is for. And the five non-hero POI keys were first *scaled* by
+giant-orbit's factor rather than solved, which got four of the five wrong by 20–30%,
+because two keys of different COLOUR do not deliver the same irradiance at the same
+intensity. Both were found by running the numbers a second time rather than by looking
+at the frame, which is the same lesson as everything above.
+
 ---
 
 ## 4. Cruiser hull, hardpoints and modules

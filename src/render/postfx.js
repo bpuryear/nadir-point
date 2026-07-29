@@ -171,11 +171,19 @@ const GradeShader = {
   `,
 };
 
+/**
+ * `msaa` is the sample count on the HDR composer target. It is a quality knob and
+ * not a constant because it is the one setting here whose cost is per-SAMPLE over
+ * every covered pixel of a half-float target — on a machine that can afford it, it
+ * is the only thing that fixes a high-contrast geometric silhouette (see the note in
+ * the constructor); on one that cannot, it is the first thing to drop. 0 falls back
+ * to SMAA alone, which is what shipped before.
+ */
 export const QUALITY_PRESETS = {
-  low:    { gtao: false, godrays: false, bloom: true,  smaa: false, bloomRes: 0.5,  godraySamples: 0,  renderScale: 0.85 },
-  medium: { gtao: false, godrays: true,  bloom: true,  smaa: true,  bloomRes: 0.5,  godraySamples: 16, renderScale: 1.0 },
-  high:   { gtao: true,  godrays: true,  bloom: true,  smaa: true,  bloomRes: 0.6,  godraySamples: 24, renderScale: 1.0 },
-  ultra:  { gtao: true,  godrays: true,  bloom: true,  smaa: true,  bloomRes: 0.75, godraySamples: 40, renderScale: 1.0 },
+  low:    { gtao: false, godrays: false, bloom: true,  smaa: true,  msaa: 0, bloomRes: 0.5,  godraySamples: 0,  renderScale: 0.85 },
+  medium: { gtao: false, godrays: true,  bloom: true,  smaa: true,  msaa: 2, bloomRes: 0.5,  godraySamples: 16, renderScale: 1.0 },
+  high:   { gtao: true,  godrays: true,  bloom: true,  smaa: true,  msaa: 4, bloomRes: 0.6,  godraySamples: 24, renderScale: 1.0 },
+  ultra:  { gtao: true,  godrays: true,  bloom: true,  smaa: true,  msaa: 4, bloomRes: 0.75, godraySamples: 40, renderScale: 1.0 },
 };
 
 export class PostChain {
@@ -183,10 +191,36 @@ export class PostChain {
     this.rw = rendererWrapper;
     const renderer = rendererWrapper.renderer;
 
+    /**
+     * MSAA ON THE HDR BUFFER, WHICH THE RENDERER'S OWN `antialias: false` CANNOT DO.
+     *
+     * Round-one review: "hard stair-stepped silhouette edges throughout both frames,
+     * the images read lower-fidelity than the geometry deserves", and separately the
+     * radiator fin field aliasing into moire at 1280x720.
+     *
+     * SMAA was already in the chain and is not enough here, for a reason specific to
+     * this game: SMAA is a post filter on the RESOLVED image, and it reconstructs an
+     * edge by looking at neighbouring pixels. A 1400 m hull against a near-black
+     * starfield is the worst case for that — the edge is a two-pixel step between a
+     * lit plate and literal zero, with nothing in between for the filter to infer a
+     * gradient from, so it leaves the staircase almost intact. MSAA supersamples
+     * COVERAGE at the rasteriser, before anything is resolved, which is the only
+     * thing that fixes a high-contrast geometric silhouette.
+     *
+     * It goes on the composer's render target rather than on the WebGLRenderer,
+     * because everything is drawn into the HDR chain and the renderer's own
+     * backbuffer is never what the frame is composed in. `renderer.antialias` stays
+     * false and the note there stays true: MSAA on the BACKBUFFER does not survive
+     * HDR. MSAA on the HDR target does, because the resolve happens in HDR.
+     *
+     * 4 samples, not 8: this is a fill-rate cost on every pixel of a half-float
+     * target and 4 already removes the staircase. SMAA stays in the chain after the
+     * grade, where it now only has sub-pixel work left to do.
+     */
     this.composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, {
       type: THREE.HalfFloatType,
       colorSpace: THREE.LinearSRGBColorSpace,
-      samples: 0,
+      samples: 4,
       depthBuffer: true,
       stencilBuffer: false,
     }));

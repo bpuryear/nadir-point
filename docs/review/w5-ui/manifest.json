@@ -1,0 +1,32 @@
+[
+  {
+    "id": "hud-three-quarter",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0652,
+      "contrast": 0.1373,
+      "clippedPct": 0,
+      "nearBlackPct": 70.82
+    },
+    "description": "The everyday playing view WITH the interface up. This is the frame the HUD-occludes-the-ship finding was measured on.",
+    "hud": true,
+    "file": "docs/review/w5-ui/hud-three-quarter.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 17.199999999254942,
+      "stepMs": 0.6000000014901161,
+      "renderMs": 4.699999999254942,
+      "steps": 6,
+      "calls": 134,
+      "triangles": 95171,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 71,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

@@ -7,7 +7,12 @@
  *
  *   lod=0|1|2|auto   force an LOD level. Default 0. `auto` restores distance-driven
  *                    switching so you can watch it pop.
- *   view=orbit|top|side|bow|stern|quarter    camera preset. Default orbit.
+ *   view=orbit|top|side|bow|stern|quarter|bay   camera preset. Default orbit.
+ *                    `bay` sits BELOW the combat plane looking up into the salvage
+ *                    bay. It exists because the one claim this hull makes that a
+ *                    three-quarter render cannot check is that the bay is a THROUGH
+ *                    SLOT rather than a recess, and the only proof of that is seeing
+ *                    background come out the other side of it.
  *   spin=0|1         slow orbit. Default 1 for `orbit`, 0 for fixed views.
  *   dist=<metres>    camera distance override.
  *   sockets=1        draw the six hardpoint sockets as coloured markers with their
@@ -34,9 +39,9 @@
 
 import * as THREE from 'three';
 import { createMaterialRegistry } from '../art/materials/index.js';
-import { getPOIPalette, getFactionPalette, NEUTRAL } from '../art/palette.js';
+import { getPOIPalette, getFactionPalette, NEUTRAL, mix } from '../art/palette.js';
 import { BUDGET } from '../core/units.js';
-import { buildCruiser, RUNNING_LIGHT_AXIS_SPACING_M } from '../art/geometry/cruiser.js';
+import { buildCruiser, hullParts, RUNNING_LIGHT_AXIS_SPACING_M } from '../art/geometry/cruiser.js';
 import {
   CRUISER_HARDPOINTS, attachModule, getSilhouetteSignature,
 } from '../art/geometry/hardpoints.js';
@@ -44,14 +49,26 @@ import * as G from '../art/geometry/greeble.js';
 
 const POI = 'giant-orbit';
 
-/** Camera presets. Pitch is radians above the combat plane. */
+/**
+ * Camera presets. Pitch is radians above the combat plane; negative pitch is below it.
+ *
+ * The distances went up with the 2025 hull: the working envelope is 1400 x 396 x 616 m
+ * once the cutter yoke and the outrigger pods are counted, and a camera at 1480 m was
+ * cropping the ends off the ship in every fixed view.
+ *
+ * `bay` is BELOW the combat plane on purpose. The single claim this hull makes that a
+ * lit three-quarter render cannot check is that the salvage bay is a THROUGH-SLOT and
+ * not a recess, and the only way to check that is to put the camera under it and see
+ * whether background comes through.
+ */
 const VIEWS = {
-  orbit: { distance: 1480, pitch: 0.28, yaw: 0.95, spin: true },
-  quarter: { distance: 1460, pitch: 0.34, yaw: 2.30, spin: false },
-  top: { distance: 1560, pitch: 1.5, yaw: Math.PI * 0.5, spin: false },
-  side: { distance: 1560, pitch: 0.002, yaw: Math.PI * 0.5, spin: false },
-  bow: { distance: 1250, pitch: 0.16, yaw: 0.0, spin: false },
-  stern: { distance: 1250, pitch: 0.20, yaw: Math.PI, spin: false },
+  orbit: { distance: 2050, pitch: 0.28, yaw: 0.95, spin: true },
+  quarter: { distance: 1950, pitch: 0.34, yaw: 2.30, spin: false },
+  top: { distance: 2100, pitch: 1.5, yaw: Math.PI * 0.5, spin: false },
+  side: { distance: 2100, pitch: 0.002, yaw: Math.PI * 0.5, spin: false },
+  bow: { distance: 1500, pitch: 0.16, yaw: 0.0, spin: false },
+  stern: { distance: 1500, pitch: 0.20, yaw: Math.PI, spin: false },
+  bay: { distance: 1500, pitch: -0.44, yaw: 1.90, spin: false },
 };
 
 /** One marker colour per mount, all from the locked palette. */
@@ -122,8 +139,12 @@ export default {
     const S = 1100;
     key.shadow.camera.left = -S; key.shadow.camera.right = S;
     key.shadow.camera.top = S; key.shadow.camera.bottom = -S;
-    key.shadow.bias = -0.0012;
-    key.shadow.normalBias = 2.0;
+    // `shadow.bias` is a fraction of the shadow camera's depth RANGE, not metres.
+    // At near 500 / far 7000 that range is 6500 m, so -0.0012 was 7.8 metres of
+    // peter-panning and no self-shadow on this hull survived it. Stated in metres
+    // and converted. See world/lighting/poi.js, which had the same defect.
+    key.shadow.bias = -0.35 / (7000 - 500);
+    key.shadow.normalBias = 1.5;
     scene.add(key);
     scene.add(key.target);
 
@@ -131,7 +152,17 @@ export default {
     // Stated the way the POI rig states it: the peak channel of the irradiance it
     // contributes, so a saturated blue does not arrive with its blue channel
     // rivalling the key's. See world/lighting/poi.js.
-    const fillColor = new THREE.Color().setHex(poi.fill.color, THREE.SRGBColorSpace);
+    // BROADENED, exactly as world/lighting/poi.js broadens it. This probe used the
+    // palette's raw `fill.color` - the giant's deepest belt - where the game's own rig
+    // averages it towards neutral by `fill.broad`, because the light off a disc thirty
+    // degrees across is the average of the whole disc. The probe was therefore lighting
+    // the hull with a more saturated blue than the game ever does, and it is this probe
+    // that blind review cited for "saturated cobalt-blue as flat full-face fills". A
+    // probe that does not use the game's own numbers cannot verify anything - the same
+    // sentence already written above about the key intensity.
+    const fillColor = new THREE.Color().setHex(
+      mix(poi.fill.color, NEUTRAL.ice, poi.fill.broad ?? 0.32), THREE.SRGBColorSpace,
+    );
     const fillPeak = Math.max(fillColor.r, fillColor.g, fillColor.b, 1e-3);
     const fill = new THREE.DirectionalLight(fillColor, (poi.fill.intensity * 0.5) / fillPeak);
     fill.position.set(-0.7, -0.35, -0.5).normalize().multiplyScalar(4000);
@@ -234,6 +265,20 @@ export default {
       gu.saturation.value = 1;
     }
 
+    // ---- floating-geometry audit -----------------------------------------
+    // Run at EVERY LOD, because the failure mode this catches is specifically an
+    // LOD failure: a bracket or a diagonal gets dropped by the decimation and the
+    // thing it was holding is left hanging in space. Two separate review findings -
+    // "a small grey slab hangs in empty space 40 m above the superstructure" and
+    // "a hole straight through the hull between the aft fins" - were this bug and
+    // its coplanar-faces twin, and both were found by a human staring at a PNG.
+    // A human should not be the check for something a bounding-box sweep does in
+    // twenty milliseconds.
+    const detached = [];
+    for (const l of [0, 1, 2]) detached.push(...floatingParts(l, world.rng));
+    if (detached.length) console.error('[probe:cruiser] DETACHED GEOMETRY', detached);
+    else console.log('[probe:cruiser] attachment audit: every part connected at LOD 0/1/2');
+
     // ---- report ----------------------------------------------------------
     const sig = getSilhouetteSignature(hull);
     const t = hull.stats.triangles;
@@ -260,6 +305,70 @@ export default {
     if (ctx.spin) ctx.pose.yaw += dt * 0.10;
   },
 };
+
+/**
+ * Every LOD-`lod` sub-part whose bounding box overlaps no other part's — i.e. every
+ * piece of the ship that is not physically attached to the rest of it.
+ *
+ * Union-find over shrunk bounding boxes. The 0.5 m shrink is what makes it useful
+ * rather than vacuous: two parts that merely ABUT, sharing a face at exactly one
+ * coordinate, are reported as separate, because a shared face is a z-fight and a
+ * truss whose members only kiss comes apart the moment an LOD drops the diagonal
+ * that was quietly holding it. The shrink is clamped so a legitimately flat part is
+ * not shrunk out of existence.
+ *
+ * Known and accepted: `core/hull#…`, the transom annulus, is a zero-depth plane
+ * lying exactly on the hull loft's aft station, so no shrink can make it overlap
+ * anything. Flat parts are therefore excluded.
+ *
+ * KNOWN LIMITATION, stated so nobody trusts this further than it goes. The spine's
+ * bounding box is the whole ship, so any part inside that box counts as connected to
+ * it whether or not it touches actual skin. This catches things OUTSIDE the hull
+ * envelope - the bay, the yoke, the pods, the radiators, anything on the dorsal -
+ * which is where every floating-geometry defect so far has been, but it cannot catch
+ * a part buried in open interior volume. A real fix is a triangle-level proximity
+ * test; that is a bigger tool than this probe should own.
+ *
+ * @returns {string[]} human-readable descriptions, empty when the hull is sound
+ */
+function floatingParts(lod, rng) {
+  const { buckets } = hullParts({ rng: rng.fork('cruiser'), lod });
+  const items = [];
+  for (const b of buckets) {
+    if (b.surface === 'engineGlow') continue;           // additive decals touch nothing
+    for (let i = 0; i < b.parts.length; i++) {
+      const g = G.mergeParts([b.parts[i]], { uv: false });
+      g.computeBoundingBox();
+      const box = g.boundingBox.clone();
+      let flat = false;
+      for (const a of ['x', 'y', 'z']) {
+        const d = Math.min(0.5, (box.max[a] - box.min[a]) * 0.49);
+        if (d < 0.5) flat = true;
+        box.min[a] += d;
+        box.max[a] -= d;
+      }
+      items.push({ name: `${b.key}#${i}`, box, flat });
+      g.dispose();
+    }
+  }
+  const parent = items.map((_, i) => i);
+  const find = (a) => (parent[a] === a ? a : (parent[a] = find(parent[a])));
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      if (items[i].box.intersectsBox(items[j].box)) parent[find(i)] = find(j);
+    }
+  }
+  const counts = new Map();
+  for (let i = 0; i < items.length; i++) {
+    const r = find(i);
+    counts.set(r, (counts.get(r) ?? 0) + 1);
+  }
+  // The hull is one big component; anything in a component of its own is floating.
+  const biggest = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  return items
+    .filter((it, i) => find(i) !== biggest && !it.flat)
+    .map((it) => `lod${lod} ${it.name} [${it.box.min.toArray().map(Math.round)} .. ${it.box.max.toArray().map(Math.round)}]`);
+}
 
 // ---------------------------------------------------------------------------
 // Throwaway test modules. These are NOT registered and NOT shipping content -

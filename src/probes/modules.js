@@ -168,7 +168,41 @@ export default {
     // derived from the yaw so the grid is a grid from wherever we are standing.
     const rx = Math.cos(view.yaw), rz = -Math.sin(view.yaw);
     const fx = Math.sin(view.yaw), fz = Math.cos(view.yaw);
-    const rowGap = view.rowGap ?? 0;
+
+    /**
+     * CELL SIZE IS MEASURED, NOT DECLARED.
+     *
+     * `view.spacing` was authored when the biggest module was about 300 m across.
+     * The library's ventral, engine and broadside fits then grew by a factor of two
+     * to satisfy the loadout divergence criterion (ship-language.md §6 M2) and
+     * nobody moved the grid, so on `set=engine&bare=1` the 520 m stern armour
+     * belt stood in front of the 300 m jump ring and the ring could not be
+     * critiqued at all. Backing the camera off - which the framing block below
+     * already did - does not separate two objects that intersect in world space.
+     *
+     * So the authored spacing is now a FLOOR and the real cell is whatever the
+     * built geometry measures, plus a margin. Same principle as the loadout probe's
+     * row spacing, and for the same reason: a review picture whose subjects overlap
+     * proves nothing about either of them.
+     */
+    const cells = [];                 // { holder, col, row, half: {w, h} }
+    const CELL_MARGIN = 110;
+    const measureCell = (obj) => {
+      // Sockets carry the mount offset and their world matrices are stale until
+      // something walks the tree; Box3 will not do it for us. See loadouts.js.
+      obj.updateMatrixWorld(true);
+      const b = new THREE.Box3().setFromObject(obj);
+      const s = b.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+      return {
+        w: Math.abs(s.x * rx) + Math.abs(s.z * rz),      // across the row
+        h: bare ? s.y : Math.abs(s.x * fx) + Math.abs(s.z * fz),
+        // Toward the lens. A 900 m lance lying half along the view axis has its
+        // near end a long way closer than the plane the framing is fitted to, and
+        // projects wider than the fit allows; without this term the first cell in
+        // the bow row was clipped by the left edge of the frame.
+        d: Math.max(Math.abs(s.x * fx) + Math.abs(s.z * fz), s.y),
+      };
+    };
 
     for (let gi = 0; gi < groups.length; gi++) {
       const hp = groups[gi];
@@ -177,20 +211,16 @@ export default {
       // the contact sheet puts each mount on its own row.
       const cols = groups.length > 1 ? mods.length : (view.cols ?? mods.length);
       const rows = Math.ceil(mods.length / cols);
-      const rowBase = groups.length > 1 ? (gi - (groups.length - 1) / 2) * rowGap : 0;
       for (let i = 0; i < mods.length; i++) {
         const def = mods[i];
         const r = Math.floor(i / cols);
         const inRow = Math.min(cols, mods.length - r * cols);
-        const col = ((i % cols) - (inRow - 1) / 2) * view.spacing;
-        const row = rowBase + ((rows - 1) / 2 - r) * rowGap;
+        // Grid INDICES; the metres are applied once the cells have been measured.
+        const col = (i % cols) - (inRow - 1) / 2;
+        const row = groups.length > 1
+          ? (groups.length - 1) / 2 - gi          // contact sheet: one row per mount
+          : (rows - 1) / 2 - r;                   // one mount, wrapped onto `cols`
         const holder = new THREE.Group();
-        // Bare modules stack in Y, which maps straight to screen vertical at any
-        // pitch. Hulls stack along the camera's forward axis and are viewed from
-        // high enough that that axis also maps to screen vertical - ships are
-        // plane-locked and floating one above another would be a lie.
-        if (bare) holder.position.set(rx * col, row, rz * col);
-        else holder.position.set(rx * col - fx * row, 0, rz * col - fz * row);
         scene.add(holder);
 
         if (bare) {
@@ -210,6 +240,7 @@ export default {
           mark.position.copy(obj.position);
           holder.add(mark);
           shown.push({ def, tris: obj.userData.triangles ?? 0 });
+          cells.push({ holder, col, row, half: measureCell(holder) });
         } else {
           const hull = buildCruiser({
             rng: world.rng.fork(`hull:${def.id}`), materials: registry,
@@ -228,9 +259,28 @@ export default {
             attachModule(hull, 'starboard', def, mctx(`${def.id}:stbd`, def.faction));
           }
           shown.push({ def, tris: inst.object.userData.triangles ?? 0 });
+          cells.push({ holder, col, row, half: measureCell(holder) });
         }
       }
     }
+
+    // Apply the measured grid. `view.spacing` / `view.rowGap` stay as floors so a
+    // set of small modules keeps its authored, tighter framing.
+    const cellW = Math.max(...cells.map((c) => c.half.w));
+    const cellH = Math.max(...cells.map((c) => c.half.h));
+    const spacing = Math.max(view.spacing, cellW * 2 + CELL_MARGIN);
+    const rowGap = Math.max(view.rowGap ?? 0, cellH * 2 + CELL_MARGIN);
+    for (const c of cells) {
+      const col = c.col * spacing;
+      const row = c.row * rowGap;
+      // Bare modules stack in Y, which maps straight to screen vertical at any
+      // pitch. Hulls stack along the camera's forward axis and are viewed from high
+      // enough that that axis also maps to screen vertical - ships are plane-locked
+      // and floating one above another would be a lie.
+      if (bare) c.holder.position.set(rx * col, row, rz * col);
+      else c.holder.position.set(rx * col - fx * row, 0, rz * col - fz * row);
+    }
+    ctx.grid = { spacing, rowGap, cellW, cellH };
 
     Object.assign(pose, { distance: view.dist, pitch: view.pitch, yaw: view.yaw });
     pose.target.set(view.target[0], view.target[1], view.target[2]);
@@ -238,25 +288,19 @@ export default {
 
     // FRAMING. Every set's distance used to be a hand-tuned constant, and the fifth
     // subject in the port and ventral rows ran off the right-hand edge - so the last
-    // item in each sheet could not be critiqued at all. The row's extent is known
-    // exactly (it is `spacing` times the column count), so back the camera off until
-    // it fits instead of guessing. Only ever increases the distance: a set that
-    // already fits keeps its authored framing.
+    // item in each sheet could not be critiqued at all. Both the grid and the cell
+    // size are now measured off the built geometry, so the extent is known rather
+    // than assumed. Only ever increases the distance: a set that already fits keeps
+    // its authored framing.
     {
-      const cols = groups.length > 1
-        ? Math.max(...groups.map((g) => modulesForHardpoint(g).length))
-        : (view.cols ?? modulesForHardpoint(groups[0]).length);
-      const rowsN = groups.length > 1
-        ? groups.length
-        : Math.ceil(modulesForHardpoint(groups[0]).length / cols);
-      // Half-extent of a single cell's content: a bare module is a few hundred
-      // metres across, a whole cruiser is 1400 long by 525 tall.
-      const cell = bare ? 260 : 760;
-      const halfW = ((cols - 1) / 2) * view.spacing + cell;
-      const halfH = ((rowsN - 1) / 2) * (view.rowGap ?? 0) + (bare ? cell : 300);
+      const maxCol = Math.max(...cells.map((c) => Math.abs(c.col)));
+      const maxRow = Math.max(...cells.map((c) => Math.abs(c.row)));
+      const halfW = maxCol * spacing + cellW;
+      const halfH = maxRow * rowGap + cellH;
+      const halfD = Math.max(...cells.map((c) => c.half.d));
       const tanV = Math.tan((ctx.camera.fov * Math.PI) / 180 * 0.5);
       const tanH = tanV * ctx.camera.aspect;
-      pose.distance = Math.max(view.dist, (halfW / tanH) * 1.06, (halfH / tanV) * 1.06);
+      pose.distance = Math.max(view.dist, (halfW / tanH) * 1.06 + halfD, (halfH / tanV) * 1.06 + halfD);
     }
 
     // ---- audit -------------------------------------------------------------

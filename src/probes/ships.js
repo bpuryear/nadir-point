@@ -27,11 +27,64 @@
  */
 
 import * as THREE from 'three';
-import { createMaterialRegistry, SCALE } from '../art/materials/index.js';
+import { createMaterialRegistry } from '../art/materials/index.js';
 import { getPOIPalette, getFactionPalette, NEUTRAL } from '../art/palette.js';
-import { HULL_LENGTH } from '../core/units.js';
+import { HULL_LENGTH, SCALE_CUE } from '../core/units.js';
 import { ALL_SHIP_CLASSES } from '../art/geometry/ships/index.js';
-import { auditParts } from '../art/geometry/ships/common.js';
+import {
+  auditParts, silhouetteSignature, silhouetteDivergence, CLASS_DIVERGENCE, LIGHT_U_PER_M,
+} from '../art/geometry/ships/common.js';
+import { CV_HULL, FG_HULL, MN_HULL, DD_FORE, CR_SIDE } from '../art/geometry/ships/coalition.js';
+import { CC_HULL, MR_HULL, HC_HULL, PG_HULL, SL_HULL } from '../art/geometry/ships/concord.js';
+
+/**
+ * The station tables that carry each class's primary mass, with the hull length the
+ * rules in docs/design/ship-language.md §2 are normalised against. Printed as a
+ * pass/fail block so a later edit that flattens a waist or straightens a prow shows
+ * up as a number rather than as a vague feeling that the ship got worse.
+ */
+const LINE_AUDIT = [
+  ['Lancet', CV_HULL, 95, null],
+  ['Ardent', FG_HULL, 210, null],
+  ['Sledge', MN_HULL, 420, null],
+  // R2.2 asks the PLAN half-beam curve for one interior minimum. On these two the
+  // waist is not a station, it is a VOID - the Bulwark's hull stops at z = +40 and
+  // starts again at z = -40 with the reactor drum in the gap, and the Whipcord's
+  // nacelle stops at z = -14 with nineteen metres of sky between the tail booms.
+  // The rule is satisfied at ship level and cannot be satisfied by a table that
+  // only describes one of the two pieces, so these are marked exempt WITH THE
+  // REASON rather than being made to pass by adding a bump nobody asked for.
+  ['Bulwark(fore)', DD_FORE, 480, 'waist is the open gap at z +-40, not a station'],
+  ['Anvil(side)', CR_SIDE, 900, null],
+  ['Whipcord', CC_HULL, 95, 'waist is the 19 m gap between the tail booms'],
+  ['Meridian', MR_HULL, 210, null],
+  ['Halcyon', HC_HULL, 300, null],
+  ['Peregrine', PG_HULL, 480, null],
+  ['Solace', SL_HULL, 620, null],
+];
+
+/**
+ * R2.1 longest contiguous flat run <= 11% of L; R2.2 exactly one interior minimum
+ * and one interior maximum in the plan half-beam curve; R2.3 waist section <= 0.70
+ * of the shoulder's; R2.5 forwardmost station centre below the axis.
+ */
+function auditLines() {
+  return LINE_AUDIT.map(([name, lines, L, exempt]) => {
+    const a = lines.audit(L);
+    const ok = [
+      a.flatRunFrac <= 0.11,
+      exempt ? true : a.minima === 1,
+      a.maxima === 1,
+      exempt ? true : a.waistRatio <= 0.70,
+      a.tipBelowAxis >= L * 0.01,
+    ];
+    return `${name.padEnd(14)} flat ${(a.flatRunFrac * 100).toFixed(1).padStart(5)}%${ok[0] ? ' ' : '!'}`
+      + `  min ${a.minima}${ok[1] ? ' ' : '!'} max ${a.maxima}${ok[2] ? ' ' : '!'}`
+      + `  waist ${a.waistRatio.toFixed(2)}${ok[3] ? ' ' : '!'}`
+      + `  tip -${a.tipBelowAxis.toFixed(1)}m${ok[4] ? ' ' : '!'}`
+      + `  ${ok.every(Boolean) ? (exempt ? 'PASS (exempt: ' + exempt + ')' : 'PASS') : 'FAIL'}`;
+  });
+}
 
 const POI = 'giant-orbit';
 
@@ -42,21 +95,32 @@ const POI = 'giant-orbit';
  */
 const LINEUP = [
   '<cruiser>',
-  'coalition_strikecraft', 'coalition_corvette', 'coalition_frigate', 'coalition_destroyer',
-  'concord_destroyer', 'concord_frigate', 'concord_corvette', 'concord_strikecraft',
+  'coalition_strikecraft', 'coalition_corvette', 'coalition_frigate',
+  'coalition_monitor', 'coalition_destroyer', 'coalition_carrier',
+  'concord_tender', 'concord_destroyer', 'concord_escort', 'concord_frigate',
+  'concord_corvette', 'concord_strikecraft',
 ];
 
-/** Silhouette sheet, row-major. Nine cells, nine classes. */
+/**
+ * Silhouette sheet, row-major. One row per navy plus a row of the small stuff.
+ *
+ * The grid grew from 3x3 to 5 columns because the fleet grew from nine classes to
+ * thirteen, and the whole value of this sheet is that EVERY class is on it at once:
+ * a pair you cannot tell apart is only visible if the pair is in the same picture.
+ * The two navies are on adjacent rows and in ascending size order, so each cell has
+ * its cross-faction opposite directly above or below it - which is the comparison
+ * the acceptance criterion is actually about.
+ */
 const SHEET = [
-  ['coalition_corvette', 'coalition_frigate', 'coalition_destroyer'],
-  ['concord_corvette', 'concord_frigate', 'concord_destroyer'],
+  ['coalition_corvette', 'coalition_frigate', 'coalition_monitor', 'coalition_destroyer', 'coalition_carrier'],
+  ['concord_corvette', 'concord_frigate', 'concord_escort', 'concord_destroyer', 'concord_tender'],
   ['coalition_strikecraft', 'concord_strikecraft', 'derelict_ancient_hulk'],
 ];
 
 /** Every silhouette is drawn at this length. The audit is about shape. */
-const SHEET_LENGTH = 250;
-const SHEET_COL = 330;
-const SHEET_ROW = 175;
+const SHEET_LENGTH = 200;
+const SHEET_COL = 250;
+const SHEET_ROW = 190;
 
 /**
  * `lineup` is a near-plan view on purpose: length differences are the point, and a
@@ -84,7 +148,8 @@ function measure(def, rng) {
 }
 
 /**
- * The 1400 m player cruiser, as a plain box with the mandatory 6 m running lights.
+ * The 1400 m player cruiser, as a plain box with the mandatory running lights at
+ * SCALE_CUE.runningLightSpacingM.
  * It is deliberately NOT the real cruiser hull: this probe is a test of the faction
  * ships' scale, and a detailed cruiser beside them would be the thing being looked
  * at. A box that is honestly 1400 x 300 x 200 m is the reference.
@@ -128,7 +193,9 @@ function cruiserReference(registry) {
   for (const side of [-1, 1]) {
     const geo = new THREE.PlaneGeometry(stripLen, 8);
     const uv = geo.attributes.uv;
-    for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * stripLen);
+    // Same U contract as the fleet's chineStrip: hull metres scaled into texture
+    // metres, so the RULER is graduated in the same units as the things it measures.
+    for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * stripLen * LIGHT_U_PER_M);
     uv.needsUpdate = true;
     const strip = new THREE.Mesh(geo, lightMat);
     strip.rotation.y = side * Math.PI * 0.5;
@@ -191,6 +258,9 @@ export default {
     }
     console.table(table);
     ctx.table = table;
+    const lineRows = auditLines();
+    for (const r of lineRows) console.log('[probe:ships] lines', r);
+    ctx.lineAudit = lineRows;
 
     // =====================================================================
     // SILHOUETTE SHEET
@@ -226,7 +296,7 @@ export default {
           holder.position.set(
             0,
             (1 - r) * SHEET_ROW,
-            (c - 1) * SHEET_COL,
+            (c - (SHEET[r].length - 1) / 2) * SHEET_COL,
           );
           scene.add(holder);
         }
@@ -236,8 +306,8 @@ export default {
       // judging the lens. 9 degrees at 6 km is close enough to parallel.
       camera.fov = 9;
       camera.updateProjectionMatrix();
-      Object.assign(pose, { distance: 6200, pitch: 0.0, yaw: -Math.PI * 0.5 });
-      pose.target.set(0, 0, 0);
+      Object.assign(pose, { distance: 6400, pitch: 0.0, yaw: -Math.PI * 0.5 });
+      pose.target.set(0, 78, 0);
       ctx.spin = false;
 
       const white = new THREE.Color()
@@ -253,10 +323,18 @@ export default {
 
       label(ctx, [
         `SILHOUETTE SHEET — ${viewName === 'top' ? 'PLAN' : 'PROFILE'} — all hulls at ${SHEET_LENGTH} m`,
-        'row 1  Lancet / Ardent / Bulwark        (Coalition)',
-        'row 2  Whipcord / Meridian / Peregrine  (Concord)',
+        'row 1  Lancet / Ardent / Sledge / Bulwark / Anvil     (Coalition)',
+        'row 2  Whipcord / Meridian / Halcyon / Peregrine / Solace  (Concord)',
         'row 3  Bolt / Shrike / Ancient Hulk',
+        '',
+        'HULL-LINE AUDIT  (ship-language.md §2: R2.1 flat run, R2.2 extrema, R2.3 waist, R2.5 tip)',
+        ...lineRows,
       ]);
+      // The divergence block goes at the FOOT of the frame. Appended to the block
+      // above it ran straight through the first row of silhouettes, which is the
+      // same defect as a loadout sheet whose rows overlap: the text is only there
+      // to be read against the picture, so it must not be on top of it.
+      footer(divergenceRows(world));
       return;
     }
 
@@ -363,7 +441,7 @@ export default {
     const worst = table.filter((t) => t.over).map((t) => t.id);
     label(ctx, [
       `FACTION SHIPS — view=${viewName} lod=${lodWant}`,
-      `running lights every ${SCALE.runningLightSpacingM} m on every hull`,
+      `running lights every ${SCALE_CUE.runningLightSpacingM} m on every hull, cruiser included`,
       ...table.map((t) => `${t.id.padEnd(24)} ${String(t.measured).padStart(6)} m  ${String(t.tris).padStart(5)}/${t.budget} tris  ${t.draws} draws`),
       worst.length ? `OVER BUDGET: ${worst.join(', ')}` : 'all classes inside budget',
       '',
@@ -378,6 +456,56 @@ export default {
     if (ctx.spin) ctx.pose.yaw += dt * 0.08;
   },
 };
+
+/**
+ * PAIRWISE CLASS DIVERGENCE, printed on the sheet that makes the claim.
+ *
+ * "Every faction ship class distinguishable from every other" sat at PARTIAL for
+ * two passes on nobody's authority but a look at this picture. Every one of the
+ * seventy-eight pairs is now measured, with both hulls normalised to the sheet's
+ * own 200 m so the comparison is about SHAPE and not about size, against one and
+ * three pixels at ship-language.md's 30 px read. The five closest pairs are printed
+ * because those are the ones a reader should go and check with their own eyes - a
+ * number that passes is a reason to look, not a substitute for looking.
+ */
+function divergenceRows(world) {
+  const REF = SHEET_LENGTH;
+  const sigs = ALL_SHIP_CLASSES.map((def) => ({
+    id: def.id,
+    sig: silhouetteSignature(def.partsFor, world.rng.fork(`sil:${def.id}`)),
+  }));
+  const pairs = [];
+  for (let i = 0; i < sigs.length; i++) {
+    for (let j = i + 1; j < sigs.length; j++) {
+      const d = silhouetteDivergence(sigs[i].sig, sigs[j].sig, REF);
+      pairs.push({
+        a: sigs[i].id, b: sigs[j].id, mean: d.mean, max: d.max,
+        ok: d.mean >= CLASS_DIVERGENCE.mean * REF && d.max >= CLASS_DIVERGENCE.max * REF,
+      });
+    }
+  }
+  pairs.sort((x, y) => x.mean - y.mean);
+  const bad = pairs.filter((p) => !p.ok).length;
+  const name = (id) => id.replace('coalition_', 'C.').replace('concord_', 'N.').replace('derelict_', 'D.');
+  return [
+    `PAIRWISE SILHOUETTE DIVERGENCE — all ${pairs.length} pairs, both hulls at ${REF} m`,
+    `targets: mean >= ${(CLASS_DIVERGENCE.mean * REF).toFixed(1)} m (1 px at the 30 px read)`
+      + `   max >= ${(CLASS_DIVERGENCE.max * REF).toFixed(1)} m (3 px)`,
+    ...pairs.slice(0, 5).map((p) => `  ${(name(p.a) + ' / ' + name(p.b)).padEnd(34)}`
+      + `mean ${p.mean.toFixed(1).padStart(5)}  max ${p.max.toFixed(0).padStart(4)}  ${p.ok ? 'ok' : 'TOO CLOSE'}`),
+    `  worst pair mean ${pairs[0].mean.toFixed(1)}   ${bad ? `${bad} PAIR(S) TOO CLOSE — FAIL` : 'every pair separated — PASS'}`,
+  ];
+}
+
+/** A second, bottom-anchored text block. See the call site for why it exists. */
+function footer(lines) {
+  const div = document.createElement('div');
+  div.style.cssText = 'position:fixed;left:12px;bottom:10px;z-index:11;'
+    + 'font:11px/1.45 ui-monospace,Menlo,monospace;letter-spacing:.09em;text-transform:uppercase;'
+    + 'pointer-events:none;white-space:pre;color:#2a3a44';
+  div.textContent = lines.join('\n');
+  document.body.appendChild(div);
+}
 
 function label(ctx, lines, { align = 'left' } = {}) {
   const el = document.getElementById('label');

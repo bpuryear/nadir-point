@@ -10,7 +10,9 @@
     "preview": "vite preview --port 4173",
     "capture": "node tools/capture.mjs",
     "bench": "node tools/bench.mjs",
-    "smoke": "node tools/smoke.mjs"
+    "smoke": "node tools/smoke.mjs",
+    "uicheck": "node tools/uicheck.mjs",
+    "occlusion": "node tools/occlusion.mjs"
   },
   "dependencies": {
     "three": "^0.185.1"

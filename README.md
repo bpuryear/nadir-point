@@ -97,3 +97,14 @@ ANGLE over SwiftShader. That means:
   fps pass/fail, because a software-rasteriser number would be meaningless.
 
 Run `npm run bench` on the target machine to validate the 60 fps @ 1440p criterion.
+
+---
+
+## Picking this up
+
+[`HANDOFF.md`](HANDOFF.md) is the entry point for continuing the work: what is built,
+what is open in priority order with the blocking pre-work for each, and the traps this
+project already fell into so they are not re-introduced.
+
+[`docs/review/acceptance.md`](docs/review/acceptance.md) is the scorecard, and it is
+written so that PARTIAL means measured-and-short rather than not-yet-looked-at.

@@ -39,9 +39,11 @@ import { EV } from '../core/events.js';
 import { KM } from '../core/units.js';
 import { scratch } from '../core/world.js';
 import { Ship } from '../sim/ship.js';
-import { Wreck } from '../sim/salvage.js';
+import { Wreck, DetachedModule } from '../sim/salvage.js';
 import { pickClass, AI_ROLES } from '../sim/ai/roster.js';
 import { shipStrength } from '../sim/ai/fleetAI.js';
+import { MEV } from '../sim/meta/events.js';
+import { getModule } from '../core/contracts.js';
 
 /** Seconds of sim time per strategic step. Coarse on purpose - this is a war, not a tick. */
 const STEP = 8;
@@ -63,6 +65,87 @@ const TUNING = {
 };
 
 const OTHER = { coalition: 'concord', concord: 'coalition' };
+
+/**
+ * THE SALVAGE LEDGER, AND THE ESCALATION IT DRIVES.
+ *
+ * `closest-comparables.md` §5.2, Product 2. FTL's Rebel Fleet is the canonical version
+ * of "a reason not to farm", and it works because it is *negotiable*: nebula beacons
+ * halve its advance, so the pressure is something you spend against rather than
+ * something that simply happens to you. What we had instead was the opposite of
+ * pressure - the war advances and nothing in it converges on the player, and the entire
+ * pursuit model was `reputation <= -40 starts pickets`.
+ *
+ * So: a per-faction claim, accrued by cutting THEIR hulls in THEIR space, decaying when
+ * you work somewhere else. At thresholds the response escalates. This is better than a
+ * timer for three reasons, all of which are properties of the ledger and not of the
+ * table below:
+ *
+ *   EARNED       a cautious player is never punished. The number only moves because of
+ *                something the player did, and the readout says which thing.
+ *   SPATIAL      decay is multiplied by how far outside that faction's control you are
+ *                working, so "go and strip Concord hulls for a while" is a real answer
+ *                to Coalition attention, and it costs you the other side's berths.
+ *   DIEGETIC     you are stealing. Eventually somebody notices, and the first thing they
+ *                send is a tender to claim the field rather than a hunter to kill you.
+ *
+ * The escalation is a claim, not a vendetta: it does not touch reputation, so the
+ * hostility system and the attention system stay separable. You can be on excellent
+ * terms with Coalition and still have their recovery cutter turn up, because being on
+ * good terms is not a licence to strip their dead.
+ *
+ * THE FOUR-QUESTION TEST (docs/design/scope-decision.md):
+ *
+ *  1. What decision does this create? When to leave a field that is still paying, and
+ *     where to go next. Both were previously free.
+ *  2. What does it interlock with? Salvage (accrual), the control field (accrual and
+ *     decay), travel (a hunter plots to you mid-transit), the anchorages (docking with
+ *     the faction you have been robbing buys the number down - you are paying them),
+ *     and the fleet AI, which does all the actual fighting unchanged.
+ *  3. What does it abstract? The bookkeeping. There is no insurance adjuster, no bounty
+ *     board and no per-hull ownership record: one number per faction, and where you were
+ *     standing when it moved.
+ *  4. Can the player see it? `ledgerStatus()` gives the claim, the tier, the distance to
+ *     the next one and the current decay rate, and the notifications fire at 70% of a
+ *     threshold - before the response, not with it.
+ */
+export const ESCALATION = [
+  {
+    tier: 'tender', at: 110, cooldown: 200,
+    roles: ['corvette', 'corvette'],
+    text: 'RECOVERY TENDER INBOUND — they want the field back',
+  },
+  {
+    tier: 'picket', at: 260, cooldown: 260,
+    roles: ['frigate', 'corvette', 'corvette'],
+    text: 'PICKET DETACHED — they are coming to move you on',
+  },
+  {
+    tier: 'hunter', at: 480, cooldown: 340,
+    roles: ['destroyer', 'frigate'],
+    text: 'HUNTER-KILLER PLOTTING TO YOUR POSITION',
+    plotsToPlayer: true,
+  },
+];
+
+const LEDGER = {
+  /** Claim shed per second at rest, before the spatial multiplier. */
+  decay: 0.55,
+  /** ...multiplied by up to this much when working outside their space entirely. */
+  awayMul: 3.0,
+  /** Claim charged for one cut section, scaled by how much of the place they hold. */
+  perSection: 3.0,
+  perModule: 16.0,
+  perAmmo: 5.0,
+  /** Killing one of their hulls is worth a lot of cutting. */
+  perKill: 30.0,
+  /** Docking at their berth buys this fraction of the claim off. You paid them. */
+  dockRelief: 0.35,
+  /** Warn the player at this fraction of the next threshold. */
+  warnAt: 0.70,
+  /** A response arriving discharges this fraction: they have made their point. */
+  dischargeOnSpawn: 0.30,
+};
 
 /** Per-POI simulation state. */
 export class POIWarState {
@@ -88,6 +171,17 @@ export class POIWarState {
      * @type {{faction:string, role:string, integrity:number, seed:number, age:number}[]}
      */
     this.hulks = [];
+    /**
+     * STRAYS. Modules that came off a hull intact - shot off a mount pad, or ejected by
+     * the player's own crippling - and were left lying here.
+     *
+     * Before this existed, `dematerialise` folded them into `hulks` through the generic
+     * fallback branch, which had no `sourceClass`, so a cannon bank you shot free and
+     * did not collect came back as a whole frigate hulk the next time you visited. They
+     * need their own list because they are a different noun.
+     * @type {{moduleId:string, name:string, faction:string, condition:number, x:number, y:number, z:number}[]}
+     */
+    this.strays = [];
     /** Background debris the field builder scatters, in pieces. */
     this.debris = 0;
     this.materialised = false;
@@ -120,6 +214,18 @@ export class FactionWarSystem {
     this.rng = world.rng.fork('faction-war');
     this._battleRng = this.rng.fork('battles');
     this._spawnRng = this.rng.fork('spawn');
+    this._escalationRng = this.rng.fork('escalation');
+
+    /**
+     * The salvage ledger. One claim per faction, plus which rung of the escalation
+     * table has already been answered and when they may answer again.
+     */
+    this.ledger = {
+      coalition: { claim: 0, tier: -1, cooldown: 0, warned: -1, lastPOI: null, responses: 0 },
+      concord: { claim: 0, tier: -1, cooldown: 0, warned: -1, lastPOI: null, responses: 0 },
+    };
+    /** @type {Object[]} live escalation groups, for the read API. */
+    this.responses = [];
 
     this.name = 'faction-war';
     this.order = 20;
@@ -274,6 +380,7 @@ export class FactionWarSystem {
       time: this.time,
       reputation: { ...this.world.reputation },
       reserve: { ...this.reserve },
+      ledger: this.ledgerStatus(),
       pois,
       battles: this.battles.map((b) => ({ ...b, fleets: undefined, ships: undefined })),
       resolved: this.log.slice(-12),
@@ -368,6 +475,8 @@ export class FactionWarSystem {
       if (st.battleCooldown > 0) st.battleCooldown -= dt;
       for (const h of st.hulks) h.age += dt;
     }
+
+    this._updateLedger(dt);
 
     // --- schedule --------------------------------------------------------
     // Anything ON THE FRONT is attackable, not just anything currently balanced. A war
@@ -788,6 +897,26 @@ export class FactionWarSystem {
       made.push(wreck);
     }
 
+    // Anything intact that was left lying here comes back as exactly what it was.
+    for (const stray of st.strays) {
+      const detached = new DetachedModule({
+        id: `stray:${poiId}:${stray.moduleId}:${made.length}`,
+        name: stray.name ?? getModule(stray.moduleId)?.name ?? 'MODULE',
+        faction: stray.faction ?? 'derelict',
+        moduleId: stray.moduleId,
+        condition: stray.condition,
+        position: new THREE.Vector3(stray.x, stray.y ?? 0, stray.z),
+        velocity: null,
+        radius: 26,
+        rng: rng.fork(`stray:${stray.moduleId}:${made.length}`),
+      });
+      detached.residualHeat = 0;        // it has been out here since you left
+      detached.__warPOI = poiId;
+      detached.__stray = stray;
+      world.addWreck(detached);
+      made.push(detached);
+    }
+
     st.materialised = true;
     return made;
   }
@@ -806,11 +935,33 @@ export class FactionWarSystem {
     const world = this.world;
     const node = st.node;
     const kept = [];
+    const strays = [];
     for (let i = world.wrecks.length - 1; i >= 0; i--) {
       const w = world.wrecks[i];
       const here = w.__warPOI === poiId
         || (w.body?.position && w.body.position.distanceTo(node.position) <= node.radius);
       if (!here) continue;
+      // Hardware the player lost when their own hull went is owned by
+      // `sim/meta/derelict.js`, which keeps it by distance rather than by POI. Touching
+      // it here would record it twice and hand it back twice.
+      if (w.__ownedBySite) continue;
+      // A loose module is not a hull. Recording it as one is how a cannon bank you shot
+      // free became a frigate hulk on your next visit; it keeps its own identity now,
+      // including the condition it was in when you walked away from it.
+      if (w.detachedModule) {
+        const sec = w.sections[0];
+        if (!w.spent && sec?.moduleId) {
+          strays.push({
+            moduleId: sec.moduleId,
+            name: w.name,
+            faction: w.faction,
+            condition: sec.condition,
+            x: w.body.position.x, y: w.body.position.y, z: w.body.position.z,
+          });
+        }
+        world.removeWreck(w);
+        continue;
+      }
       if (!w.spent) {
         kept.push(w.__warRecord ?? {
           faction: w.faction === 'coalition' || w.faction === 'concord' ? w.faction : 'coalition',
@@ -823,6 +974,7 @@ export class FactionWarSystem {
       world.removeWreck(w);
     }
     st.hulks = kept.slice(0, 14);
+    st.strays = strays.slice(0, 12);
     st.materialised = false;
   }
 
@@ -860,7 +1012,8 @@ export class FactionWarSystem {
       this._lastCutFaction = wreck?.faction ?? null;
     });
 
-    this._offSalvage = this.bus.on(EV.SALVAGE_ACQUIRED, ({ section }) => {
+    this._offSalvage = this.bus.on(EV.SALVAGE_ACQUIRED, (e) => {
+      const section = e?.section;
       let faction = this._lastCutFaction;
       if (section) {
         for (const w of world.wrecks) {
@@ -870,6 +1023,25 @@ export class FactionWarSystem {
       if (faction === 'coalition' || faction === 'concord') {
         // Stripping a hull is theft, and both sides know whose hull it was.
         this.adjustReputation(faction, -1.1, 'salvage');
+        const weight = e?.kind === 'module' ? LEDGER.perModule
+          : e?.kind === 'ammo' ? LEDGER.perAmmo
+            : LEDGER.perSection;
+        this.accrueClaim(faction, weight, 'salvage');
+      }
+    });
+
+    // Paying a berth is how you buy attention down. It is not forgiveness, it is a
+    // receipt: you turned up somewhere they run and settled a bill.
+    this._offDock = this.bus.on(MEV.DOCKED, ({ services }) => {
+      const owner = services?.owner;
+      const entry = this.ledger[owner];
+      if (!entry) return;
+      const before = entry.claim;
+      entry.claim *= 1 - LEDGER.dockRelief;
+      if (before - entry.claim > 1) {
+        this.bus.emit(MEV.LEDGER_CHANGED, {
+          faction: owner, claim: entry.claim, delta: entry.claim - before, reason: 'berth',
+        });
       }
     });
 
@@ -880,7 +1052,187 @@ export class FactionWarSystem {
       if (victim !== 'coalition' && victim !== 'concord') return;
       this.adjustReputation(victim, -9, 'kill');
       this.adjustReputation(OTHER[victim], 3, 'enemy-of-my-enemy');
+      this.accrueClaim(victim, LEDGER.perKill, 'kill');
     });
+  }
+
+  // =========================================================================
+  // The salvage ledger
+  // =========================================================================
+
+  /**
+   * Charge a faction's claim against the player.
+   *
+   * Scaled by how much of the place they hold: cutting a Coalition destroyer in
+   * Coalition space is theft in front of them, and cutting the same hull in Concord
+   * space is barely their business. That single multiplier is what makes the pressure
+   * spatially negotiable rather than a timer with a skin on it.
+   */
+  accrueClaim(faction, base, reason = '') {
+    const entry = this.ledger[faction];
+    if (!entry || !(base > 0)) return 0;
+    const player = this.world.player;
+    const share = player ? this._controlShare(faction, player.position.x, player.position.z) : 0.5;
+    const delta = base * (0.30 + 0.70 * share);
+    entry.claim += delta;
+    entry.lastPOI = this.system.containing(player?.position.x ?? 0, player?.position.z ?? 0)?.id ?? null;
+    this.bus.emit(MEV.LEDGER_CHANGED, { faction, claim: entry.claim, delta, reason });
+    return delta;
+  }
+
+  /** 0..1 how much of the control field at a point belongs to this faction. */
+  _controlShare(faction, x, z) {
+    const c = this.controlAtPoint(x, z);
+    return faction === 'coalition' ? (c + 1) * 0.5 : (1 - c) * 0.5;
+  }
+
+  /**
+   * Decay and thresholds. Runs on the strategic step, so it is coarse on purpose - a
+   * response that could arrive on any frame would read as random.
+   */
+  _updateLedger(dt) {
+    const player = this.world.player;
+    // Nobody sends a hunter-killer into their own berth after a ship that is moored at
+    // it. Attention still decays while docked; it just cannot be answered.
+    const docked = !!this.world.systems.travel?.docked;
+    const alive = !!player && !player.dead;
+    const canRespond = alive && !player.crippled && !docked;
+
+    for (const faction of ['coalition', 'concord']) {
+      const entry = this.ledger[faction];
+      if (entry.cooldown > 0) entry.cooldown -= dt;
+
+      // Away from their space, attention fades fast. Sitting in it, it barely fades.
+      const share = alive ? this._controlShare(faction, player.position.x, player.position.z) : 0;
+      const mul = 1 + (1 - share) * (LEDGER.awayMul - 1);
+      if (entry.claim > 0) {
+        entry.claim = Math.max(0, entry.claim - LEDGER.decay * mul * dt);
+      }
+
+      // Re-arm a rung once the claim falls back through it, so the table is a ladder
+      // you can climb twice rather than a set of one-shot triggers.
+      while (entry.tier >= 0 && entry.claim < ESCALATION[entry.tier].at * 0.6) entry.tier--;
+      if (entry.warned > entry.tier + 1) entry.warned = entry.tier;
+
+      const next = ESCALATION[entry.tier + 1];
+      if (!next || !canRespond) continue;
+
+      if (entry.warned <= entry.tier && entry.claim >= next.at * LEDGER.warnAt) {
+        entry.warned = entry.tier + 1;
+        this.bus.emit(EV.NOTIFY, {
+          text: `${faction.toUpperCase()} HAS NOTICED — ${next.tier.toUpperCase()} AT `
+            + `${Math.round(next.at)} CLAIM, YOU ARE AT ${Math.round(entry.claim)}`,
+          important: true,
+        });
+      }
+      if (entry.claim >= next.at && entry.cooldown <= 0) {
+        entry.tier++;
+        entry.cooldown = next.cooldown;
+        entry.responses++;
+        entry.claim -= next.at * LEDGER.dischargeOnSpawn;
+        this._spawnResponse(faction, next);
+      }
+    }
+  }
+
+  /**
+   * Send it. Built on the same three calls the interception path in `travel.js` uses -
+   * `pickClass`, `new Ship`, `fleetAI.create` - so an escalation group is not a special
+   * kind of enemy, it is the fleet AI arriving with a reason.
+   */
+  _spawnResponse(faction, rung) {
+    const player = this.world.player;
+    if (!player) return null;
+    const rng = this._escalationRng.fork(`${faction}:${rung.tier}:${this.ledger[faction].responses}`);
+
+    // A tender or a picket comes to the FIELD; a hunter comes to YOU.
+    const here = this.system.containing(player.position.x, player.position.z);
+    const anchor = rung.plotsToPlayer || !here ? player.position : here.position;
+    const bearing = rung.plotsToPlayer
+      ? Math.atan2(player.velocity.x, player.velocity.z) + Math.PI
+      : rng.range(0, Math.PI * 2);
+    const standoff = rung.plotsToPlayer ? rng.range(11000, 16000) : rng.range(17000, 26000);
+
+    const fleet = this.fleetAI?.create({
+      faction, anchor: new THREE.Vector3(anchor.x, 0, anchor.z), poiId: here?.id ?? null,
+    }) ?? null;
+    if (fleet) fleet.stance = 'engage';
+
+    const group = { faction, tier: rung.tier, at: this.time, poiId: here?.id ?? null, ships: [] };
+    for (let i = 0; i < rung.roles.length; i++) {
+      const classDef = pickClass(faction, rung.roles[i]);
+      if (!classDef) continue;
+      const spread = (i - (rung.roles.length - 1) * 0.5) * 1300;
+      const s = Math.sin(bearing), c = Math.cos(bearing);
+      const ship = new Ship({
+        classDef,
+        world: this.world,
+        faction,
+        position: new THREE.Vector3(
+          anchor.x + s * standoff + c * spread,
+          0,
+          anchor.z + c * standoff - s * spread,
+        ),
+        heading: bearing + Math.PI + rng.signed() * 0.2,
+        root: this._buildRoot(classDef, faction, rng),
+      });
+      ship.__escalation = rung.tier;
+      this.world.addShip(ship);
+      const ai = ship.ai ?? this.shipAI?.adopt(ship, { fleet });
+      if (ai && fleet) { ai.fleet = fleet; fleet.add(ship); }
+      group.ships.push(ship);
+    }
+    this.responses.push(group);
+    if (this.responses.length > 8) this.responses.shift();
+
+    // Somebody turning up to claim a field they own is a patrol, so it raises heat here.
+    if (here) this.bumpHeat(here.id, 0.12);
+
+    this.bus.emit(MEV.ESCALATION, {
+      faction, tier: rung.tier, poiId: here?.id ?? null,
+      ships: group.ships.length, claim: this.ledger[faction].claim,
+    });
+    this.bus.emit(EV.NOTIFY, { text: `${faction.toUpperCase()} — ${rung.text}`, important: true });
+    return group;
+  }
+
+  /**
+   * READ API — the attention panel.
+   *
+   * Everything the player needs to answer "how long can I keep working here": the claim,
+   * what it is buying them, how far the next rung is, and - the useful one - how fast it
+   * is currently falling, which is a direct readout of the spatial decision.
+   */
+  ledgerStatus() {
+    const player = this.world.player;
+    const out = [];
+    for (const faction of ['coalition', 'concord']) {
+      const entry = this.ledger[faction];
+      const share = player ? this._controlShare(faction, player.position.x, player.position.z) : 0.5;
+      const decayPerSecond = LEDGER.decay * (1 + (1 - share) * (LEDGER.awayMul - 1));
+      const next = ESCALATION[entry.tier + 1] ?? null;
+      out.push({
+        faction,
+        claim: entry.claim,
+        tier: entry.tier >= 0 ? ESCALATION[entry.tier].tier : null,
+        next: next ? next.tier : null,
+        nextAt: next ? next.at : null,
+        toNext: next ? Math.max(0, next.at - entry.claim) : null,
+        secondsToNext: next && decayPerSecond > 0
+          ? (entry.claim >= next.at ? 0 : null)
+          : null,
+        decayPerSecond,
+        theirSpace: share,
+        cooldown: Math.max(0, entry.cooldown),
+        responses: entry.responses,
+        /** The sentence a HUD prints verbatim. */
+        text: next
+          ? `${Math.round(entry.claim)} / ${next.at} to ${next.tier.toUpperCase()} `
+            + `· shedding ${decayPerSecond.toFixed(2)}/s`
+          : `${Math.round(entry.claim)} · everything they have is already out`,
+      });
+    }
+    return out;
   }
 
   /**
@@ -912,6 +1264,7 @@ export class FactionWarSystem {
     this._offCut?.();
     this._offSalvage?.();
     this._offKill?.();
+    this._offDock?.();
   }
 
   // =========================================================================

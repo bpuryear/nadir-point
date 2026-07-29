@@ -36,9 +36,17 @@
  * with its muzzle out along +Z. A dorsal turret has its ring at y = 0 and its mass
  * above it.
  *
- * The attachment system simply does `socket.add(object)`. No rotation is applied.
- * If your module looks wrong on the hull, your module is authored wrong - do not
- * "fix" it by rotating it at the call site.
+ * The attachment system does `socket.add(object)` and then applies ONE fixed seating
+ * transform per mount - a 7 m standoff along the outward normal and a 3-7 degree
+ * tilt, both derived from the mount id and therefore identical on every run. See
+ * "SEATING" below for why. It is not a correction and you must not pre-compensate
+ * for it: author your module square, with its origin at the mount point, and the
+ * system will sit it proud and slightly crooked because that is what a hull of
+ * bolted-on salvage looks like. If your module looks wrong on the hull beyond that,
+ * your module is authored wrong - do not "fix" it by rotating it at the call site.
+ *
+ * A module that must seat flush and square (a drive that plugs into the drive well,
+ * a ring that has to be concentric with something) sets `def.rigidMount = true`.
  *
  * `def.normal` tells you which way is OUTBOARD for that mount, so you know which
  * direction your mass should grow. It is documentation, not a transform.
@@ -98,6 +106,7 @@
 
 import * as THREE from 'three';
 import { HARDPOINTS } from '../../core/contracts.js';
+import { RNG } from '../../core/rng.js';
 import { mirrorGeometryX } from './greeble.js';
 
 // ---------------------------------------------------------------------------
@@ -106,12 +115,24 @@ import { mirrorGeometryX } from './greeble.js';
 // visible socket and the logical socket cannot drift apart.
 // ---------------------------------------------------------------------------
 
+/**
+ * The mounts moved with the 2025 hull rebuild (see cruiser.js). Nothing about the
+ * CONTRACT changed - a module is still authored in ship-space orientation with its
+ * origin at the mount point, and moving an anchor simply moves the module with it.
+ * What changed is that the six anchors now sit on six real, structurally distinct
+ * parts of the ship, and that PORT AND STARBOARD ARE NO LONGER MIRRORS: the port
+ * sponson owns z +18..+102 and the starboard one z -152..-68, so a fully fitted hull
+ * is never bilaterally symmetric. That is a deliberate salvager read, not an
+ * oversight, and the mirroring machinery in this file handles it unchanged.
+ */
 export const CRUISER_ANCHORS = {
-  bow: [0, 100, 470],       // forward turret bed on top of the prow casemate
-  dorsal: [0, 130, 270],    // raised barbette between the tower and the casemate
-  ventral: [0, -66, -10],   // ceiling of the salvage cradle, module hangs down
-  port: [-152, 22, 48],     // top face of the port sponson shelf
-  starboard: [152, 22, 48],
+  bow: [0, 32, 420],        // the foredeck, ahead of the armour spine, on the sheer
+  dorsal: [0, 94, -40],     // top of the raised dorsal armour spine, over the shoulder
+  ventral: [0, -78, 0],     // roof of the salvage bay throat; the module hangs down
+  port: [-158, 46, 60],     // top face of the port sponson shelf, and the sponson
+                            // sits on the salvage cradle's second transverse frame
+  starboard: [158, 46, -110], // 170 m further aft than port, on purpose, and on the
+                              // cradle's fourth frame
   engine: [0, 0, -624],     // end plate of the empty main drive well
 };
 
@@ -257,6 +278,63 @@ export function createSockets(root) {
 }
 
 // ---------------------------------------------------------------------------
+// SEATING — the service gap and the seeded misalignment
+//
+// Two transforms, applied by the system rather than by the module author, that
+// together are the difference between "a bump on the hull" and "something a crew
+// bolted on":
+//
+//   THE SERVICE GAP. The module stands SEAT_STANDOFF metres proud of its anchor,
+//   which is exactly the height of the empty mount's bolt ring, so the ring becomes
+//   the visible foot the module sits on and the gap between module and hull is open.
+//   That gap is a dark line separating the module's value from the hull's, which is
+//   what makes it read as a SEPARATE OBJECT at three kilometres rather than as a
+//   swelling. It also fixes an old bug quietly: modules used to be authored with
+//   their base at y = 0 and then sunk nine metres into the mount pad.
+//
+//   THE MISALIGNMENT. A fixed 3-7 degree tilt about an axis perpendicular to the
+//   mount normal, seeded from the socket id so a given mount always leans the same
+//   way and a seed reproduces exactly. Nothing on this ship left a yard as a set;
+//   a module that lines up perfectly reads as design, and design is what this hull
+//   is not. It is deliberately small enough not to change a firing arc - arcs come
+//   from `def.yawCentre`, which is data, not from the object's transform.
+//
+// A module that genuinely must seat flush (a drive that plugs into the drive well,
+// a ring that has to be concentric) opts out with `def.rigidMount = true`.
+// ---------------------------------------------------------------------------
+
+/** Metres a module stands proud of its anchor. Matches the bolt-ring height. */
+export const SEAT_STANDOFF = 7;
+
+const _seatCache = new Map();
+
+/**
+ * The fixed seating transform for a mount: a translation along the outward normal
+ * and a small rotation about an axis perpendicular to it. Computed once per mount.
+ *
+ * @param {string} id
+ * @returns {{offset: THREE.Vector3, quaternion: THREE.Quaternion}}
+ */
+export function seatingFor(id) {
+  let seat = _seatCache.get(id);
+  if (seat) return seat;
+  const def = hardpointDef(id);
+  const n = new THREE.Vector3(def.normal[0], def.normal[1], def.normal[2]).normalize();
+  // Perpendicular axis: cross with whichever cardinal the normal is least parallel to.
+  const ref = Math.abs(n.z) > 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
+  const axis = new THREE.Vector3().crossVectors(n, ref).normalize();
+  const rng = new RNG(`mount:${id}`);
+  const angle = rng.range(0.052, 0.122);          // 3.0 to 7.0 degrees, never zero
+  const spin = rng.bool() ? 1 : -1;
+  seat = {
+    offset: n.clone().multiplyScalar(SEAT_STANDOFF),
+    quaternion: new THREE.Quaternion().setFromAxisAngle(axis, angle * spin),
+  };
+  _seatCache.set(id, seat);
+  return seat;
+}
+
+// ---------------------------------------------------------------------------
 // Mirroring
 // ---------------------------------------------------------------------------
 
@@ -339,6 +417,16 @@ export function attachModule(hullResult, hardpointId, moduleDef, ctx) {
   object.userData.hardpoint = hardpointId;
   object.userData.mirrored = mirrored;
   if (mirrored) mirrorX(object);
+
+  // Seat it: proud of the hull on the bolt ring, and never quite square. Mirroring
+  // runs first so the misalignment is applied in socket space and port/starboard
+  // therefore lean in genuinely different directions rather than in mirror image.
+  if (!moduleDef.rigidMount) {
+    const seat = seatingFor(hardpointId);
+    object.position.add(seat.offset);
+    object.quaternion.premultiply(seat.quaternion);
+    object.userData.seated = true;
+  }
 
   object.traverse((o) => {
     if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }

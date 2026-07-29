@@ -22,7 +22,7 @@
  */
 
 import * as THREE from 'three';
-import { createMaterialRegistry } from '../art/materials/index.js';
+import { createMaterialRegistry, MATERIAL_KEYS } from '../art/materials/index.js';
 import { textCanvas } from '../art/textures/decals.js';
 import { getPOIPalette, getFactionPalette, NEUTRAL } from '../art/palette.js';
 import { SCALE, TextureFactory } from '../art/textures/index.js';
@@ -30,21 +30,31 @@ import { RNG } from '../core/rng.js';
 
 const FACTION_ROWS = ['coalition', 'concord', 'derelict', 'player'];
 
-const COLUMNS = [
-  { key: 'hull', label: 'HULL' },
-  { key: 'hullDark', label: 'HULLDARK' },
-  { key: 'plating', label: 'PLATING' },
-  { key: 'greeble', label: 'GREEBLE' },
-  { key: 'trim', label: 'TRIM' },
-  { key: 'damaged', label: 'DAMAGED' },
-  { key: 'derelictHull', label: 'DERELICT' },
-  { key: 'debris', label: 'DEBRIS' },
-  { key: 'asteroid', label: 'ASTEROID' },
-  { key: 'glass', label: 'GLASS' },
-  { key: 'emissive', label: 'EMISSIVE' },
-  { key: 'engineGlow', label: 'ENGINE' },
-  { key: 'runningLights', label: 'LIGHTS' },
+/**
+ * COLUMNS ARE DERIVED FROM THE REGISTRY, NOT TYPED OUT HERE.
+ *
+ * Round-two review, MODERATE: "The same sheet still shows HULLDARK and TRIM as
+ * separate surfaces after D12 records TRIM as deleted ... A review sheet that
+ * misreports the build is worse than no sheet, because it is what the next reviewer
+ * will quote." It was right, and a hardcoded column list guarantees it will happen
+ * again the next time a key is added or retired.
+ *
+ * `MATERIAL_KEYS` is the registry's own declaration, so this chart now cannot show a
+ * surface the build does not have, and cannot omit one it does — the `radiator` key
+ * added this pass appeared here without anyone editing this file. `ORDER` only
+ * decides the left-to-right sequence; anything the registry declares and this list
+ * does not name is appended rather than dropped.
+ */
+const ORDER = [
+  'hull', 'plating', 'hullDark', 'greeble', 'radiator', 'trim',
+  'damaged', 'derelictHull', 'debris', 'asteroid', 'glass',
+  'emissive', 'engineGlow', 'runningLights',
 ];
+const LABELS = { derelictHull: 'DERELICT', engineGlow: 'ENGINE', runningLights: 'LIGHTS' };
+const COLUMNS = [
+  ...ORDER.filter((k) => MATERIAL_KEYS.includes(k)),
+  ...MATERIAL_KEYS.filter((k) => !ORDER.includes(k) && k !== 'decal'),
+].map((key) => ({ key, label: (LABELS[key] ?? key).toUpperCase() }));
 
 const CELL = 96;
 const COL_X = (c) => (c - (COLUMNS.length - 1) / 2) * CELL;
@@ -137,7 +147,18 @@ export default {
     // objects with no shared contact surfaces it contributes almost nothing - the
     // baked cavity AO in the ORM map is doing that work already.
     renderer.post.gtao.enabled = false;
-    renderer.renderer.toneMappingExposure = 1.18;
+    /**
+     * EXPOSURE 1.0, NOT 1.18, AND IT MUST STAY THAT WAY.
+     *
+     * This was 1.18 to lift a chart that measured dark, which was the wrong lever:
+     * the chart measured dark because the POI keys were calibrated to put a fully lit
+     * face at 0.57 instead of 0.76 (see palette.js#giant-orbit). Now that the keys
+     * are solved, a probe running its own exposure would be showing the material at a
+     * stop the game never uses — and the whole reason this probe reads its light out
+     * of the POI palette rather than making one up is that a probe which does not use
+     * the game's numbers cannot verify anything.
+     */
+    renderer.renderer.toneMappingExposure = 1.0;
     // A chart is not a shot: the shipping vignette pulls the outer columns two
     // stops down and they cannot be compared with the middle ones.
     renderer.post.grade.uniforms.vignette.value = 0.16;
@@ -306,7 +327,7 @@ export default {
       [scorchTex.texture, 'SCORCH STAMP'],
       [burnt.userData.maps.map, 'SCORCH ON HULL'],
       [decalSheet.texture, 'DECALS'],
-      [lights.texture, 'LIGHTS 6M'],
+      [lights.texture, `LIGHTS ${SCALE.runningLightSpacingM}M`],
     ];
 
     const quad = new THREE.PlaneGeometry(1, 1);

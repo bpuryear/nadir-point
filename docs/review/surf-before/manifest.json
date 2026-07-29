@@ -1,0 +1,95 @@
+[
+  {
+    "id": "close",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.1416,
+      "contrast": 0.2482,
+      "clippedPct": 0,
+      "nearBlackPct": 73.55
+    },
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/surf-before/close.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 21.300000000745058,
+      "stepMs": 0.8000000007450581,
+      "renderMs": 10,
+      "steps": 6,
+      "calls": 131,
+      "triangles": 72627,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 71,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "three-quarter",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0649,
+      "contrast": 0.1373,
+      "clippedPct": 0,
+      "nearBlackPct": 71.26
+    },
+    "description": "Mid tactical range, raking key. The everyday playing view. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/surf-before/three-quarter.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 22.399999998509884,
+      "stepMs": 0.6999999992549419,
+      "renderMs": 8.699999999254942,
+      "steps": 6,
+      "calls": 134,
+      "triangles": 95171,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 71,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "wide",
+    "ok": false,
+    "warnings": [
+      "FRAME IS FLAT OR EMPTY (contrast < 0.02)",
+      "FRAME IS ESSENTIALLY BLACK (>97% near-black)"
+    ],
+    "frame": {
+      "meanLuma": 0.0106,
+      "contrast": 0.0165,
+      "clippedPct": 0,
+      "nearBlackPct": 98.48
+    },
+    "description": "Maximum tactical zoom. Cruiser a bright speck against the gas giant. The shot that sells the game.",
+    "hud": true,
+    "file": "docs/review/surf-before/wide.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 12.200000000011642,
+      "stepMs": 0.6999999992549419,
+      "renderMs": 3.600000001490116,
+      "steps": 6,
+      "calls": 100,
+      "triangles": 65821,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 63,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

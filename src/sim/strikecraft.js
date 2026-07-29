@@ -28,7 +28,7 @@ export class StrikeCraft extends Ship {
     this.state = 'launching';   // launching | forming | engaging | returning | docked
     this.stateTimer = 0;
     this.fuel = 1;
-    this.orbitPhase = Math.random === undefined ? 0 : 0; // set by the squad, never Math.random
+    this.orbitPhase = 0;   // the squad assigns this from its own seeded fork on launch
   }
 }
 

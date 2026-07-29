@@ -102,6 +102,33 @@ export class PowerPlant {
     if (p) this.setAll(p);
   }
 
+  /**
+   * WASTE HEAT, by channel.
+   *
+   * Every channel you draw on dumps heat into the same hull, and weapons dump the most.
+   * This is the coupling that makes the power widget cut both ways: routing to weapons
+   * buys rate of fire and immediately makes the mounts harder to keep cool, while a
+   * defensive or running routing sustains fire for far longer than an assault one. See
+   * sim/heat.js, which reads these two numbers and nothing else from the plant.
+   */
+  static CHANNEL_HEAT = { weapons: 1.0, shields: 0.6, engines: 0.5, sensors: 0.3 };
+
+  /** 0.3..1.0 - how much of the reactor's output is being turned into heat. */
+  get thermalLoad() {
+    const weights = PowerPlant.CHANNEL_HEAT;
+    let load = 0;
+    for (const ch of POWER_CHANNELS) {
+      const share = this.unlocked ? (this.actual[ch] ?? 0) : 1 / POWER_CHANNELS.length;
+      load += share * (weights[ch] ?? 0.5);
+    }
+    return load;
+  }
+
+  /** 0.25..0.95 - radiator capacity left over. Mount cooling scales with this. */
+  get radiatorMargin() {
+    return Math.max(0.25, Math.min(0.95, 1.25 - this.thermalLoad));
+  }
+
   /** Reactor subsystem damage. 0 = dead reactor, 1 = healthy. */
   setHealthFactor(f) {
     const clamped = Math.max(0, Math.min(1, f));
@@ -130,7 +157,14 @@ export class PowerPlant {
 
   /** Snapshot for the UI. */
   snapshot() {
-    const out = { capacity: this.capacity, healthFactor: this.healthFactor, unlocked: this.unlocked, channels: {} };
+    const out = {
+      capacity: this.capacity,
+      healthFactor: this.healthFactor,
+      unlocked: this.unlocked,
+      thermalLoad: this.thermalLoad,
+      radiatorMargin: this.radiatorMargin,
+      channels: {},
+    };
     for (const ch of POWER_CHANNELS) {
       out.channels[ch] = {
         target: this.target[ch],

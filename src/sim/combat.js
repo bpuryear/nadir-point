@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { EV } from '../core/events.js';
 import { scratch } from '../core/world.js';
 import { interceptPoint, raySphere } from './physics.js';
+import { fireRateMul, damageMul, misfeedChance, MISFEED_STALL } from './condition.js';
+import { THERMAL } from './heat.js';
 
 /**
  * Combat resolution.
@@ -36,6 +38,8 @@ export class ProjectilePool {
     this.tracking = new Float32Array(capacity); // >0 means it steers (missiles)
     this.targetRef = new Array(capacity).fill(null);
     this.subsystemRef = new Array(capacity).fill(null);
+    /** Second-tier aim point: which sub-part of the aimed module this shot wants. */
+    this.partRef = new Array(capacity).fill(null);
     this.sourceRef = new Array(capacity).fill(null);
     this.accuracy = new Float32Array(capacity);
   }
@@ -58,10 +62,12 @@ export class ProjectilePool {
       this.accuracy[i] = this.accuracy[last];
       this.targetRef[i] = this.targetRef[last];
       this.subsystemRef[i] = this.subsystemRef[last];
+      this.partRef[i] = this.partRef[last];
       this.sourceRef[i] = this.sourceRef[last];
     }
     this.targetRef[last] = null;
     this.subsystemRef[last] = null;
+    this.partRef[last] = null;
     this.sourceRef[last] = null;
   }
 }
@@ -104,7 +110,9 @@ export class CombatSystem {
     const hasTarget = target && !target.dead;
 
     for (const mount of ship.weapons) {
-      if (!mount.online) continue;
+      if (!mount.online || !mount.usable) continue;
+      // A misfeed from a worn feed is a stall you can watch on the weapon strip.
+      if (mount.stall > 0) continue;
 
       // Point defence picks its own target - it is reactive, not commanded.
       const isPD = mount.def.type === 'pd' || mount.def.type === 'flak';
@@ -137,16 +145,37 @@ export class CombatSystem {
       // Weapons draw from the power pool. Starve them and they fire slowly.
       const powerFactor = ship.power.unlocked ? Math.max(0.25, ship.power.factor('weapons')) : 1;
 
+      // Three multipliers on the same cadence, from three different systems:
+      // power routing, the module's condition, and whether its feed still works.
+      const cadence = Math.max(0.05, powerFactor * fireRateMul(mount.condition) * mount.parts.fireRateMul);
+
       if (mount.burstRemaining > 0) {
         if (mount.burstTimer <= 0) {
-          this._fire(ship, mount, lead, aimShip);
-          mount.burstRemaining--;
-          mount.burstTimer = mount.def.burstInterval / powerFactor;
+          // Stores are checked per shot, not per burst: running dry mid-burst is a
+          // thing that happens and the player should see the burst cut short.
+          if (!ship.stores || ship.stores.consumeShot(mount)) {
+            this._fire(ship, mount, lead, aimShip, powerFactor);
+            mount.burstRemaining--;
+            mount.burstTimer = mount.def.burstInterval / cadence;
+          } else {
+            mount.burstRemaining = 0;
+            mount.cooldown = Math.max(mount.cooldown, 0.5);
+          }
         }
       } else if (mount.cooldown <= 0) {
+        if (ship.stores && ship.stores.blockedReason(mount)) continue;
+        // Worn feeds jam. Rolled once per burst so it reads as "this gun jams
+        // sometimes" rather than "this gun is broken" - see condition.js.
+        const jam = misfeedChance(mount.condition);
+        if (jam > 0 && this.rng.next() < jam) {
+          mount.stall = MISFEED_STALL;
+          mount.cooldown = MISFEED_STALL;
+          this.bus.emit(EV.NOTIFY, { text: `${mount.def.name ?? 'MOUNT'} MISFEED`, ship, mount });
+          continue;
+        }
         mount.burstRemaining = mount.def.shotsPerBurst;
         mount.burstTimer = 0;
-        mount.cooldown = mount.def.cooldown / powerFactor;
+        mount.cooldown = mount.def.cooldown / cadence;
       }
     }
   }
@@ -175,14 +204,28 @@ export class CombatSystem {
     return hostile ? { point: hostile.position, ship: hostile } : null;
   }
 
-  _fire(ship, mount, aimPoint, targetShip) {
+  /**
+   * One shot.
+   *
+   * Heat is added here and nowhere else, so "how much did that burst cost me" has
+   * exactly one answer. Condition scales muzzle energy; heat scales dispersion and
+   * ruins the fire solution, which means a mount held past its soft cap stops being a
+   * precision instrument - it still does damage, it just stops hitting what you aimed
+   * at. That is the interlock that makes overheating cost you SALVAGE, not just DPS.
+   */
+  _fire(ship, mount, aimPoint, targetShip, powerFactor = 1) {
     const def = mount.def;
+    ship.thermal?.onShot(mount, powerFactor);
+    const stress = mount.thermal ? mount.thermal.stress : 0;
+    const damage = def.damage * damageMul(mount.condition);
+
     this.bus.emit(EV.WEAPON_FIRED, {
       ship, mount, origin: mount.worldPosition, aimPoint, type: def.type,
+      heat: mount.thermal ? mount.thermal.heat : 0,
     });
 
     if (HITSCAN.has(def.type)) {
-      this._resolveHitscan(ship, mount, aimPoint, targetShip);
+      this._resolveHitscan(ship, mount, aimPoint, targetShip, damage, stress);
       return;
     }
 
@@ -191,8 +234,9 @@ export class CombatSystem {
     if (i < 0) return;
 
     const dir = scratch.v3.copy(aimPoint).sub(mount.worldPosition).normalize();
-    // Dispersion: cheap weapons scatter, precision weapons do not.
-    const spread = def.spread ?? 0.004;
+    // Dispersion: cheap weapons scatter, precision weapons do not, and a mount held
+    // above its thermal soft cap scatters like a cheap one however good it is.
+    const spread = (def.spread ?? 0.004) * (1 + stress * 2.4);
     dir.x += this.rng.signed() * spread;
     dir.y += this.rng.signed() * spread * 0.6;
     dir.z += this.rng.signed() * spread;
@@ -205,17 +249,18 @@ export class CombatSystem {
     p.vy[i] = dir.y * def.projectileSpeed + ship.velocity.y;
     p.vz[i] = dir.z * def.projectileSpeed + ship.velocity.z;
     p.life[i] = def.range / def.projectileSpeed * 1.35;
-    p.damage[i] = def.damage;
+    p.damage[i] = damage;
     p.kind[i] = PROJECTILE_KINDS.indexOf(def.type === 'missile' ? 'missile' : def.type === 'rail' ? 'railslug' : def.type === 'flak' ? 'flak' : def.type === 'pd' ? 'pdslug' : 'slug');
     p.faction[i] = this.factionId(ship.faction);
     p.tracking[i] = def.type === 'missile' ? (def.tracking ?? 1.2) : 0;
-    p.accuracy[i] = def.subsystemAccuracy ?? 0.65;
+    p.accuracy[i] = (def.subsystemAccuracy ?? 0.65) * (1 - stress * 0.6);
     p.targetRef[i] = targetShip ?? null;
     p.subsystemRef[i] = ship.targetSubsystem ?? null;
+    p.partRef[i] = ship.targetPart ?? null;
     p.sourceRef[i] = ship;
   }
 
-  _resolveHitscan(ship, mount, aimPoint, targetShip) {
+  _resolveHitscan(ship, mount, aimPoint, targetShip, damage, stress) {
     const origin = mount.worldPosition;
     const dir = scratch.v3.copy(aimPoint).sub(origin);
     const maxDist = Math.min(dir.length(), mount.def.range);
@@ -238,11 +283,12 @@ export class CombatSystem {
       // Beams are precise: they hit what they were aimed at far more reliably than
       // a shell does, which is why they are the salvager's weapon.
       hitSub = ship.targetSubsystem;
-      hitShip.applyDamage(mount.def.damage, {
+      hitShip.applyDamage(damage, {
         subsystemId: hitSub,
+        partId: ship.targetPart ?? null,
         point: end,
         source: ship,
-        accuracy: mount.def.subsystemAccuracy ?? 0.92,
+        accuracy: (mount.def.subsystemAccuracy ?? 0.92) * (1 - stress * 0.6),
         rng: this.rng,
       });
       this.bus.emit(EV.PROJECTILE_IMPACT, { point: end.clone(), target: hitShip, type: mount.def.type, source: ship });
@@ -304,6 +350,7 @@ export class CombatSystem {
       if (hit) {
         hit.ship.applyDamage(p.damage[i], {
           subsystemId: p.subsystemRef[i],
+          partId: p.partRef[i],
           point: hit.point,
           source: p.sourceRef[i],
           accuracy: p.accuracy[i],
@@ -331,7 +378,7 @@ export class CombatSystem {
     const point = target?.worldPosition ?? target?.position ?? target;
     if (!point) return false;
     for (const m of fromShip.weapons) {
-      if (!m.online) continue;
+      if (!m.usable) continue;
       if (m.def.type === 'pd') continue; // point defence is not a commandable weapon
       if (m.canBear(fromShip.position, fromShip.heading, point)) return true;
     }
@@ -349,13 +396,29 @@ export class CombatSystem {
     let bearing = 0;
     let total = 0;
     let minError = Infinity;
+    let ready = 0;
+    let hot = 0;
+    let dry = 0;
     for (const m of fromShip.weapons) {
-      if (!m.online || m.def.type === 'pd') continue;
+      if (m.def.type === 'pd') continue;
       total++;
-      if (m.canBear(fromShip.position, fromShip.heading, point)) bearing++;
-      else minError = Math.min(minError, m.arcError(fromShip.heading, point));
+      if (!m.usable) {
+        if (m.offlineReason === 'heat') hot++;
+        continue;
+      }
+      const blocked = fromShip.stores ? fromShip.stores.blockedReason(m) : null;
+      if (blocked === 'DRY') dry++;
+      if (m.canBear(fromShip.position, fromShip.heading, point)) {
+        bearing++;
+        if (!blocked) ready++;
+      } else {
+        minError = Math.min(minError, m.arcError(fromShip.heading, point));
+      }
     }
-    return { bearing, total, minError: bearing > 0 ? 0 : minError };
+    // `bearing` is how many mounts can SEE it; `ready` is how many can actually shoot
+    // it right now. The gap between those two numbers is the stores and heat systems
+    // showing up in the one readout the player already watches.
+    return { bearing, ready, hot, dry, total, minError: bearing > 0 ? 0 : minError };
   }
 
   /** For the tactical overlay: every arc on a ship, as world-space wedge descriptions. */
@@ -364,11 +427,17 @@ export class CombatSystem {
     for (const m of ship.weapons) {
       out.push({
         origin: m.worldPosition,
-        centre: ship.heading + m.yawCentre,
-        width: m.yawWidth,
+        centre: ship.heading + m.yawCentre + m.arcOffset,
+        width: m.halfArc * 2,
         range: m.def.range,
         type: m.def.type,
         online: m.online,
+        usable: m.usable,
+        offlineReason: m.offlineReason,
+        frozen: m.parts.traverseFrozen,
+        heat: m.thermal ? m.thermal.heat : 0,
+        condition: m.condition,
+        blocked: ship.stores ? ship.stores.blockedReason(m) : null,
         bearing: !!(ship.target && !ship.target.dead && m.canBear(ship.position, ship.heading, ship.target.position)),
       });
     }

@@ -1,15 +1,28 @@
 /**
  * DORSAL MODULES — the raised barbette between the bridge tower and the casemate.
  *
- * Mount is at [0, 130, 270], sitting on a 166 x 110 m plinth whose surrounding deck
- * is 72 m BELOW the mount. Two consequences an author has to design for:
+ * Mount is at hardpoints.js#CRUISER_ANCHORS.dorsal = [0, 94, -40] - the top of the
+ * raised dorsal armour spine, over the shoulder. (This header said [0, 130, 270]
+ * until the hull rebuild moved it; the anchors are the single source of truth and
+ * this comment is not, so trust that constant, not this sentence.) The module sits
+ * on a plinth whose surrounding deck is about 30 m below the mount plane.
+ *
+ * Three consequences an author has to design for:
  *
  *   - a module wider than ~166 m OVERHANGS the plinth, which is good (it breaks the
  *     outline) but has to be shown to be carried: hence the down-struts on the rail
  *     battery and the missile raft. Unsupported overhang reads as a bug.
- *   - the bridge tower tops out at y = 206 and the sensor mast at y = 302, i.e.
- *     local y = 76 and y = 172. A dorsal module that stops below local y = 80 is
- *     inside the tower's outline and does nothing for the silhouette.
+ *   - the bridge tower and the cruiser's own sensor mast are AFT of this mount, not
+ *     over it, so a dorsal fit is silhouetted against sky rather than against them.
+ *     That is why the mount can afford five fits and why they have to differ from
+ *     each other rather than merely from the hull.
+ *   - THE FIVE FITS ARE MEASURED AGAINST EACH OTHER, not eyeballed.
+ *     `modules/audit.mjs` fits each one to a real cruiser and compares the outlines;
+ *     the run that found rail-battery vs PD-ring differing by 36 m at their peak -
+ *     under one pixel at the 30 px read - is what drove the current shapes. The
+ *     mount now owns two clearly separate bands: TALL AND OPEN (sensor mast,
+ *     shield pylons, PD crown) and LOW AND SOLID (missile raft), with the rail
+ *     battery armoured and reaching forward over the foredeck.
  *
  * The dorsal bed has near-full traverse (306 degrees), so unlike the bow these read
  * as TURRETS: ring, rotating mass, mechanism above the ring.
@@ -31,6 +44,14 @@ const HALF_PI = Math.PI * 0.5;
  * the ship, and it is built to look it: a ring, a slab turret, an aft counterweight
  * that overhangs the plinth, four down-struts carrying the load into the deck, and
  * 210 m of rail sticking out over the bow.
+ *
+ * The turret grew 16 m and the rails and hoist rose with it, because the fitted
+ * audit had this and the missile raft peaking only 129 m apart - under three pixels
+ * at the 30 px read, on the two mounts a player is most likely to be choosing
+ * between. This is the TALL, ARMOURED, FORWARD-REACHING dorsal fit; the raft is the
+ * flat one. The rails now clear the raft's own deck line by fifty metres along the
+ * whole 210 m they overhang, which is where the difference is most visible: over
+ * the foredeck, against sky.
  */
 function buildRailBattery(ctx) {
   const b = new ModuleBuilder(ctx, 'coalition');
@@ -42,8 +63,8 @@ function buildRailBattery(ctx) {
     { pos: [0, -2, 0] });
 
   // Turret body.
-  b.add('hull', G.panelledSlab({ width: 122, height: 64, depth: 150, chamfer: 20, detail: D }),
-    { pos: [0, 50, -6] });
+  b.add('hull', G.panelledSlab({ width: 122, height: 80, depth: 150, chamfer: 20, detail: D }),
+    { pos: [0, 58, -6] });
   // Aft counterweight, overhanging the plinth and off-centre to port.
   b.add('plating', G.panelledSlab({ width: 86, height: 44, depth: 62, chamfer: 12, detail: D }),
     { pos: [-10, 42, -104] });
@@ -51,11 +72,11 @@ function buildRailBattery(ctx) {
   // The rails. Long, thin, parallel: the read.
   for (const s of [-1, 1]) {
     b.add('greeble', barrel({ length: 208, radius: 11, radiusEnd: 9, detail: D }),
-      { pos: [s * 30, 62, 56] });
-    b.glow([s * 30, 62, 272], 9);
+      { pos: [s * 30, 82, 56] });
+    b.glow([s * 30, 82, 272], 9);
   }
   // Recoil cradle under the rails.
-  b.add('greeble', G.panelledSlab({ width: 92, height: 14, depth: 84, detail: D }), { pos: [0, 44, 92] });
+  b.add('greeble', G.panelledSlab({ width: 92, height: 14, depth: 84, detail: D }), { pos: [0, 64, 92] });
 
   // Down-struts into the deck (deck is at local y = -72).
   if (full) {
@@ -74,7 +95,7 @@ function buildRailBattery(ctx) {
 
   // Ammunition hoist standing proud of the turret roof, to starboard.
   b.add('plating', G.panelledSlab({ width: 34, height: 46, depth: 54, chamfer: 8, detail: D }),
-    { pos: [34, 100, -44] });
+    { pos: [34, 118, -44] });
 
   b.lightRun([-58, 84, -60], [-58, 84, 60], [-0.4, 0.92, 0], { max: 7 });
 
@@ -174,20 +195,27 @@ registerModule({
  * two hatches lying open, and a reload crane folded over the port edge. Wide and
  * FLAT, so it is the dorsal module that changes the top-down outline rather than
  * the side one — which is what makes it distinguishable from the rail battery.
+ *
+ * WIDER AND FLATTER THAN IT WAS, for the reason given on the PD ring: the two were
+ * measured at the same bounding box and the same read. This one keeps the whole
+ * mount's LOW, WIDE, SOLID half - 252 m across, nothing above 100 m - and the ring
+ * takes the tall, open half. The 22 m cut off the crane is worth more than it
+ * sounds: a lone thin arm was setting this module's whole silhouette height, so
+ * the raft measured "tall" while looking flat.
  */
 function buildMissileCells(ctx) {
   const b = new ModuleBuilder(ctx, 'coalition');
   const D = b.detail, full = b.full;
 
   // The raft, overhanging the plinth to both sides.
-  b.add('hull', G.panelledSlab({ width: 196, height: 24, depth: 178, chamfer: 10, detail: D }),
-    { pos: [0, 10, 0] });
+  b.add('hull', G.panelledSlab({ width: 252, height: 22, depth: 178, chamfer: 10, detail: D }),
+    { pos: [0, 8, 0] });
   b.graft([0, -8, 0], [-HALF_PI, 0, 0], 42);
 
   // Six cells. Open at the top; you can see down into them.
   const cells = full
-    ? [[-56, -50], [0, -50], [56, -50], [-56, 44], [0, 44], [56, 44]]
-    : [[-56, -50], [56, -50], [0, 44]];
+    ? [[-92, -50], [0, -50], [92, -50], [-92, 44], [0, 44], [92, 44]]
+    : [[-92, -50], [92, -50], [0, 44]];
   for (const [x, z] of cells) {
     b.add('plating', G.hexStrut({ length: 74, radius: 25, axis: 'y', caps: false, detail: D }),
       { pos: [x, 20, z] });
@@ -199,16 +227,16 @@ function buildMissileCells(ctx) {
   if (full) {
     for (const s of [-1, 1]) {
       b.add('plating', G.panelledSlab({ width: 62, height: 5, depth: 74, chamfer: 2, detail: D }),
-        { pos: [s * 100, 52, -4], rot: [0, 0, -s * 1.22] });
+        { pos: [s * 132, 40, -4], rot: [0, 0, -s * 0.95] });
     }
   }
 
   // Reload crane over the port edge — the module's asymmetry.
   b.add('greeble', G.hexStrut({ length: 110, radius: 7, axis: 'x', detail: D }),
-    { pos: [-118, 96, 62], rot: [0, 0, 0.34] });
-  b.add('greeble', G.panelledSlab({ width: 22, height: 26, depth: 26, detail: D }), { pos: [-42, 130, 62] });
+    { pos: [-150, 62, 62], rot: [0, 0, 0.26] });
+  b.add('greeble', G.panelledSlab({ width: 22, height: 26, depth: 26, detail: D }), { pos: [-74, 84, 62] });
 
-  b.lightRun([-92, 30, -84], [-92, 30, 84], [-0.86, 0.5, 0], { max: 9 });
+  b.lightRun([-124, 24, -84], [-124, 24, 84], [-0.86, 0.5, 0], { max: 9 });
 
   return b.finish('dorsal_missile_cells');
 }
@@ -238,9 +266,24 @@ registerModule({
 // ---------------------------------------------------------------------------
 
 /**
- * Four twin PD mounts on tall stalks around a ring, with a flat AESA panel standing
- * up in the middle. The stalks are what save this from being a flush disc: at 44 m
- * they read as a CROWN from every angle.
+ * Four twin PD mounts on SPLAYED stalks around a ring, with a flat AESA panel
+ * standing up in the middle.
+ *
+ * WHY THE STALKS ARE NOW 96 m AND NOT 44. The fitted-silhouette audit
+ * (modules/audit.mjs) measured this module against the missile raft at a mean of
+ * 30 m and a peak of 78 m of outline difference - under two pixels at the 30 px
+ * read, i.e. two dorsal fits the player cannot tell apart. The cause was not
+ * subtle: both were 215 m wide, both stopped around y = 100 local, and both were a
+ * flat cluster on a round pad. Same bounding box, same read.
+ *
+ * The stalks were where the class was supposed to be, so the class is now IN the
+ * stalks: 150 m tall, splayed 19 degrees outboard so the four guns stand at a
+ * radius of 102 m - well outside the 76 m pad - with clear sky between them from
+ * every angle. That makes
+ * this the OPEN, TALL, THIN dorsal fit against the raft's LOW, WIDE, SOLID one -
+ * a difference of kind, which is what ship-language.md §6 M7 means by two modules
+ * on one hardpoint not sharing a tag set. It costs nothing: a longer strut is the
+ * same eight triangles as a short one, and the splay is a rotation.
  */
 function buildPDRing(ctx) {
   const b = new ModuleBuilder(ctx, 'concord');
@@ -251,20 +294,30 @@ function buildPDRing(ctx) {
 
   // Four mounts. Not at 90 degree intervals — offset so the ring has a front.
   const mounts = full ? [0.35, 1.72, 3.30, 4.75] : [0.35, 3.30];
+  const SPLAY = 0.34;                      // radians the stalks lean outboard
+  const STALK = 150;
   for (const a of mounts) {
-    const x = Math.cos(a) * 60, z = Math.sin(a) * 60;
-    b.add('greeble', G.hexStrut({ length: 44, radius: 8, radiusEnd: 10, axis: 'y', detail: D }),
-      { pos: [x, 10, z] });
+    const c = Math.cos(a), s = Math.sin(a);
+    const x = c * 52, z = s * 52;
+    // Lean each stalk away from the axis. The head lands at radius
+    // 52 + 96 sin(SPLAY) = 87 m, i.e. outside the 76 m pad, so the four guns are
+    // silhouetted against sky rather than against the module's own body.
+    const reach = STALK * Math.sin(SPLAY);
+    const rise = STALK * Math.cos(SPLAY);
+    b.add('greeble', G.hexStrut({ length: STALK, radius: 8, radiusEnd: 6, axis: 'y', detail: D }),
+      { pos: [x, 10, z], rot: [s * SPLAY, 0, -c * SPLAY] });
     b.add('plating', G.panelledSlab({ width: 26, height: 18, depth: 30, chamfer: 6, detail: D }),
-      { pos: [x, 62, z] });
+      { pos: [x + c * reach, 10 + rise, z + s * reach] });
     // Twin barrels, pointing outboard along the ring radius.
     b.add('greeble', G.panelledSlab({ width: 12, height: 6, depth: 40, detail: D }),
-      { pos: [x * 1.42, 64, z * 1.42], rot: [0, HALF_PI - a, 0] });
+      { pos: [x + c * (reach + 30), 12 + rise, z + s * (reach + 30)], rot: [0, HALF_PI - a, 0] });
   }
 
-  // Central AESA panel: a flat plate standing on edge, canted forward.
+  // Central AESA panel: a flat plate standing on edge, canted forward. It stays
+  // BELOW the gun heads - the crown is the read, and a mast in the middle of it
+  // would put this module back in the sensor mast's band.
   b.add('plating', G.panelledSlab({ width: 62, height: 66, depth: 9, chamfer: 4, detail: D }),
-    { pos: [0, 66, 0], rot: [-0.26, 0, 0] });
+    { pos: [0, 62, 0], rot: [-0.26, 0, 0] });
   if (full) {
     b.add('greeble', G.hexStrut({ length: 40, radius: 9, axis: 'y', detail: D }), { pos: [0, 14, 0] });
   }
@@ -292,7 +345,7 @@ registerModule({
     cooldown: 0.8, projectileSpeed: 2000, tracking: 3.2, powerDraw: 8,
     yawWidth: Math.PI * 2, pitchWidth: Math.PI * 0.92, subsystemAccuracy: 0.10,
   },
-  silhouetteTags: ['crown', 'ring', 'stalked', 'low'],
+  silhouetteTags: ['crown', 'ring', 'stalked', 'open'],
 });
 
 // ---------------------------------------------------------------------------

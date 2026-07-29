@@ -1,0 +1,60 @@
+[
+  {
+    "id": "close",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0929,
+      "contrast": 0.1333,
+      "clippedPct": 0,
+      "nearBlackPct": 40.24
+    },
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity.",
+    "file": "docs/review/look-cruiser/close.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 18.5,
+      "stepMs": 1,
+      "renderMs": 7.7999999998137355,
+      "steps": 6,
+      "calls": 131,
+      "triangles": 72605,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 70,
+      "textures": 74
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "three-quarter",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0659,
+      "contrast": 0.1042,
+      "clippedPct": 0,
+      "nearBlackPct": 37.39
+    },
+    "description": "Mid tactical range, raking key. The everyday playing view.",
+    "file": "docs/review/look-cruiser/three-quarter.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 9.399999999252032,
+      "stepMs": 0.7000000001862645,
+      "renderMs": 4.7999999998137355,
+      "steps": 6,
+      "calls": 134,
+      "triangles": 95149,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 70,
+      "textures": 74
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

@@ -55,23 +55,47 @@ export class PowerPanel {
     const unlocked = !!world.unlocked?.powerRouting;
 
     const w = this.width;
-    const x = Math.round(P.w * 0.5 - w * 0.5);
     const h = this.height;
-    const y = P.h - h - 30;
+    const px = Math.round(P.w * 0.5 - w * 0.5) - 12;
+    const py = P.h - h - 30 - 12;
+    const x = px + 12;
+    const y = py + 14;
 
-    P.scrim(x - 14, y - 12, w + 28, h + 24, { alpha: 0.70 });
+    // THE PLATE. This block used to sit on a 0.70 gradient scrim and at a close
+    // framing the white hull read straight through it: the row labels REACTOR
+    // ROUTING / OUTPUT / SHIELDS / WEAPONS / ENGINES / SENSORS were simply gone, and
+    // the stance buttons measured 2.14:1 over the hull. Only the floating windows
+    // ever got the real plate; the welded chrome never did.
+    P.plate(px, py, w + 24, h + 26, { border: C.rule });
 
-    P.label('REACTOR ROUTING', x, y, { color: unlocked ? C.inkDim : C.inkGhost });
-    P.hline(x, y + 5, w, unlocked ? C.rule : C.ruleDim);
+    /**
+     * THE SEALED HATCH, DRAWN AS A BACKGROUND.
+     *
+     * It used to be drawn OVER the finished panel, so every label in the block was
+     * struck through by hatch lines and two full-width rules ran through the middle
+     * of the WEAPONS and ENGINES rows. The result was that a first-hour player's very
+     * first screen was a panel deliberately rendered unreadable — they could never
+     * learn what it would do once they found a reactor, which is the exact opposite
+     * of why a locked panel is shown at all.
+     *
+     * So the hatch goes down FIRST, on the plate, under everything; the content is
+     * drawn on top at FULL INK; and "sealed" is said once, in words, by the banner.
+     */
+    if (!unlocked) P.hatch(px + 1, py + 1, w + 22, h + 24, C.track, { spacing: 9, weight: 1 });
+
+    P.label('REACTOR ROUTING', x, y, { color: C.inkDim });
+    P.hline(x, y + 5, w, C.rule);
 
     if (!plant) {
-      P.text('NO REACTOR', x, y + 22, { font: F.small, color: C.inkGhost, track: TRACK.label });
+      P.struck('NO REACTOR', x, y + 24, { font: F.small, color: C.inkFaint });
       return;
     }
 
     const snap = plant.snapshot();
-    const ink = unlocked ? C.ink : C.inkFaint;
-    const dim = unlocked ? C.inkDim : C.inkGhost;
+    // Locked does not mean illegible. The panel reads exactly as it will read once it
+    // is the player's; the banner and the hatch carry the fact that it is not yet.
+    const ink = C.ink;
+    const dim = C.inkDim;
 
     // --- capacity -----------------------------------------------------------
     const healthy = (plant.baseOutput + plant.bonusOutput) || 1;
@@ -82,7 +106,7 @@ export class PowerPanel {
       font: F.bodyBold, color: damaged ? C.warn : ink, align: 'right',
     });
     P.bar(x, y + 25, w, 5, cap / healthy, {
-      color: damaged ? C.warn : ink, track: C.inkGhost, segments: 8,
+      color: damaged ? C.warn : ink, track: C.track, segments: 8,
     });
     if (damaged) {
       P.label(`REACTOR DAMAGE — CEILING ${fmtPct(snap.healthFactor)}`, x, y + 41, { color: C.warn });
@@ -104,11 +128,12 @@ export class PowerPanel {
       P.label(ch, x, cy + 9, { color: spooling ? ink : dim });
 
       // Track, then the DELIVERED value solid.
-      P.fill(trackX, cy, trackW, 11, C.inkGhost);
-      P.fill(trackX, cy, trackW * actual, 11, unlocked ? C.ink : C.inkFaint);
+      P.fill(trackX, cy, trackW, 11, C.track);
+      P.fill(trackX, cy, trackW * actual, 11, ink);
 
       // The gap. Hatched, animated, in warn — because it is the cost of the
-      // decision the player just made and it should be impossible to miss.
+      // decision the player just made and it should be impossible to miss. It is
+      // inside the track and no label shares its y.
       if (spooling) {
         const a = Math.min(actual, target);
         const b = Math.max(actual, target);
@@ -120,8 +145,8 @@ export class PowerPanel {
 
       // The REQUEST, as a hard tick that stands proud of the track.
       const tx = trackX + trackW * target;
-      P.rule(tx - P.hair, cy - 4, P.hair * 2, 19, unlocked ? C.select : C.inkFaint);
-      P.rule(tx - 3, cy - 6, 6, P.hair * 2, unlocked ? C.select : C.inkFaint);
+      P.rule(tx - P.hair, cy - 4, P.hair * 2, 19, C.select);
+      P.rule(tx - 3, cy - 6, 6, P.hair * 2, C.select);
 
       // Even-split reference. `PowerPlant.factor()` is relative to this, so it is
       // the line that decides whether a channel is boosted or starved.
@@ -132,12 +157,12 @@ export class PowerPanel {
         font: F.bodyBold, color: spooling ? C.warn : ink, align: 'right',
       });
       P.text(`▸${fmtPct(target)}`, x + w, cy + 9, {
-        font: F.small, color: unlocked ? C.selectDim : C.inkGhost, align: 'right',
+        font: F.small, color: C.selectDim, align: 'right',
       });
 
-      P.label(CHANNEL_NOTE[ch] ?? '', trackX, cy + 20, { color: C.inkGhost });
+      P.label(CHANNEL_NOTE[ch] ?? '', trackX, cy + 20, { color: C.inkFaint });
       P.text(`${e.power.toFixed(0)} PU`, trackX + trackW, cy + 20, {
-        font: F.micro, color: C.inkGhost, align: 'right',
+        font: F.micro, color: C.inkFaint, align: 'right',
       });
 
       cy += this.rowH;
@@ -148,35 +173,48 @@ export class PowerPanel {
     P.hline(x, cy - 8, w, C.ruleDim);
     const active = this._activePreset(plant);
     const list = this._presets(plant);
-    const tw = Math.floor((w - (list.length - 1) * 6) / list.length);
-    let px = x;
+    // Measured, not divided: `BALANCED F1` and `ASSAULT F2` printed as `BALANCEDF1`
+    // and `ASSAULTF2` because an equal split gave a nine-character name the same
+    // width as a three-character one.
+    let need = 0;
+    const widths = [];
     for (const [name, key] of list) {
+      const bw = P.measure(name.toUpperCase(), F.micro, TRACK.none)
+        + P.measure(key, F.micro, TRACK.none) + 20;
+      widths.push(bw);
+      need += bw;
+    }
+    const gap = list.length > 1 ? Math.max(3, (w - need) / (list.length - 1)) : 0;
+    let bx = x;
+    for (let i = 0; i < list.length; i++) {
+      const [name, key] = list[i];
+      const bw = widths[i];
       const on = name === active;
-      if (on) P.fill(px, cy, tw, 14, unlocked ? C.ink : C.inkGhost);
-      else P.frame(px, cy, tw, 14, C.ruleDim);
-      P.text(name.toUpperCase(), px + 5, cy + 10, {
-        font: F.micro, color: on ? C.void : dim, track: TRACK.none,
+      if (on) P.fill(bx, cy, bw, 16, C.ink);
+      else { P.fill(bx, cy, bw, 16, C.panel); P.frame(bx, cy, bw, 16, C.rule); }
+      P.text(name.toUpperCase(), bx + 6, cy + 12, {
+        font: F.micro, color: on ? C.void : dim, track: TRACK.none, onFill: on,
       });
-      P.text(key, px + tw - 5, cy + 10, {
-        font: F.micro, color: on ? C.void : C.inkGhost, align: 'right',
+      P.text(key, bx + bw - 6, cy + 12, {
+        font: F.micro, color: on ? C.void : C.inkFaint, align: 'right', track: TRACK.none, onFill: on,
       });
-      px += tw + 6;
+      bx += bw + gap;
     }
 
     // --- lock ---------------------------------------------------------------
+    // One band, two lines, its own opaque ground, and it is the ONLY thing in the
+    // block that says "sealed". No rule shares a y with a baseline.
     if (!unlocked) {
-      P.hatch(x - 14, y - 12, w + 28, h + 24, C.inkGhost, { spacing: 9, weight: 1 });
-      // Both lines live INSIDE one opaque band. A caption hanging below the band sits
-      // on top of a channel row and reads as a rendering fault rather than as a lock.
-      const bandY = y + Math.round(h * 0.5) - 19;
-      P.fill(x - 14, bandY, w + 28, 40, C.scrimHard);
-      P.hline(x - 14, bandY, w + 28, C.warnDim);
-      P.hline(x - 14, bandY + 39, w + 28, C.warnDim);
-      P.text('REACTOR GOVERNOR SEALED', x + w * 0.5, bandY + 16, {
+      const bandY = py + Math.round((h + 26) * 0.5) - 20;
+      // OPAQUE. `C.panelTitle` is a translucent lift meant to be composited over an
+      // existing plate, not a ground of its own — using it here let the WEAPONS and
+      // ENGINES rows read straight through the banner that is explaining them.
+      P.plate(px + 1, bandY, w + 22, 40, { border: C.warnDim });
+      P.text('REACTOR GOVERNOR SEALED', px + (w + 24) * 0.5, bandY + 16, {
         font: F.microBold, color: C.warn, align: 'center', track: TRACK.head,
       });
-      P.text('INSTALL A REACTOR MODULE TO ROUTE POWER', x + w * 0.5, bandY + 30, {
-        font: F.micro, color: C.inkFaint, align: 'center', track: TRACK.label,
+      P.text('INSTALL A REACTOR MODULE TO ROUTE POWER', px + (w + 24) * 0.5, bandY + 31, {
+        font: F.micro, color: C.inkDim, align: 'center', track: TRACK.label,
       });
     }
   }
