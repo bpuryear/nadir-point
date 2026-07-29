@@ -114,28 +114,39 @@ uniform vec3 nadirSootColor;
  * enough that function is legible before you read a label.
  *
  *   value 0.42  INK      registry lettering, sigils, repair-patch outlines. Paint.
- *   value 0.72  SENSOR   arrays, apertures, mast heads, the bridge band. Bone white.
- *   value 1.00  HAZARD   ACCESS AND MAINTENANCE. Hatches, bays, tubes, mount pads,
+ *   value 0.72  HAZARD   ACCESS AND MAINTENANCE. Hatches, bays, tubes, mount pads,
  *                        drive wells - anything that opens, moves or is serviced.
  *                        Orange, and the SAME orange on every faction, because it
  *                        describes a function rather than a nationality.
+ *   value 1.00  SENSOR   arrays, apertures, mast heads. Bone white.
  *
- * Returned as (amount, sensorWeight, hazardWeight) so the caller can mix three ways
+ * Returned as (amount, hazardWeight, sensorWeight) so the caller can mix three ways
  * from one fetch. The bands are smoothsteps rather than steps so a filtered texel
  * cannot flicker between families.
  *
- * STATED COST, because it is visible and it is the price of not adding a sampler:
- * bilinear filtering across the outer edge of a HAZARD patch runs 1.0 -> 0.0 and
- * therefore passes through the sensor band on its way out, so an access marking
- * carries a sub-4 m bone-white edging. Real hazard placards have exactly that white
- * border. The previous two-family version had the same artefact in the ink colour,
- * where it was less defensible.
+ * THE ORDER OF THE THREE BANDS IS NOT ARBITRARY, AND GETTING IT WRONG COSTS THE
+ * LOUDEST COLOUR ON THE SHIP.
+ *
+ * A mark's outer edge is a filtered ramp from its own value down to zero, so it
+ * passes through every band BELOW it on the way out. Sensor was tried at 0.72 with
+ * hazard at 1.0, and the consequence is arithmetic: a hazard patch is the largest
+ * mark on the hull, its bars are only two or three texels wide at 4.17 m/texel, and
+ * every one of them would have carried a bone-white fringe on both sides - which at
+ * the default 3200 m camera averages an ORANGE access marking towards WHITE, i.e.
+ * destroys the semantic rule at exactly the distance the rule exists to serve.
+ *
+ * With hazard in the middle band, a hazard patch's ramp passes through hazard and
+ * then briefly through ink, which is the sub-4 m darker edging the previous
+ * two-family version already had and already accepted. The fringe moves onto the
+ * SENSOR family instead, whose members are thin outlines with the smallest area on
+ * the ship, and it puts a warm rim on a white aperture - which is what a warm key on
+ * a white ring does anyway.
  */
 vec3 nadirMark(float a) {
   float amount = smoothstep(0.10, 0.30, a);
-  float haz = smoothstep(0.84, 0.94, a);
-  float sen = smoothstep(0.55, 0.66, a) * (1.0 - haz);
-  return vec3(amount, sen, haz);
+  float sen = smoothstep(0.84, 0.94, a);
+  float haz = smoothstep(0.55, 0.66, a) * (1.0 - sen);
+  return vec3(amount, haz, sen);
 }
 
 float nadirHash(vec2 p) {
@@ -258,9 +269,9 @@ const MAP_FRAGMENT = /* glsl */`
 	// over is a hazard band nobody can see.
 	diffuseColor.rgb = mix( diffuseColor.rgb, nadirSootColor, nadirMacroTexel.b * nadirMacro.z );
 	vec3 nadirMk = nadirMark( nadirMacroTexel.a );
-	// ink -> sensor -> hazard, in that order, so the strongest family wins the pixel.
-	vec3 nadirMarkColor = mix( mix( nadirInkColor, nadirSensorColor, nadirMk.y ),
-		nadirHazardColor, nadirMk.z );
+	// ink -> hazard -> sensor, in band order, so the highest band wins the pixel.
+	vec3 nadirMarkColor = mix( mix( nadirInkColor, nadirHazardColor, nadirMk.y ),
+		nadirSensorColor, nadirMk.z );
 	diffuseColor.rgb = mix( diffuseColor.rgb, nadirMarkColor, nadirMk.x * nadirMacro.w );
 `;
 

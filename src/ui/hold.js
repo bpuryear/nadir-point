@@ -164,7 +164,7 @@ export class HoldPanel extends Panel {
       const turnPct = player.classDef.turnRate ? player.body.turnRate / player.classDef.turnRate : 1;
       const holdTxt = `HOLD ${fmtMass(massOf(d))} — JOINS IT WHEN FITTED`;
       const holdW = P.measure(holdTxt, F.micro, TRACK.label) + 14;
-      const costTxt = `ACCEL ${fmtSignedPct(accelPct)} · TURN ${fmtSignedPct(turnPct)} · BURN ×${load.toFixed(2)} PROPELLANT`;
+      const costTxt = `ACCEL ${fmtSignedPct(accelPct)} · TURN ${fmtSignedPct(turnPct)} · BURN ×${load.toFixed(2)}`;
       const fmW = P.measure('FITTED MASS', F.micro, TRACK.label) + 12;
       P.label('FITTED MASS', x, y + 52, { color: C.inkFaint });
       P.text(`×${load.toFixed(2)}`, x + fmW + 40, y + 52, {

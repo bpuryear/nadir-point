@@ -174,13 +174,17 @@ export class HUD {
         const dist = player ? Math.hypot(m.x - player.position.x, m.z - player.position.z) : 0;
         P.worldLabel(fmtRange(dist), this._pt.x + 12, this._pt.y - 20, { fill: color, color: C.void, align: 'left' });
         if (m.stage === 'rejected' && m.reason) {
-          // On its own plate. A rejection reason is the one string in the interface
-          // that has to survive being drawn over a starfield, a hull or an arc.
+          // On its own plate, and CLAIMED as a whole. A rejection reason is the one
+          // string that has to survive being drawn over a starfield, a hull or an
+          // arc — but a rejection reason sliced in half by a window's edge is worse
+          // than none, so if the space is taken it is not drawn at all.
           const tw = P.measure(m.reason, F.microBold, TRACK.label);
-          P.plate(this._pt.x + 8, this._pt.y - 4, tw + 12, 15, { border: null });
-          P.fill(this._pt.x + 8, this._pt.y - 4, 2, 15, C.warn);
-          P.text(m.reason, this._pt.x + 14, this._pt.y + 7,
-            { font: F.microBold, color: C.warn, track: TRACK.label });
+          if (P.claim(this._pt.x + 8, this._pt.y - 4, tw + 12, 15, 2)) {
+            P.plate(this._pt.x + 8, this._pt.y - 4, tw + 12, 15, { border: null });
+            P.fill(this._pt.x + 8, this._pt.y - 4, 2, 15, C.warn);
+            P.text(m.reason, this._pt.x + 14, this._pt.y + 7,
+              { font: F.microBold, color: C.warn, track: TRACK.label });
+          }
         }
       }
       this._planeRing(P, m.x, m.z, 220 * scale, color, m.stage === 'provisional' ? 1 : 1.5,

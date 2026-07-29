@@ -195,10 +195,21 @@ function busyField(fbm, calm) {
  * from what has been REMOVED from it rather than from its size. §7's floor (largest
  * plate module >= 55 m, <= 26 repeats over 1400 m) is met at 109 m and 12.8.
  */
+/**
+ * The second plate tone for a variant whose palette does not name one. A plate-to-
+ * plate variance is a variance: one step of value on the SAME paint. Anything wider
+ * than this and the midpoint of base and alt stops being the colour that was
+ * authored — see the long note in `hullMaps` where the two are lerped.
+ */
+const altOf = (hex) => shade(hex, 0.86);
+
 function variantSpec(pal, variant) {
   switch (variant) {
     case 'hullDark': return {
-      base: pal.baseDark, alt: pal.base, surface: pal.surface.hullDark,
+      // `alt` was `pal.base`, so this variant rendered at the midpoint of the
+      // near-black and the hull — a mid grey. It is the ship's THIRD VALUE and it
+      // has to actually be dark.
+      base: pal.baseDark, alt: altOf(pal.baseDark), surface: pal.surface.hullDark,
       greeble: 1.0, markings: false, wearMul: 1.15,
       tileMul: 2.6, calmAdd: 0.06, contrastMul: 0.92, rivetMul: 0.7,
       strakes: 6, plateAspect: 6.0, stepMul: 0.9, buttChance: 0.55,
@@ -206,14 +217,19 @@ function variantSpec(pal, variant) {
     // MEDIUM. Directional, and it is the tier that has BUTTS - a plate break every
     // 52 m or so, which is the frequency at which a hull looks assembled.
     case 'plating': return {
-      base: pal.plating, alt: pal.base, surface: pal.surface.plating,
+      // `alt` was `pal.base`, which averaged this tier back up to within 1.5% of the
+      // `hull` tier and deleted the belt/spine value split palette.js promises.
+      base: pal.plating, alt: altOf(pal.plating), surface: pal.surface.plating,
       greeble: 0.34, markings: true, wearMul: 0.85,
       tileMul: 2.0, calmAdd: 0.02, contrastMul: 1.0, rivetMul: 0.85,
       strakes: 6, plateAspect: 6.0, stepMul: 1.15, buttChance: 0.62,
     };
     // DENSE. Isotropic on purpose - machinery is - and the ONLY tier allowed to be.
     case 'greeble': return {
-      base: pal.greeble, alt: pal.baseDark, surface: pal.surface.greeble,
+      // `alt` was `pal.baseDark`, i.e. this tier rendered at the average of a bright
+      // metal and a near-black. The tint towards baseDark still happens, but through
+      // `greebleTint` on the mechanical MASK, where it belongs — on the parts.
+      base: pal.greeble, alt: altOf(pal.greeble), surface: pal.surface.greeble,
       greeble: 0.90, markings: false, wearMul: 1.0,
       tileMul: 0.62, calmAdd: -0.26, contrastMul: 1.0, rivetMul: 1.0,
       strakes: 4, plateAspect: 2.0, stepMul: 1.4, buttChance: 1.0,
@@ -245,7 +261,7 @@ function variantSpec(pal, variant) {
      * from 100% of the part to `accentEdge` (about 9%).
      */
     case 'trim': return {
-      base: pal.plating, alt: pal.base, surface: pal.surface.trim,
+      base: pal.plating, alt: altOf(pal.plating), surface: pal.surface.trim,
       greeble: 0.20, markings: false, wearMul: 1.25,
       tileMul: 0.9, calmAdd: 0.10, contrastMul: 0.85, rivetMul: 0.3,
       strakes: 4, plateAspect: 4.0, stepMul: 0.6, buttChance: 0.7,
@@ -277,7 +293,13 @@ function variantSpec(pal, variant) {
      * the frame badly needed.
      */
     case 'radiator': return {
-      base: pal.baseDark, alt: shade(pal.baseDark, 0.72), surface: pal.surface.radiator,
+      /**
+       * Lifted off `baseDark` by 40%, because `baseDark` moved to a genuine near-
+       * black this pass (palette.js) and a radiator that lands at sRGB 0.30 under the
+       * key is a hole in the stern rather than the game's darkest large SURFACE. It
+       * is still comfortably the darkest thing on the ship.
+       */
+      base: shade(pal.baseDark, 1.40), alt: shade(pal.baseDark, 1.15), surface: pal.surface.radiator,
       greeble: 0.0, markings: false, wearMul: 0.9,
       tileMul: 1.4, calmAdd: 0.5, contrastMul: 0.9, rivetMul: 0,
       strakes: 1, plateAspect: 1, stepMul: 0, buttChance: 0,
@@ -481,6 +503,39 @@ export function hullMaps(opts = {}) {
   }
 
   // --- albedo ---------------------------------------------------------------
+  /**
+   * ===========================================================================
+   * `alt` IS A PLATE-TO-PLATE VARIANCE, AND THREE VARIANTS WERE USING IT AS A
+   * SECOND MATERIAL — SO THOSE THREE RENDERED AT THE AVERAGE OF TWO COLOURS
+   * ===========================================================================
+   * Found in this pass by reading the arithmetic rather than by looking. Twelve lines
+   * below, the per-texel colour is `lerp(base, alt, t)` with
+   *
+   *     t = 0.5 + (t0 - 0.5) * contrast
+   *
+   * and `contrast` is 0.30-0.40. So `t` never leaves 0.5 ± 0.2 — WHICH MEANS THE
+   * SURFACE'S ACTUAL COLOUR IS THE MIDPOINT OF `base` AND `alt`, not `base` with a
+   * little of `alt` in it. That is correct and harmless when the two are neighbours,
+   * which is what a plate-to-plate variance is. It is not harmless when they are not:
+   *
+   *   variant     base           alt (before)   what it actually rendered
+   *   hullDark    baseDark       base           a MID GREY, never a dark
+   *   greeble     greeble        baseDark       the average of a light metal and a
+   *                                             near-black, i.e. a mid grey
+   *   plating     plating        base           Y = 0.130 against `hull`'s Y = 0.132
+   *
+   * The last row is the one that matters most. palette.js states, at length, that
+   * `plating` sits "a genuine half-stop BELOW `hull`" so that "the belt/spine split is
+   * a VALUE split that survives to LOD2". It was not: after this averaging the two
+   * surfaces rendered within 1.5% of each other, which is invisible. THAT is the
+   * mechanism behind three passes of "hulls read at a single value" and behind the
+   * finding that the fleet has no surface treatment — the fleet's `hull`, `plating`
+   * and `dark` surfaces were all resolving to nearly the same grey.
+   *
+   * Every `alt` is now a NEIGHBOUR of its own `base` (see `variantSpec`), so the
+   * midpoint IS the authored colour and the three named surfaces separate by the
+   * amount palette.js says they do. `altOf` is the helper that guarantees it.
+   */
   const [br, bg, bb] = hexBytes(spec.base);
   const [ar, ag, ab] = hexBytes(spec.alt);
   const [wr_, wg_, wb_] = hexBytes(pal.bare);

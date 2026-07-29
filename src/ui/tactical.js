@@ -82,6 +82,12 @@ export class TacticalOverlay {
       this._subs.push({ sub: null, x: 0, y: 0, ok: false, angle: 0, bears: false });
     }
     this._dash = [4, 5];
+    /**
+     * Captions already written this frame. A weapon's arc wedge and its range ring
+     * both want to print `LANCE 6.80 KM`, and at a wide framing both land — the same
+     * sentence twice, which is how a tactical display turns into wallpaper.
+     */
+    this._said = new Set();
     this._rings = [];
     this._cov = [];
     /** Preallocated sub-part rows for the second-tier ring. Never grows past 8. */
@@ -97,6 +103,7 @@ export class TacticalOverlay {
   draw(P, hit = null) {
     if (!this.enabled) return;
     this._hit = hit;
+    this._said.clear();
     const world = this.world;
     const player = world.player;
     if (!player || player.dead) return;
@@ -218,9 +225,11 @@ export class TacticalOverlay {
         // world-anchored strings get a solid ground with dark text, which is the only
         // thing that survives an arbitrary backdrop — these used to measure 1.6:1
         // against a gas giant's limb.
-        P.worldLabel(`${a.type.toUpperCase()} ${fmtRange(a.range)}`, this._pt.x, this._pt.y - 6, {
-          fill: bearing ? C.hostile : C.inkFaint, color: C.void, h: 12,
-        });
+        const cap = `${a.type.toUpperCase()} ${fmtRange(a.range)}`;
+        if (!this._said.has(cap)
+          && P.worldLabel(cap, this._pt.x, this._pt.y - 6, {
+            fill: bearing ? C.hostile : C.inkFaint, color: C.void, h: 12,
+          })) this._said.add(cap);
       }
     }
   }
@@ -264,9 +273,12 @@ export class TacticalOverlay {
         const i = (start + (step % 2 ? -1 : 1) * Math.ceil(step / 2) + RING_SEGS * 2) % RING_SEGS;
         const p = this._ring[i];
         if (!p.ok || p.x < 150 || p.x > P.w - 150 || p.y < 40 || p.y > P.h - 130) continue;
-        if (!P.worldLabel(`${ring.label} ${fmtRange(ring.r)}`, p.x, p.y - 10, {
+        const cap = `${ring.label} ${fmtRange(ring.r)}`;
+        if (this._said.has(cap)) break;
+        if (!P.worldLabel(cap, p.x, p.y - 10, {
           fill: ring.salvage ? C.salvage : C.inkFaint, color: C.void, h: 12,
         })) continue;
+        this._said.add(cap);
         break;
       }
     }
