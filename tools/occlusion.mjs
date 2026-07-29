@@ -74,6 +74,13 @@ try {
     }
 
     const res = await page.evaluate(async () => {
+      /**
+       * Grab INSIDE a rAF callback, in the same frame the renderer just painted.
+       * A WebGL canvas without `preserveDrawingBuffer` is cleared as soon as the
+       * frame is composited, so a `drawImage` taken outside that window returns a
+       * black rectangle and the ship appears to have no pixels at all.
+       */
+      const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
       const grab = () => {
         const src = document.getElementById('viewport');
         const ui = document.getElementById('nadir-ui');
@@ -87,8 +94,10 @@ try {
         return { data: g.getImageData(0, 0, W, H).data, W, H };
       };
       const ui = document.getElementById('nadir-ui');
+      await nextFrame();
       const withHud = grab();
       ui.style.visibility = 'hidden';
+      await nextFrame();
       const bare = grab();
       ui.style.visibility = '';
 
@@ -109,7 +118,11 @@ try {
           if (la > 0.30) { ship++; if (diff) hit++; }
         }
       }
+      let mean = 0;
+      for (let i = 0; i < bare.data.length; i += 4) mean += luma(bare.data, i);
+      mean /= (W * H);
       return {
+        meanLuma: mean,
         shipPx: ship,
         hullCovered: ship ? (hit / ship) * 100 : 0,
         frameCovered: (chrome / (W * H)) * 100,
@@ -123,7 +136,7 @@ try {
       `${shot.id.padEnd(16)} hull ${res.hullCovered.toFixed(1).padStart(5)}%`
       + `  frame ${res.frameCovered.toFixed(1).padStart(5)}%`
       + `  centre ${res.centreCovered.toFixed(1).padStart(5)}%`
-      + `  (${res.shipPx} ship px)${bad ? `   !! over ${maxHull}%` : ''}`,
+      + `  (${res.shipPx} ship px, scene luma ${res.meanLuma.toFixed(3)})${bad ? `   !! over ${maxHull}%` : ''}`,
     );
     await page.close();
   }
