@@ -1,9 +1,78 @@
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import net from 'node:net';
 import path from 'node:path';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * SERVER LIFECYCLE. Read this before changing anything below it.
+ *
+ * An earlier version took a fixed port, spawned `vite --strictPort`, and polled the URL
+ * until it answered. That has a failure mode that cost this project five hours of dead
+ * agents, and it is worth writing down because it looks correct:
+ *
+ *   1. A previous run leaves an orphaned server holding the port.
+ *   2. The new `vite --strictPort` fails to bind and exits.
+ *   3. The poll fetches the URL and IT ANSWERS - because the ORPHAN is serving it.
+ *   4. startServer reports success. The harness is now driving a zombie serving a
+ *      STALE BUNDLE, so agents silently test code that is not the code on disk, and
+ *      hang for good when the zombie eventually dies mid-run.
+ *
+ * The hang was the visible symptom; testing a stale bundle was the dangerous part.
+ *
+ * Three things prevent it now: the port is probed for freedom and moved if taken, so a
+ * stale server can never be inherited; every spawned server is tracked and killed on
+ * exit, including on SIGINT/SIGTERM and uncaught throws, so orphans are not created in
+ * the first place; and startup waits for OUR child to be listening rather than for the
+ * URL to answer.
+ */
+const LIVE_SERVERS = new Set();
+
+function killAllServers() {
+  for (const proc of LIVE_SERVERS) {
+    try { proc.kill('SIGKILL'); } catch { /* already gone */ }
+  }
+  LIVE_SERVERS.clear();
+}
+
+let cleanupInstalled = false;
+function installCleanup() {
+  if (cleanupInstalled) return;
+  cleanupInstalled = true;
+  for (const sig of ['exit', 'SIGINT', 'SIGTERM', 'uncaughtException']) {
+    process.on(sig, (err) => {
+      killAllServers();
+      if (sig === 'uncaughtException') {
+        console.error('[harness] uncaught:', err);
+        process.exit(1);
+      }
+      if (sig !== 'exit') process.exit(130);
+    });
+  }
+}
+
+/** Is this TCP port genuinely bindable right now? */
+function portFree(port) {
+  return new Promise((resolve) => {
+    const s = net.createServer();
+    s.once('error', () => resolve(false));
+    s.once('listening', () => s.close(() => resolve(true)));
+    s.listen(port, '127.0.0.1');
+  });
+}
+
+/**
+ * First bindable port at or after `start`. Never inherit somebody else's server:
+ * a port that is taken belongs to a run we know nothing about.
+ */
+export async function findFreePort(start, span = 400) {
+  for (let p = start; p < start + span; p++) {
+    if (await portFree(p)) return p;
+  }
+  throw new Error(`[harness] no free port in ${start}..${start + span}`);
+}
 
 const CHROME_CANDIDATES = [
   process.env.CHROMIUM_PATH,
@@ -44,34 +113,56 @@ export async function startServer({ port = 5173, mode = 'dev', build = false } =
     });
   }
 
+  installCleanup();
+
+  // Never inherit a port. If the requested one is taken it belongs to a run we know
+  // nothing about, and serving from it would test a bundle that is not ours.
+  const actualPort = await findFreePort(port);
+  if (actualPort !== port) {
+    console.warn(`[harness] port ${port} is in use; using ${actualPort} instead`);
+  }
+
   const cmd = mode === 'dev'
-    ? ['npx', ['vite', '--port', String(port), '--host', '127.0.0.1', '--strictPort']]
-    : ['npx', ['vite', 'preview', '--port', String(port), '--host', '127.0.0.1', '--strictPort']];
+    ? ['npx', ['vite', '--port', String(actualPort), '--host', '127.0.0.1', '--strictPort']]
+    : ['npx', ['vite', 'preview', '--port', String(actualPort), '--host', '127.0.0.1', '--strictPort']];
 
   const proc = spawn(cmd[0], cmd[1], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  LIVE_SERVERS.add(proc);
   let out = '';
+  let exited = null;
   proc.stdout.on('data', (d) => { out += d.toString(); });
   proc.stderr.on('data', (d) => { out += d.toString(); });
+  proc.on('exit', (code) => { exited = code ?? 0; LIVE_SERVERS.delete(proc); });
 
-  const url = `http://127.0.0.1:${port}/`;
+  const url = `http://127.0.0.1:${actualPort}/`;
   const deadline = Date.now() + 45000;
   while (Date.now() < deadline) {
+    // If our child died, fail immediately rather than polling a port that some other
+    // process might answer on. This is the check whose absence caused the zombie bug.
+    if (exited !== null) {
+      throw new Error(`[harness] vite exited with code ${exited} before serving ${url}\n${out}`);
+    }
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
-      if (res.ok) return { proc, url, log: () => out };
+      if (res.ok) return { proc, url, port: actualPort, log: () => out };
     } catch { /* not up yet */ }
     await new Promise((r) => setTimeout(r, 350));
   }
   proc.kill('SIGKILL');
-  throw new Error(`server failed to start on ${port}\n${out}`);
+  LIVE_SERVERS.delete(proc);
+  throw new Error(`[harness] server failed to start on ${actualPort} within 45s\n${out}`);
 }
 
 export async function stopServer(server) {
   if (!server?.proc) return;
   server.proc.kill('SIGTERM');
   await new Promise((r) => setTimeout(r, 300));
-  if (!server.proc.killed) server.proc.kill('SIGKILL');
+  try { server.proc.kill('SIGKILL'); } catch { /* already gone */ }
+  LIVE_SERVERS.delete(server.proc);
 }
+
+/** Kill anything this process started. Exported so a tool can clean up mid-run. */
+export { killAllServers };
 
 export async function launchBrowser() {
   return chromium.launch({
