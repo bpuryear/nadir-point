@@ -25,6 +25,32 @@
  *
  * The tracer and beam buffers are rewritten from scratch every frame and uploaded as
  * one contiguous range. There is no per-projectile object anywhere in this file.
+ *
+ * THE RIPPLE. `sim/salvo.js` schedules a wave of single shots down one flank and this
+ * file is what makes it visible. Three things, and all three are drawn by systems that
+ * already exist — this stream adds NO mesh, NO material and therefore NO draw call and
+ * NO program:
+ *
+ *   PER-EMITTER FLASH   `EV.WEAPON_FIRED.origin` is now the specific muzzle, and
+ *                       `payload.emitter` is the index into the ModuleDef's static
+ *                       `muzzles`. A shot that names a barrel gets a tighter, hotter
+ *                       flash thrown down that barrel's bore; a shot with no `emitter`
+ *                       is the AUTO path, which does not choose one, and is drawn
+ *                       exactly as it was before this change — at the mount centre.
+ *
+ *   EMBER TRAIL         four cooling embers per heavy slot, drifting AFT in hull space
+ *                       with no ship velocity added, so for 1.2-1.9 s after a broadside
+ *                       the hull trails a line of sparks down the side that fired. It
+ *                       is the only thing in the game that says *this flank just fired*,
+ *                       and it outlives the wave that made it.
+ *
+ *   ONE RING PER WAVE   at the centroid of the muzzles that actually fired, on
+ *                       `EV.SALVO_COMPLETE` and never per shot. A ring per shot is a
+ *                       strobe; one ring is a full stop.
+ *
+ * A wave that fires nothing leaves no ring and no embers. The absence is the readout:
+ * `sim/salvo.js` keeps a dead barrel's SLOT and its beat, so a hole in the wave is a
+ * hole in the light as well as in the sound.
  */
 
 import * as THREE from 'three';
@@ -33,6 +59,7 @@ import { scratch } from '../core/world.js';
 import { PROJECTILE_KINDS } from '../sim/combat.js';
 import {
   instancedQuad, markVFXMaterial, factionVFX, FACTION_ORDER, FIRE, RangeUploader,
+  shipForward,
 } from './common.js';
 import { PKIND } from './particles.js';
 
@@ -360,6 +387,30 @@ function missileGeometry() {
 }
 
 // ---------------------------------------------------------------------------
+// The ripple
+// ---------------------------------------------------------------------------
+
+/**
+ * `firing-feel.md` §5.3 and §5.6, and nothing that is not in one of those two.
+ *
+ * `ringAlpha` is not a transparency — `rings.shockwave` multiplies the colour by it and
+ * the additive pass has no alpha channel to speak of. `pal.muzzle` is `hdr(emissiveHot,
+ * 6.0)`, so 0.18 lands the ring at 1.08 linear against `postfx`'s 1.05 bloom threshold:
+ * just barely over, which is a faint ring that blooms rather than a hoop that glows.
+ */
+const SALVO_VFX = {
+  embers: 4,           // per heavy slot (§5.6 says four, and four is what it costs)
+  emberLife: 1.20,     // s, before jitter — inside PKIND.EMBER's 1.1-1.8 s design range
+  emberJitter: 0.70,   // s
+  emberSlow: 12,       // m/s
+  emberFast: 30,       // m/s
+  emberSpread: 0.34,   // cone, 0 = a jet, 1 = a sphere
+  ringR0: 8,           // m
+  ringR1: 420,         // m   (§6.5 `ringRadius`)
+  ringLife: 0.50,      // s
+  ringAlpha: 0.18,     // (§6.5)
+  ringThickness: 0.05,
+};
 
 export class WeaponVFX {
   /**
@@ -407,9 +458,49 @@ export class WeaponVFX {
     this._v = new THREE.Vector3();
     this._one = new THREE.Vector3(1, 1, 1);
     this._trailAccum = 0;
+    /** Scratch for hull forward. Never held across a call into another system. */
+    this._axis = new THREE.Vector3();
+
+    /**
+     * The wave in flight. One record, mutated, never replaced — a salvo is a fixed-step
+     * event and an object per wave would be an allocation on the sim clock.
+     *
+     * `c*` accumulate the muzzle positions and `f*` the mount bearings of the slots that
+     * ACTUALLY fired, so the terminal ring lands at the centroid of the guns that spoke
+     * rather than at the hull centre or at the planned flank. A wave that is all holes
+     * therefore has `n === 0` and draws nothing.
+     */
+    this._wave = {
+      ship: null, side: null, slots: 0, index: 0, n: 0,
+      cx: 0, cy: 0, cz: 0, fx: 0, fy: 0, fz: 0,
+    };
+
+    /**
+     * Counters, so the ripple can be MEASURED rather than looked at. `perEmitter` vs
+     * `mountCentre` is the one that proves W1-A's static `muzzles` are reaching the
+     * frame: if `perEmitter` is 0 during a salvo, every flash in the wave came out of
+     * the same point and the feature is not landed however good the screenshot looks.
+     */
+    this.salvoStats = {
+      waves: 0, slots: 0, embers: 0, rings: 0, perEmitter: 0, mountCentre: 0,
+    };
+
+    /**
+     * `audio/weapons.js` cannot subscribe to the salvo events itself: `installAudio`
+     * builds `new WeaponAudio(core)` with no world and no bus (`audio/index.js:94`), and
+     * every other audio event in the game is dispatched by that installer — which is not
+     * this stream's file to edit. So the bus is handed to the audio facade's own public
+     * `listen()` from `sample()` below, once, and `audio/weapons.js` does its own wiring
+     * from there. The one-line fix that makes this seam unnecessary is filed as a
+     * request against `audio/index.js`; `listen()` is idempotent, so it can land without
+     * touching this file.
+     */
+    this._audioWeapons = null;
 
     this._offFired = world.bus.on(EV.WEAPON_FIRED, (e) => this.onWeaponFired(e));
     this._offImpact = world.bus.on(EV.PROJECTILE_IMPACT, (e) => this.onImpact(e));
+    this._offSalvo = world.bus.on(EV.SALVO_FIRED, (e) => this.onSalvoFired(e));
+    this._offSalvoDone = world.bus.on(EV.SALVO_COMPLETE, (e) => this.onSalvoComplete(e));
   }
 
   palette(factionId) { return this.palettes[factionId] ?? this.palettes.player; }
@@ -420,8 +511,15 @@ export class WeaponVFX {
    * Muzzle flash. Brief, bright, faction-coloured, plus a small spatter of sparks
    * thrown down the bore. Beam weapons get a charge bloom instead of a spatter -
    * a lance that spits shrapnel reads as a cannon.
+   *
+   * PER EMITTER. `origin` is the world position of the specific muzzle whenever the
+   * shot came through `sim/salvo.js`, and `emitter` names which one. That shot gets a
+   * NARROWER, TIGHTER flash: a single barrel is not a four-barrel casemate, and drawing
+   * the same 26 m fireball for both is what made a broadside read as one big gun going
+   * off four times. A shot with no `emitter` is the AUTO path, which does not choose a
+   * barrel — it keeps the casemate-wide flash it has always had, unchanged.
    */
-  onWeaponFired({ ship, mount, origin, type }) {
+  onWeaponFired({ ship, mount, origin, type, emitter }) {
     if (!origin) return;
     const pal = this.palette(ship?.faction ?? 'player');
     const p = this.particles;
@@ -433,12 +531,17 @@ export class WeaponVFX {
     const beamish = type === 'beam' || type === 'lance' || type === 'mining';
     const heavy = type === 'rail' || type === 'lance' || type === 'cannon';
 
+    // Is this shot from a named barrel, or from the mount centre? `emitter` is
+    // `undefined` on the AUTO path and an index into `moduleDef.muzzles` otherwise.
+    const barrel = Number.isFinite(emitter);
+    const slot = this._noteSlot(ship, barrel, x, y, z, fx, fy, fz);
+
     // The flash itself
     p.begin(PKIND.FIRE);
     p.setColor(pal.muzzle, heavy ? 1.0 : 0.6);
     p.spec.life = beamish ? 0.16 : 0.085;
-    p.spec.size0 = heavy ? 26 : 14;
-    p.spec.size1 = heavy ? 54 : 28;
+    p.spec.size0 = (heavy ? 26 : 14) * (barrel ? 0.80 : 1);
+    p.spec.size1 = (heavy ? 54 : 28) * (barrel ? 0.80 : 1);
     p.spec.drag = 6;
     p.spawn(x + fx * 6, y + fy * 6, z + fz * 6, fx * 90, fy * 90, fz * 90);
 
@@ -449,7 +552,8 @@ export class WeaponVFX {
       p.spec.size0 = heavy ? 5.5 : 3.0;
       p.spec.size1 = 0.5;
       p.spec.drag = 5.5;
-      p.burst(heavy ? 12 : 6, x, y, z, fx, fy, fz, 0.10, 220, 900);
+      // A known bore is a known direction: the spatter goes down it, not around it.
+      p.burst(heavy ? 12 : 6, x, y, z, fx, fy, fz, barrel ? 0.055 : 0.10, 220, 900);
     }
 
     if (heavy) {
@@ -459,6 +563,115 @@ export class WeaponVFX {
         4, 46, 0.18, pal.muzzle, 0.26, 0.18,
       );
     }
+
+    // PERMANENCE. Only slots of a committed wave leave embers - a point-defence ring
+    // ticking away at four rounds a second would carpet the hull in them and the cue
+    // would stop meaning "this flank just fired a broadside".
+    if (slot && heavy) this._emberTrail(ship, x, y, z);
+  }
+
+  /**
+   * Book-keeping for the wave in flight. Returns true when this shot was one of its
+   * slots, which is the ONLY thing that entitles it to embers and to a place in the
+   * terminal ring's centroid.
+   *
+   * The discriminator is `emitter`: `sim/salvo.js` hands `combat._fire` a shot object
+   * carrying the slot's barrel index, and the automatic path hands it nothing, so
+   * `combat.js:276` emits `emitter: undefined`. Without that test an AUTO beam array
+   * firing during the player's own broadside would be counted as part of the wave and
+   * would drag the ring's centroid off the flank that fired. Measured: a hull carrying
+   * both fires 5 rounds inside the window and exactly 4 of them are slots.
+   */
+  _noteSlot(ship, barrel, x, y, z, fx, fy, fz) {
+    if (barrel) this.salvoStats.perEmitter++; else this.salvoStats.mountCentre++;
+    const w = this._wave;
+    if (w.ship === null || ship !== w.ship || !barrel) return false;
+    w.index++;
+    w.n++;
+    w.cx += x; w.cy += y; w.cz += z;
+    w.fx += fx; w.fy += fy; w.fz += fz;
+    this.salvoStats.slots++;
+    return true;
+  }
+
+  /**
+   * `firing-feel.md` §5.6. Four cooling embers per heavy slot, drifting aft.
+   *
+   * NO SHIP VELOCITY is added, and that is the whole trick: the embers are left in
+   * world space where the gun was, so a cruiser making way slides out from under its
+   * own trail and the line of sparks stretches down the flank behind it. A cruiser at
+   * a dead stop still gets a trail, because `emberSlow..emberFast` gives them 12-30 m/s
+   * of their own in hull-aft. Zero cost beyond four particles in the existing pool.
+   */
+  _emberTrail(ship, x, y, z) {
+    const p = this.particles;
+    const a = shipForward(ship, this._axis);
+    p.begin(PKIND.EMBER);
+    p.setColor(FIRE.slag, 0.85);
+    p.spec.life = SALVO_VFX.emberLife + this.rng.next() * SALVO_VFX.emberJitter;
+    p.spec.size0 = 3.4;
+    p.spec.size1 = 1.2;
+    p.spec.drag = 0.30;
+    p.spec.turbulence = 1.6;
+    p.burst(
+      SALVO_VFX.embers, x, y, z, -a.x, -a.y, -a.z,
+      SALVO_VFX.emberSpread, SALVO_VFX.emberSlow, SALVO_VFX.emberFast,
+    );
+    this.salvoStats.embers += SALVO_VFX.embers;
+  }
+
+  /**
+   * A ripple has been armed. Emitted once, at arm time, strictly before any of its
+   * `WEAPON_FIRED`, so there is no ordering question between this and the shots.
+   *
+   * Nothing is drawn here on purpose. The visible tell at trigger is the guns stopping
+   * their traverse (`sim/salvo.js` locks it) and the armament strip flashing (W3-A);
+   * a flash of our own at t=0 would fire before the first gun does and read as a
+   * misfire.
+   */
+  onSalvoFired({ ship, side, slotCount }) {
+    const w = this._wave;
+    w.ship = ship ?? null;
+    w.side = side ?? null;
+    w.slots = slotCount | 0;
+    w.index = 0; w.n = 0;
+    w.cx = 0; w.cy = 0; w.cz = 0;
+    w.fx = 0; w.fy = 0; w.fz = 0;
+    this.salvoStats.waves++;
+  }
+
+  /**
+   * The last slot has resolved. ONE ring, at the centroid of the muzzles that fired,
+   * lying in the plane the guns fired through — the mean of their bearings, so a
+   * `side: 'all'` salvo whose bearings cancel falls back to the hull axis instead of
+   * producing a ring with an undefined normal.
+   *
+   * `fired === 0` draws nothing at all. A battery that was ordered to fire and put no
+   * round downrange must not be given the same full stop as one that emptied itself.
+   */
+  onSalvoComplete({ ship, fired }) {
+    const w = this._wave;
+    const mine = w.ship !== null && ship === w.ship;
+    if (mine && w.n > 0 && fired > 0) {
+      const inv = 1 / w.n;
+      let nx = w.fx, ny = w.fy, nz = w.fz;
+      const l = Math.hypot(nx, ny, nz);
+      if (l > 1e-3) {
+        nx /= l; ny /= l; nz /= l;
+      } else {
+        const a = shipForward(ship, this._axis);
+        nx = a.x; ny = a.y; nz = a.z;
+      }
+      this.rings.shockwave(
+        w.cx * inv, w.cy * inv, w.cz * inv, nx, ny, nz,
+        SALVO_VFX.ringR0, SALVO_VFX.ringR1, SALVO_VFX.ringLife,
+        this.palette(ship?.faction ?? 'player').muzzle,
+        SALVO_VFX.ringAlpha, SALVO_VFX.ringThickness,
+      );
+      this.salvoStats.rings++;
+    }
+    if (!mine) return;
+    w.ship = null; w.side = null; w.slots = 0; w.index = 0; w.n = 0;
   }
 
   /**
@@ -517,6 +730,8 @@ export class WeaponVFX {
 
   /** Rebuild the tracer, missile and beam buffers from the combat system. */
   sample(combat, time) {
+    this._wireAudio();
+
     const tr = this.tracers;
     tr.begin();
 
@@ -628,11 +843,32 @@ export class WeaponVFX {
     }
   }
 
+  /**
+   * Hand the bus to `audio/weapons.js` the first time the audio facade exists.
+   *
+   * Two property reads a frame, and it re-arms if the identity changes, so an audio
+   * stream that is disposed and reinstalled is picked up again. `WeaponAudio.listen` is
+   * idempotent and returns early on a bus it already holds, so calling it twice is free
+   * and calling it never — no audio installed, as in `probes/vfx.js` — costs nothing
+   * and degrades silently to no contour.
+   *
+   * This is the only line in `src/vfx` that touches `src/audio` and it exists because
+   * `installAudio` gives `WeaponAudio` no route to the event bus. See the request.
+   */
+  _wireAudio() {
+    const aw = this.world?.systems?.audio?.weapons ?? null;
+    if (aw === this._audioWeapons) return;
+    this._audioWeapons = aw;
+    if (aw && typeof aw.listen === 'function') aw.listen(this.world.bus);
+  }
+
   commitBeams(time) { this.beams.commit(time); }
 
   dispose() {
     this._offFired?.();
     this._offImpact?.();
+    this._offSalvo?.();
+    this._offSalvoDone?.();
     this.tracers.dispose();
     this.beams.dispose();
     this.missiles?.geometry.dispose();

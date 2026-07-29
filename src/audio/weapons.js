@@ -23,8 +23,51 @@
  * Concord's are higher, cleaner and tighter; derelict weapons are detuned into
  * ratios nobody would choose. Same instruments, different tuning - exactly how the
  * palette handles hulls.
+ *
+ * ===========================================================================
+ * THE RIPPLE — and why its wiring is where it is
+ * ===========================================================================
+ *
+ * `sim/salvo.js` walks a wave of single shots down one flank. Each of those shots
+ * arrives here as an ordinary `WEAPON_FIRED` through `audio/index.js` and gets its
+ * ordinary instrument, and left at that a ten-slot broadside is four identical cannon
+ * reports and six identical launches with gaps in them. Two things turn that into one
+ * event with a shape:
+ *
+ *   THE CONTOUR   slot k of n is answered by the MOUNT's own structure ringing, at
+ *                 `size x (1 + (k - (n-1)/2) x 0.018)` per `firing-feel.md` §5.5.2 —
+ *                 so the wave DESCENDS in pitch as it runs aft, and the ear can hear
+ *                 which way it is travelling with the screen off. It is a layer under
+ *                 the guns, not a modulation of them, deliberately: the gun voices are
+ *                 opened by `audio/index.js`, which is a different stream's file.
+ *
+ *   THE FULL STOP one `subThump` at 38 Hz on `EV.SALVO_COMPLETE`, once per wave and
+ *                 never per shot (§5.5.3). A wave that put NOTHING downrange gets the
+ *                 dry mechanical settle without the sub — a battery that fired six
+ *                 holes must not land like one that fired six rounds.
+ *
+ * WHY `listen(bus)` EXISTS AND IS PUBLIC. `installAudio` constructs `new
+ * WeaponAudio(core)` (`audio/index.js:94`) and dispatches every audio event in the
+ * game itself. `core` is an `AudioEngine`; it has an rng and three camera callbacks
+ * and no world, no bus, no ships. So this file has NO ROUTE to `EV.SALVO_FIRED`,
+ * `EV.WEAPON_FIRED` or `EV.SALVO_COMPLETE` on its own, and the installer that does is
+ * not this stream's file. `listen(bus)` is therefore the seam: it is idempotent, it
+ * owns its own unsubscribes, and it is called today from `vfx/weapons.js#_wireAudio`
+ * for want of anywhere better. The correct home is one line inside `installAudio`, and
+ * it is filed as a request; when it lands, nothing in THIS file changes.
+ *
+ * ONE THING THE SPEC ASKS FOR THAT IS NOT DONE, AND WHY. `firing-feel.md` §5.5 item 1
+ * wants the gate key made per-mount so guns in a battery stop suppressing each other.
+ * It is already per-mount: `audio/index.js:139-158` passes `key: mountKey(ship, mount)`
+ * from a `WeakMap` keyed on the mount object (`:54-64`), and `fire()` gates on
+ * `w:${type}:${key}`. And the gate cannot bite anyway — `AudioEngine.gate` compares
+ * against `minInterval * this.stretch` (`engine.js:537`), and `stretch` is `1/timeScale`
+ * (`:422`), so `GATE.cannon` 0.030 s scales with the clock exactly as `RIPPLE.stepMin`
+ * 0.070 s does and stays 2.33x under it at every time scale the game offers. The spec
+ * is describing a problem that does not exist.
  */
 
+import { EV } from '../core/events.js';
 import { clamp, gain as mkGain, biquad, osc, bufferSource, shaper, sweep, percEnv, startAt, stopAt } from './synth.js';
 import { noiseBurst, subThump, metalRing, chirp, beatingPair } from './parts.js';
 
@@ -38,6 +81,22 @@ const VOICE = {
 
 const voiceOf = (faction) => VOICE[faction] ?? VOICE.player;
 
+/** A destructurable stand-in, so a payload-less emit cannot throw inside a handler. */
+const EMPTY_EVENT = Object.freeze({});
+
+/**
+ * How big the WAVE is, which is not how big any one gun in it is.
+ *
+ * Deliberately hull-only and deliberately NOT `audio/index.js#weaponSize`: that helper
+ * is private to the installer and it mixes weapon damage into the answer, which is
+ * correct for a gun's own voice and wrong here. Every slot in one ripple must share one
+ * size or the contour is riding on two variables at once and stops being a direction cue.
+ * Computed once per wave, at arm time.
+ */
+const waveSize = (ship) => clamp(
+  0.70 + 0.55 * Math.min(1.8, (ship?.classDef?.length ?? 400) / 900), 0.70, 1.65,
+);
+
 /** Minimum seconds between two voices of the same weapon type, before time scaling. */
 const GATE = {
   cannon: 0.030, rail: 0.055, missile: 0.070, flak: 0.075, pd: 0.045,
@@ -47,12 +106,257 @@ const GATE = {
 /** How long a beam voice survives without a refresh before it releases. */
 const BEAM_HOLD = 0.16;
 
+/**
+ * THE WAVE. Every number here is `firing-feel.md` §6.6, or is derived from one that is.
+ *
+ * `sizeExp` is not a new constant: it is the 0.55 that `_cannon` already raises `size`
+ * to inside `_cannon` (`k = v.f / Math.pow(size, 0.55)`). §5.5 specifies the contour as a
+ * multiplier on `size`, so the frequency it actually produces is `size^-0.55` and that
+ * is what `salvoPitch` returns. Naming it here rather than re-deriving it means the
+ * contour cannot silently invert if that exponent is ever retuned.
+ */
+export const SALVO_AUDIO = {
+  pitchWalk: 0.018,    // per slot from the centre of the wave (§6.6 `pitchWalk`)
+  sizeExp: 0.55,       // `_cannon`'s own size->pitch exponent, quoted not invented
+  terminalHz: 38,      // (§6.6 `terminalSub`)
+  terminalTo: 30,      // where the sub settles; SUB_FLOOR in parts.js is 23
+  terminalTau: 0.42,   // s (§6.6)
+  thinAbove: 2.0,      // time scale above which the contour thins (§5.5, §6.6)
+  thinSize: 1.15,      // the survivors get heavier, so the wave keeps its weight
+  slotPeak: 0.34,
+  slotTau: 0.058,
+};
+
+/**
+ * The `size` multiplier for slot k of n, verbatim from `firing-feel.md` §5.5 item 2.
+ * Centred, so a wave's mean size is unchanged and only its SHAPE is added.
+ */
+export function salvoSize(index, slotCount) {
+  const n = Math.max(1, slotCount | 0);
+  return 1 + (index - (n - 1) / 2) * SALVO_AUDIO.pitchWalk;
+}
+
+/**
+ * ...and the frequency multiplier that size produces. Bigger gun, lower everything —
+ * so this DESCENDS across the wave, which is the direction cue: the ripple runs from
+ * the bow aft and the pitch falls as it goes.
+ */
+export function salvoPitch(index, slotCount) {
+  return Math.pow(salvoSize(index, slotCount), -SALVO_AUDIO.sizeExp);
+}
+
+/**
+ * §5.5's time-scale rule. Above 2x a 1.25 s sweep is under 310 ms of wall clock and
+ * every beat in it lands on top of the last, so the contour thins to the first slot,
+ * the last slot and every second slot between. The shape survives; the zip does not.
+ *
+ * Only the CONTOUR thins. The gun voices themselves are `audio/index.js`'s to thin and
+ * they are not thinned today — see the note in the header about where this wiring lives.
+ */
+export function salvoThinned(index, slotCount, timeScale) {
+  if (!(timeScale > SALVO_AUDIO.thinAbove)) return false;
+  if (index <= 0 || index >= slotCount - 1) return false;
+  return (index & 1) === 1;
+}
+
 export class WeaponAudio {
   /** @param {import('./engine.js').AudioEngine} audio */
   constructor(audio) {
     this.audio = audio;
     /** @type {Map<string, {handle:Object, until:number, type:string}>} */
     this.held = new Map();
+
+    /**
+     * The wave in flight. ONE record, mutated, never replaced. `lx/ly/lz` is a COPY of
+     * the last slot's muzzle position because `EV.WEAPON_FIRED.origin` is a Vector3 the
+     * salvo controller owns and rewrites every shot (`core/events.js:110-115`), and the
+     * terminal thump is scheduled after the wave is over.
+     */
+    this.wave = {
+      active: false, ship: null, side: null, n: 0, index: 0,
+      faction: 'player', size: 1, lx: 0, ly: 0, lz: 0,
+    };
+
+    /**
+     * Countable evidence that the wave was heard, for a headless harness that has no
+     * AudioContext to render. `slots` counts wave slots recognised, `voiced` those that
+     * actually opened a contour voice, `thinned` those the time-scale rule dropped.
+     * `voiced + thinned === slots` whenever the engine was ready.
+     */
+    this.stats = { waves: 0, slots: 0, voiced: 0, thinned: 0, terminal: 0, silent: 0, errors: 0 };
+
+    /** Scratch spatial record. Kept off `AudioEngine.spat`, which other handlers share. */
+    this._spat = { gain: 0, pan: 0, cutoff: 19000, distance: 0, audible: false };
+
+    this._bus = null;
+    this._offs = [];
+    // Bound once so `unlisten` can actually remove them.
+    this._onSalvoFired = (e) => this._guard(this._salvoFired, e);
+    this._onWeaponFired = (e) => this._guard(this._weaponFired, e);
+    this._onSalvoComplete = (e) => this._guard(this._salvoComplete, e);
+  }
+
+  // ------------------------------------------------------------------- the wave
+
+  /**
+   * Subscribe to the ripple. Idempotent: called again with the same bus it returns
+   * immediately, called with a different one it detaches the old first.
+   *
+   * @param {import('../core/events.js').EventBus} bus
+   * @returns {WeaponAudio} this
+   */
+  listen(bus) {
+    if (!bus || typeof bus.on !== 'function' || bus === this._bus) return this;
+    this.unlisten();
+    this._bus = bus;
+    this._offs.push(bus.on(EV.SALVO_FIRED, this._onSalvoFired));
+    this._offs.push(bus.on(EV.WEAPON_FIRED, this._onWeaponFired));
+    this._offs.push(bus.on(EV.SALVO_COMPLETE, this._onSalvoComplete));
+    return this;
+  }
+
+  /** Detach. Safe to call when never attached. */
+  unlisten() {
+    for (const off of this._offs) { try { off(); } catch { /* already detached */ } }
+    this._offs.length = 0;
+    this._bus = null;
+    this.wave.active = false;
+    this.wave.ship = null;
+  }
+
+  /**
+   * `EventBus.emit` catches a throwing handler and `console.error`s it, and
+   * `tools/smoke.mjs` fails the build on a console error. Audio is not worth failing
+   * a boot gate over, so every handler is swallowed here and counted instead — the
+   * same bargain `audio/index.js:110` already makes for its own listeners.
+   */
+  _guard(fn, e) {
+    try { fn.call(this, e ?? EMPTY_EVENT); } catch { this.stats.errors++; }
+  }
+
+  /**
+   * A ripple has been armed. Emitted ONCE, at arm time, strictly before any of its
+   * `WEAPON_FIRED` — so there is no handler-ordering question between this and the
+   * shots it describes, whatever order the installers ran in.
+   */
+  _salvoFired({ ship, side, slotCount }) {
+    const w = this.wave;
+    w.active = true;
+    w.ship = ship ?? null;
+    w.side = side ?? null;
+    w.n = Math.max(1, slotCount | 0);
+    w.index = 0;
+    w.faction = ship?.faction ?? 'player';
+    w.size = waveSize(ship);
+    const p = ship?.position;
+    if (p) { w.lx = p.x; w.ly = p.y; w.lz = p.z; }
+    this.stats.waves++;
+  }
+
+  /**
+   * One shot. Most of them are not ours: this handler runs for every gun in the battle.
+   *
+   * A shot belongs to the wave only if it came from the wave's hull AND names a barrel.
+   * `emitter` is an index into the ModuleDef's static `muzzles` when `sim/salvo.js`
+   * fired the shot and `undefined` on the automatic path (`combat.js:276`), so that one
+   * test keeps an AUTO flak cluster on the same hull out of the contour — otherwise a
+   * ten-slot broadside would sound like fourteen and the melody would be nonsense.
+   */
+  _weaponFired(e) {
+    const w = this.wave;
+    if (!w.active || e.ship !== w.ship) return;
+    if (!Number.isFinite(e.emitter)) return;
+    const k = w.index++;
+    const o = e.origin;
+    if (o && Number.isFinite(o.x)) { w.lx = o.x; w.ly = o.y; w.lz = o.z; }
+    this.stats.slots++;
+
+    const A = this.audio;
+    if (!A.ready || A.paused) return;
+    if (salvoThinned(k, w.n, A.timeScale)) { this.stats.thinned++; return; }
+    const spat = A.spatialAt(w.lx, w.ly, w.lz, this._spat);
+    if (!spat.audible) return;
+    if (this._slot(k, w.n, spat, e.type)) this.stats.voiced++;
+  }
+
+  /**
+   * The contour layer: the mount answering its own shot.
+   *
+   * Not a shell and not a report — those are the gun's instrument and they are already
+   * playing. This is the structure the gun is bolted to, and it is inharmonic on
+   * purpose (a struck plate, not a string). It is the layer that carries the pitch
+   * walk, because it is the only layer this file gets to open per slot.
+   */
+  _slot(index, slotCount, spat, type) {
+    const A = this.audio;
+    const w = this.wave;
+    const v = voiceOf(w.faction);
+    const thin = A.timeScale > SALVO_AUDIO.thinAbove ? SALVO_AUDIO.thinSize : 1;
+    // Bigger hull, lower structure; then the wave's own descent on top of it.
+    const k = (v.f / Math.pow(w.size, 0.35)) * salvoPitch(index, slotCount);
+    const soft = type === 'missile' ? 0.55 : 1;
+
+    const V = A.voice('weapons', spat, { duration: 0.34, priority: 0.5, reverb: 0.85 });
+    if (!V) return false;
+    const { input: d, t } = V;
+
+    metalRing(A, d, t, {
+      freqs: [388 * k * v.ratio, 611 * k, 917 * k * v.ratio],
+      q: 9 * v.q, peak: SALVO_AUDIO.slotPeak * thin * soft,
+      tau: SALVO_AUDIO.slotTau, exciteMs: 1.4,
+    });
+    // A little air moving in the casemate under it, so the ring has a body and does
+    // not read as a triangle-wave blip when six of them run past in a second.
+    noiseBurst(A, d, t + 0.004, {
+      buffer: 'brown', type: 'bandpass', freq: 250 * k, q: 1.2,
+      peak: 0.19 * thin * soft, attack: 0.0025, tau: 0.048,
+    });
+    return true;
+  }
+
+  /**
+   * The last slot has resolved. One sub, once, at the last muzzle that spoke.
+   *
+   * `fired === 0` gets the settle WITHOUT the sub. That distinction is the whole point
+   * of `EV.SALVO_COMPLETE` carrying `fired`/`dropped` separately: a wave of holes is a
+   * different event from a wave of rounds and it must not be given the same weight.
+   */
+  _salvoComplete({ ship, fired }) {
+    const w = this.wave;
+    if (!w.active) return;
+    if (w.ship !== null && ship !== w.ship) return;
+    w.active = false;
+    w.ship = null;
+
+    const A = this.audio;
+    if (!A.ready || A.paused) return;
+    const spat = A.spatialAt(w.lx, w.ly, w.lz, this._spat);
+    if (!spat.audible) return;
+    const V = A.voice('weapons', spat, { duration: 1.0, priority: 1.8, reverb: 1.25 });
+    if (!V) return;
+    const { input: d, t } = V;
+    const v = voiceOf(w.faction);
+    const k = v.f / Math.pow(w.size, 0.35);
+    const landed = fired > 0;
+
+    if (landed) {
+      subThump(A, d, t, {
+        f0: SALVO_AUDIO.terminalHz, f1: SALVO_AUDIO.terminalTo,
+        sweepTime: 0.16, peak: 0.66, attack: 0.007,
+        tau: SALVO_AUDIO.terminalTau, drive: v.drive * 0.45,
+      });
+      this.stats.terminal++;
+    } else {
+      this.stats.silent++;
+    }
+
+    // The battery going down together - the mechanical "clunk" of a whole flank
+    // reaching its cooldown on one frame. Louder when nothing fired, because then it
+    // is the ONLY thing the player gets and it has to be legible as a refusal.
+    metalRing(A, d, t + 0.030, {
+      freqs: [214 * k * v.ratio, 331 * k, 497 * k * v.ratio],
+      q: 6 * v.q, peak: landed ? 0.22 : 0.40, tau: 0.11, exciteMs: 2.6,
+    });
   }
 
   /**
@@ -408,5 +712,21 @@ export class WeaponAudio {
   stopAll(fade = 0.08) {
     for (const [, rec] of this.held) rec.handle.stop(fade);
     this.held.clear();
+    // A wave in flight when the world goes away has no completion coming, and a stale
+    // `active` would make the next hull's first shot slot 7 of a salvo nobody fired.
+    this.wave.active = false;
+    this.wave.ship = null;
+    this.wave.index = 0;
+  }
+
+  /**
+   * Release everything and stop listening. `installAudio.dispose()` calls `stopAll`
+   * today and not this, so the bus subscriptions outlive a disposed audio stream —
+   * harmless (every path early-returns on `!A.ready`) but it is a leak across an
+   * install/dispose cycle, and moving that one call is part of the filed request.
+   */
+  dispose(fade = 0.02) {
+    this.unlisten();
+    this.stopAll(fade);
   }
 }
