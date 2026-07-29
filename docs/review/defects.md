@@ -1452,12 +1452,16 @@ Everything below was measured on hardware (ANGLE/Metal, `tools/harness.mjs#raste
 returns `hardware` on darwin), not reasoned about. Where a number is quoted, the command
 that produced it is named.
 
-### D67 · The `close` look-review frame renders LITERAL BLACK, and the cause is one `pow()` in the engine-plume shader · OPEN — NOT FIXABLE IN THIS STREAM'S LANE
+### D67 · The `close` look-review frame renders LITERAL BLACK, and the cause is one `pow()` in the engine-plume shader · **STILL OPEN. DIAGNOSIS CONFIRMED, FIX NEVER LANDED** — see the W2-E section at the end of this file for the independent re-measurement
 `npm run capture -- --shots close` gives **luma 0.009, contrast 0.004**, trips both of
 `capture.mjs`'s own guards (`FRAME IS FLAT OR EMPTY`, `FRAME IS ESSENTIALLY BLACK`) and
-exits 1. Measured over five consecutive runs of the identical command: **4 black, 1
-through** — so it is not merely broken, it is *intermittent*, which is worse for an
-evidence frame than a consistent failure.
+exits 1. ~~Measured over five consecutive runs of the identical command: **4 black, 1
+through** — so it is not merely broken, it is *intermittent*.~~ **WITHDRAWN in Wave 2.**
+Those five runs predate `2232a8e` pinning this shot to `poi=giant-orbit`, so they were not
+five runs of the same shot. On HEAD it is 5 of 5 black to three decimals on hardware
+(n=5, `npm run capture`), and it renders cleanly under `NP_RASTER=swiftshader`
+(n=1, `tools/widediag.mjs close --assert`, 0.1692/0.2631). The rasteriser was what varied.
+See the W2-E section at the end of this file.
 
 **Everything obvious was ruled out first, by measurement, with `tools/widediag.mjs`:**
 
@@ -1602,3 +1606,413 @@ chosen — two POIs closer than the angular DIAMETER of the larger key disc
 and prints the 30 degree target as a WARN. Closing this properly means moving a sun
 vector in `src/world/celestials/index.js`, which is the Environment stream's file and
 changes what two POIs look like. Filed, not fixed.
+
+---
+
+## Wave 2 — the black close frame, and honest surface measurement (W2-E)
+
+Everything below was measured on hardware (`tools/harness.mjs#rasterMode()` returns
+`hardware` on darwin, ANGLE/Metal) except where a row says `NP_RASTER=swiftshader`. Every
+number names the command that produced it and its sample size.
+
+**How it was measured, because it matters this time.** Other Wave-2 agents were writing to
+`src/sim/**` and `src/input/**` while this ran, and a bundle is built from the whole tree.
+So every number below was produced in a detached `git worktree` at `30841d1` carrying
+**only this stream's five files** on top, with `node_modules` symlinked. A critic
+rebuilding it needs exactly that: `git worktree add --detach <dir> <this commit>` and run.
+
+Outstanding requests, all one-liners in other streams' files, collected here so they are
+not spread across four sections:
+
+| # | file | change | why |
+|---|---|---|---|
+| R1 | `src/vfx/engines.js:76` | `float t = vUv.y;` → `float t = clamp(vUv.y, 0.0, 1.0);` | D67. Unblocks `close` and `hud-close`. Verified a no-op on `wide`. **Verify on hardware, not SwiftShader.** |
+| R2 | `tools/probe.mjs` | add a `--query` passthrough | the seed-`#` hatch reseeds the world (D-W2E2) |
+| R3 | `docs/probes/cruiser.png` | regenerate, `node tools/probe.mjs cruiser` | committed frame is a spin capture, stale ≈3 points of calm |
+| R4 | `docs/design/ship-language.md:280` | the `ours` row 49.2/25.7/25.0 is unreproducible by `tools/surface.mjs` | D-W2E3; do not regenerate R3 without also doing this |
+| R5 | `docs/design/reference-research-2.md:424` | still cites 78.1/20.3/1.6 as the open D-INT1 number | superseded; see D-INT1 below |
+| R6 | `docs/review/widediag-close.png`, `-nocull.png` | delete or regenerate | committed at `30841d1`, i.e. before D-W2E1 — they are **graveyard** frames of a shot pinned to `giant-orbit`. Left untouched here rather than silently overwritten; `docs/review/**` binaries are not this stream's to commit. `node tools/widediag.mjs close` rewrites them correctly. |
+
+### D67 re-verified · The diagnosis was RIGHT. The fix was NEVER LANDED. · STILL OPEN
+
+The question this session was asked to settle was: is `close` still black because the fix
+was not landed, because it was landed and is insufficient, or because the diagnosis was
+wrong? **The fix was not landed.** `src/vfx/engines.js:76` still reads
+`float t = vUv.y;` on HEAD (`30841d1`); the previous stream filed it as a request because
+`src/vfx/**` is VFX's file and no Wave-1 or Wave-2 review agent owns it. Nothing was
+insufficient and nothing was wrong.
+
+Everything below was re-run from scratch this session in a **detached worktree at
+`30841d1` carrying only this stream's five files**, so that no other Wave-2 agent's
+in-flight edits could be in the bundle. Nothing here is quoted from a previous session.
+
+**It is not intermittent.** `npm run capture -- --out … --shots close`, five consecutive
+invocations, each a fresh `vite build` and a fresh browser:
+
+```
+shot close   calls= 135 tris=   72553  luma=0.009 contrast=0.004 clipped=    0%
+shot close   calls= 135 tris=   72553  luma=0.009 contrast=0.004 clipped=    0%
+shot close   calls= 135 tris=   72553  luma=0.009 contrast=0.004 clipped=    0%
+shot close   calls= 135 tris=   72553  luma=0.009 contrast=0.004 clipped=    0%
+shot close   calls= 135 tris=   72553  luma=0.009 contrast=0.004 clipped=    0%
+```
+
+5 of 5 black, identical to three decimals, exit 1 every time. The Wave-1 D67 note above
+records "4 black, 1 through" and calls the defect intermittent; that was measured before
+`2232a8e` pinned this shot to `poi=giant-orbit`, so those five runs were not five runs of
+the same shot. **The Wave-1 intermittency claim is withdrawn** — see the raster finding
+below for what was actually varying.
+
+#### The bisect
+
+`node tools/widediag.mjs close --bisect` — 16 single-variable probes, each applied alone
+and reverted, over a 320×180 sample (**57 600 px**) of a 2560×1440 frame:
+
+| probe | luma | contrast | dLuma |
+|---|---|---|---|
+| *(baseline, HEAD)* | 0.0104 | 0.0128 | — |
+| `vfx:ALL` hidden | 0.1690 | 0.2621 | +0.1586 |
+| **`vfx:plumes` hidden** | **0.1689** | **0.2622** | **+0.1585** |
+| `post:bloom` disabled | 0.1658 | 0.2600 | +0.1554 |
+| `post:grade` disabled | 0.0013 | 0.0197 | −0.0091 |
+| `post:output` disabled | 0.0022 | 0.0062 | −0.0082 |
+| `msaa:samples=0` | 0.1688 | 0.2620 | +0.1584 |
+| **`fix:clamp-vUv.y`** | **0.1690** | **0.2621** | **+0.1586** |
+| *(baseline again)* | 0.0103 | 0.0127 | −0.0001 (clean, no residue) |
+
+The nine not listed — `vfx:weapons`, `vfx:shields`, `vfx:explosions`, `vfx:damage`,
+`vfx:rings`, `vfx:particles`, `post:gtao`, `post:godrays`, `post:smaa` — move the frame
+by at most 0.0002, i.e. not at all. The two that make it *darker* are the grade and the
+tone-map output, which is what removing a tone mapper does and is not a clue.
+
+That is a causal chain, not a correlation:
+
+- **`vfx:plumes` alone accounts for the entire effect** — 0.1689 against 0.1690 for
+  hiding *all* of VFX. Nothing else in the scene contributes anything.
+- **`post:bloom` is the vector, not the source.** Disabling it recovers 98% of the
+  frame, which is what a separable Gaussian smearing one poisoned texel does.
+- **The bad value is not in the CPU data.** `--assert` scans the live prefix of the
+  plume instance buffers every run: **2 live instances of 96 capacity, 0 non-finite
+  floats** across origin, dir, params and colour. So `engines.pushShip` and the ship
+  state it reads are clean and the fault is downstream of them, in the shader.
+- **`msaa:samples=0` is the mechanism.** Recovering the frame by dropping the composer
+  target's sample count *with the plumes still drawn* is only explicable if the fault is
+  a partially covered edge fragment shaded at a pixel centre outside the primitive.
+  Non-centroid varying interpolation then extrapolates, `vUv.y` leaves `[0,1]`,
+  `pow(t, 0.72)` at `engines.js:82` is NaN for negative `t`, and the
+  `if (edge <= 0.0) discard` at `engines.js:84` cannot catch it because every comparison
+  against NaN is false.
+- **The one-line fix is exactly sufficient.** `float t = clamp(vUv.y, 0.0, 1.0);` patched
+  into the live material and recompiled gives 0.1690 / 0.2621 — *the same frame as
+  deleting the plume mesh entirely*, which is precisely what a correct clamp should
+  produce, and it does it while still drawing the plumes.
+
+The frame is not marginal either way: HEAD is **99.28% near-black**, the clamped frame
+**68.26%**, and the hull fills it.
+
+#### THE NEW FINDING, and it is why this survived two waves of review
+
+**D67 does not reproduce under SwiftShader.** Same commit, same shot, same command, one
+environment variable:
+
+| raster | `close` HEAD | `close` + runtime clamp | verdict |
+|---|---|---|---|
+| hardware (ANGLE/Metal) | 0.0104 / 0.0129, 99.28% near-black | 0.1690 / 0.2621 | **FAIL** |
+| `NP_RASTER=swiftshader` | **0.1692 / 0.2631**, 68.31% near-black | 0.1693 / 0.2631 | PASS |
+
+`composerSamples` reads **4 under both**, so this is not a difference in what three.js
+asks for — it is a difference in what the driver does with a varying at a partially
+covered fragment, which GLSL leaves undefined outside the primitive. Consequences, all
+of which have already bitten this project:
+
+1. `docs/review/look-surface/close.png` — the frame D-INT1's 78.1/20.3/1.6 was measured
+   from — is a **perfectly good frame**: luma 0.1337, contrast 0.2104, 39.95% near-black
+   over 921 600 px. It was added by `64590fd` at 1280×720 with the HUD up (that commit's
+   `close` shot has neither a `hud` flag nor a `query`) and its own manifest records
+   `"fps": 4`, which is SwiftShader. It is not evidence that this shot renders, and the
+   fact that it exists is not a contradiction of anything above.
+2. **Anyone verifying the fix under SwiftShader will measure no change** and can
+   reasonably conclude the change is unnecessary. It must be verified on hardware.
+3. This is the honest explanation for the "intermittent" report: not one shot flickering,
+   but different agents on different rasterisers.
+
+#### The gate
+
+D67 has now survived two waves as prose — a paragraph in this file, a paragraph in
+`tools/shots.json`, a request in a commit message — and prose does not go red. So:
+
+```
+node tools/widediag.mjs close --assert          # exit 1
+node tools/widediag.mjs wide  --assert          # exit 0
+npm run capture -- --shots close                # exit 1
+npm run capture -- --shots wide                 # exit 0
+```
+
+`--assert` agrees with `npm run capture` exit-for-exit (verified, all four above), and
+adds the thing capture cannot say: *which of the three states this defect is in.* It
+measures the frame, then applies the clamp to the live material and measures again, and
+branches:
+
+- frame renders → **PASS**, plus a WARN that the defect is latent while the line is still
+  unclamped on disk, and a louder WARN naming the rasteriser if you are on SwiftShader.
+- frame black **and** the clamp recovers it → **FAIL: "D67 IS NOT LANDED"**, and it
+  prints the patch.
+- frame black **and** the clamp does not → **FAIL: "the diagnosis no longer explains this
+  frame"**.
+- frame black **and** the line is already clamped on disk → **FAIL: "landed and
+  insufficient"**.
+
+A gate that cannot tell those apart is exactly why this defect had to be diagnosed from
+scratch twice. Real output, hardware, this tree:
+
+```
+ASSERT  shot "close" against tools/capture.mjs's own three guards
+  src/vfx/engines.js:76 on disk: UNCLAMPED
+  plume instance buffers: 2 live of 96, 0 non-finite floats  -> the bad value is NOT in the CPU data
+  HEAD          luma=0.0104 contrast=0.0129 nearBlack=99.28%  [N=57600 px]
+  + clamp       luma=0.1690 contrast=0.2621 nearBlack=68.26%  [N=57600 px]
+  FAIL  the frame is unusable and ONE LINE FIXES IT. D67 IS NOT LANDED.
+        capture guard: FRAME IS FLAT OR EMPTY (contrast 0.0129 < 0.02)
+        capture guard: FRAME IS ESSENTIALLY BLACK (99.28% > 97% near-black)
+        THE PATCH, src/vfx/engines.js line 76:
+          -  float t = vUv.y;
+          +  float t = clamp(vUv.y, 0.0, 1.0);
+        Not applied here: src/vfx/** is the VFX stream's file. Filed as a request.
+```
+
+**The `wide` shot is the control that makes the request safe to accept.** On a frame that
+already renders, the clamp measures 0.0520 / 0.1045 with it and 0.0520 / 0.1045 without —
+it changes nothing. So the requested line is a no-op everywhere the shader is currently
+correct and a total recovery where it is not.
+
+**What was NOT done, deliberately.** `tools/shots.json` could hide `vfx:plumes` in the
+`close` setup string and the shot would go green today. Rejected: the plumes are part of
+the render, not chrome over it (unlike the HUD, which the shot already suppresses), and
+suppressing them would delete the only automated detector this defect has. A check that
+measures nothing prints "ok".
+
+**What was done instead.** `node tools/widediag.mjs close --with-fix` writes
+`docs/review/widediag-close-clamped.png` — the counterfactual, clamp applied at runtime —
+under a deliberately different name, and prints two `!!` lines saying it is not a frame of
+this commit. The art review can look at the hull today without anybody being able to file
+the result as evidence about HEAD.
+
+**And the art review is less blocked than it was told it is.** `close` is required for the
+in-game look questions — silhouette against a lit backdrop, and the `hud-close` occlusion
+diff, which cannot be computed at all until this lands. It is **not** required for the
+60/30/10 surface verdict: `ship-language.md` §3's method masks a hull on void and its own
+"ours" row names `docs/probes/cruiser.png`. That measurement runs today, on the cruiser
+probe, and is reported under D-INT1 below.
+
+**Request, restated and now unambiguous** — one line, `src/vfx/engines.js:76`:
+
+```glsl
+-  float t = vUv.y;                        // 0 at the bell, 1 at the tail
++  float t = clamp(vUv.y, 0.0, 1.0);       // 0 at the bell, 1 at the tail
+```
+
+### D-W2E1 · `tools/widediag.mjs` ignored the shot's own `query`, so every `close` diagnosis was measured at the wrong POI · FIXED
+
+`widediag.mjs:24` called `openGame(...)` with a hard-coded `query: 'capture=1'` while
+loading the shot's `setup` string out of `tools/shots.json`. Five of the eight shots —
+`close`, `three-quarter`, `wide`, `hud-close`, `hud-three-quarter` — carry
+`"query": "poi=giant-orbit"`, and the boot default is `START_POI` (`'graveyard'`). So the
+tool posed the camera exactly as the shot asks and then measured it **somewhere else**,
+under a different key light, a different palette and a different celestial set.
+
+The evidence was in its own output all along: for a shot that says `poi=giant-orbit` it
+printed a lighting block named `poi-key:graveyard`.
+
+Consequence for the record: the "key is FRONTAL, `dot = +0.978`" line quoted in D67, in
+`tools/shots.json` and in the Wave-2 briefing is a **graveyard** number. Re-measured on
+this tree at the graveyard the graveyard key is `−0.864`, i.e. the *shadow* side — the
++0.978 predates the `pois.js` sun-direction fix in `2232a8e`, which moved all three keys.
+At the shot's real POI the framing conclusions still hold (player dead centre at ndc
+`[0,0]`, 1203 m, 0 of 47 meshes culled, `cruiser:lod1`/`lod2` hidden), so nothing built on
+them collapses — but they were true by luck, not by measurement.
+
+Fixed by passing `(shot.query ? shot.query + '&' : '') + 'capture=1'`. The tool now also
+prints the POI the shot asked for beside the POI the key light says it got, and flags a
+mismatch, so this cannot recur silently.
+
+Two further gaps in the same tool, both closed:
+
+- **It measured no pixels.** It reported framing, culling, lighting and LOD — everything
+  except whether the frame was bright — while being the designated instrument for "why is
+  this frame black". It now measures the canvas with the same luminance weights and the
+  same two thresholds `tools/capture.mjs` gates on, and prints the sample size.
+- **It could not isolate a cause.** `--bisect` was added: one variable at a time, reverted
+  between probes, with the baseline re-measured at the end and a `PROBES LEFT RESIDUE`
+  warning if the sequence did not return to where it started.
+
+### D-W2E2 · The cruiser probe's evidence frame had a frame-rate-dependent pose · FIXED
+
+`src/probes/cruiser.js` declared the default `orbit` view with `spin: true`, and
+`update()` advances `pose.yaw` by `dt * 0.10` every rendered frame. `tools/probe.mjs`
+screenshots after a fixed **count** of frames (`--frames`, default 90), not after a fixed
+amount of time. So the pose in the committed PNG is `0.95 + 0.10 × (wall-clock seconds
+those 90 frames took)`:
+
+| raster | 90 frames | yaw at screenshot |
+|---|---|---|
+| hardware, ~60 fps | 1.5 s | 1.10 rad |
+| SwiftShader review container, ~5 fps | 18 s | 2.75 rad |
+
+That is 94 degrees. `docs/probes/cruiser.png` is the image `ship-language.md:280` names in
+its own "ours" row — the project's entire surface-frequency number is quoted off it — so
+the reference measurement was framed differently on every machine and at every frame rate.
+
+Measured consequence, `node tools/surface.mjs --frame ship`, 1600×900, hardware raster.
+The spin-on rows were produced by checking `src/probes/cruiser.js` back out at `30841d1`
+in the verification worktree and re-rendering, so both halves are real renders of this
+tree and neither is quoted from an earlier session:
+
+| | calm | medium | dense | tiles | run-to-run range |
+|---|---|---|---|---|---|
+| spin running (n=5) | 44.1–44.6 | 45.5–46.6 | 9.1–9.9 | 505–509 | 0.5 / 1.1 / 0.8 |
+| spin off (n=4) | 47.0–47.6 | 44.0–44.6 | 8.0–8.6 | 498–501 | 0.6 / 0.6 / 0.6 |
+
+**Be careful what that shows: the obvious reading is wrong, and an earlier draft of this
+entry had it wrong.** The run-to-run *spread* is barely different — 0.5 of calm with the
+spin on, 0.6 with it off. The defect is the **≈3-point systematic offset in calm** between
+the two, produced by nothing but ≈0.15 rad of unintended yaw on a machine that happened to
+be fast; and that offset is a function of frame rate, so on the SwiftShader review
+container it is not 0.15 rad but ≈1.8, and not three points but unbounded. The argument is
+*the subject depends on the GPU*, not *the variance is larger*.
+
+The committed `docs/probes/cruiser.png` reads **44.3 / 47.3 / 8.4** — inside the spin-on
+distribution and outside the spin-off one. It is a spin capture, and it is stale.
+
+Fixed: `orbit` is now `spin: false`, like every other view. The spin is one query
+parameter away — `probe.html?p=cruiser&spin=1` — for looking at the hull live.
+
+**A trap in the CLI route, found while checking that and worth its own line.**
+`tools/probe.mjs` forwards only `--seed`, so from the command line the escape hatch is the
+seed-`#` fallback at `src/probes/cruiser.js:120`: `--seed 'probe:cruiser#spin=1'`. But
+`src/probe.js:40` hands that whole string to `new World({ seed })` and `src/core/rng.js:19`
+hashes it entire, so **any use of the `#` hatch reseeds the world.** Measured:
+`--seed 'probe:cruiser#spin=0'` renders 47.8 / 42.8 / 9.4 against the default seed's
+47.0 / 44.6 / 8.4 on the identical view — medium moves 1.8 points, three times the
+0.6-point same-seed noise floor. It is a different ship. Use it to look, never to measure
+against §3. The real fix is a `--query` passthrough in `tools/probe.mjs`, which is
+integration's file — requested, not made.
+
+**Request:** `docs/probes/cruiser.png` still holds a spin-pose capture and is stale by
+about three points of calm. Regenerating it is `node tools/probe.mjs cruiser --out
+docs/probes/cruiser.png`, but `docs/probes/**` is not in this stream's write set. Whoever
+regenerates it must also correct `ship-language.md:280` — see D-W2E3 before doing so.
+
+### D-W2E3 · `tools/surface.mjs` and `ship-language.md` §3 are not the same operator, and §3's six reference rows can never be re-measured · OPEN (measured, not fixable here)
+
+Commit `1e6c5e2` is the commit that wrote §3's reference table AND the
+`docs/probes/cruiser.png` its "ours" row was measured from. Running today's tool on that
+exact blob:
+
+```
+git show 1e6c5e2:docs/probes/cruiser.png > /tmp/c.png
+node tools/surface.mjs --frame ship /tmp/c.png
+```
+
+| | calm | medium | dense |
+|---|---|---|---|
+| §3's table, "ours" row | 49.2% | 25.7% | 25.0% |
+| `tools/surface.mjs`, same blob | **73.4%** | **26.3%** | **0.3%** |
+| difference | **+24.2** | **+0.6** | **−24.7** |
+
+The two agree on **medium to 0.6 points** and disagree on both tails by 25. That is the
+signature of a gradient operator with a different scale: §3's produced values large enough
+to push a quarter of the hull past the 0.14 "dense" threshold where this one leaves them
+under 0.045. Resolution is not the explanation — the same probe rendered natively at
+900 px wide and downsampled from 1600 px differ by about one point (46.0/45.7/8.3 vs
+44.9/45.3/9.9), not twenty-five.
+
+**Which operator is right cannot be settled, and never will be.** §3's six reference rows
+were measured off Star Citizen and Homeworld renders which are not in this repository and
+cannot be put in it — `ARCHITECTURE.md:22`, *"No image files."* The band this tool gates
+on is therefore built from six permanently unreproducible measurements.
+
+What was done about it, without moving the gate:
+
+- The gate stays exactly where it was. It is red on HEAD and honestly red.
+- The disagreement is printed as a **PROVENANCE** block on every `--frame ship` run, so a
+  calm or dense number can no longer be quoted against §3's table without it.
+- `node tools/surface.mjs --calibrate` was added, which gives the thresholds a meaning
+  that needs no reference image. It runs the tool's exact operator over nine synthetic
+  targets whose response is derived analytically — flat field, sine gratings at four
+  periods on both axes, square waves — and **fails** if the operator misses a prediction.
+  It currently matches all nine to four decimal places.
+
+Two things fell out of that calibration and both are worth having:
+
+1. **A tile's value IS its mean per-pixel luma slope.** `calm < 0.045` means the surface
+   changes by under 4.5% of the value range per pixel; `dense > 0.14` means over 14%. At
+   §3's stated 900 px across a 1400 m hull (1.56 m/px) a dense tile averages a 14% value
+   change every metre and a half of hull.
+2. **The dense tier is not reachable by a gradient at all.** A sustained 0.14 luma/px
+   slope exhausts the whole `[0,1]` range in seven pixels, so no 8×8 tile of an LDR image
+   can contain one — the first version of the sweep tried sustained ramps and every one of
+   them clipped flat, which is how this was found. Dense can only be reached by
+   *oscillation*: measured, a 4 px full-amplitude sine and an 8 px square wave both clear
+   it, a 16 px sine does not. §3's dense budget is a budget on alternation at the scale of
+   a few metres of hull. It is not a budget on how steeply a surface shades.
+
+### D-W2E4 · `tools/surface.mjs` would happily compute a frequency split from a black frame · FIXED
+
+Nothing stopped `--frame ship` being pointed at an unrenderable PNG. On a near-black frame
+the `luma > 0.055` mask picks up the noise floor, clears the 120-tile sample-size floor
+easily, and returns a confident split — which would have been reported as art direction.
+Given that `close` has been rendering at luma 0.0104 / contrast 0.0128 for two waves, this
+was one regenerated PNG away from happening.
+
+The tool now computes whole-frame statistics *before* masking and refuses, with a non-zero
+exit, any image that trips `tools/capture.mjs`'s own two guards (contrast < 0.02, or
+> 97% near-black). Same two numbers as `capture.mjs`, deliberately, so the two agree by
+construction. It also now prints, per image, the source resolution, the resolution the
+frequency pass actually ran at and the resample ratio; and when more than one image is
+given, the spread across them — because the usual reason to pass several is to ask whether
+a one-point movement is real.
+
+### D-INT1 · Surface direction · **CLOSED ON DIRECTION: the hull is too MEDIUM, not too calm**
+
+The Wave-1 correction was right and survives a harder look. Restating it with this
+session's numbers and with the confidence each column actually carries:
+
+| framing | image | mask | tiles | calm | medium | dense |
+|---|---|---|---|---|---|---|
+| `ship` | cruiser probe, 4 fresh renders, hardware | 7.9% | 498–501 | 47.0–47.6 | **44.0–44.6** | 8.0–8.6 |
+| `scene` | `docs/review/look-surface/close.png` | 29.9% | 1781 | 78.1 | 20.3 | 1.6 |
+| `face` | the same frame, `--crop 0.30,0.39,0.62,0.50` | 90.5% | 2111 | 97.2 | 2.8 | 0.0 |
+| — | §3 six-reference envelope | | | 51.3–79.8 | **10.1–39.0** | 6.8–22.1 |
+| — | §3's authored rule | | | ≥ 60 | **≤ 28** | ≤ 12 |
+
+**The honest measurement for the 60/30/10 target is the `ship` framing, and within it the
+`medium` column.** Four reasons, in order of strength:
+
+1. **Framing.** §3's method masks a hull, and its own "ours" row names a probe render.
+   `look-surface/close.png` is a game frame whose mask is 29.9% of the picture and
+   contains lit asteroids and nebula. D-INT1's original 78.1/20.3/1.6 is a correct
+   application of the method to the wrong subject, and it pointed at the wrong tier.
+2. **Medium is the column that survives the operator disagreement.** It is the only one of
+   the three where this tool and §3's table agree on the one image both have measured
+   (26.3 vs 25.7, D-W2E3). Calm and dense are 25 points apart between the two operators
+   and cannot carry a verdict against that table at all.
+3. **It clears its own noise floor more than eight times over.** Medium reads 44.0–44.6
+   over four renders — a spread of 0.6 points — against a reference ceiling of 39.0 and
+   §3's own authored ceiling of 28. The exceedance is 5.0 to 16.6 points.
+4. **The `scene` row is not even a frame of this codebase.** `look-surface/close.png` was
+   captured by `64590fd` at 1280×720, HUD up, on SwiftShader (`"fps": 4` in its own
+   manifest). The same shot on HEAD renders black on hardware — see the raster finding in
+   the D67 entry above. A row that cannot be regenerated cannot be a verdict, and the
+   `close` shot going green will not regenerate it either: it will produce a *different*
+   frame, at 1600×900, HUD suppressed, pinned to `giant-orbit`.
+
+`docs/design/reference-research-2.md:424` still quotes the old 78.1/20.3/1.6 as the open
+D-INT1 number, and `ship-language.md:280` still carries the 49.2/25.7/25.0 row that
+D-W2E3 shows this tool cannot reproduce. Both are outside this stream's write set and are
+filed as requests.
+
+**What this does NOT license.** "Too medium" means there is nothing for the detail to be
+detail against — §3's own description of the `cruiser-modules.png` failure. The remedy is
+*calmer* large faces, not more of anything. `ARCHITECTURE.md:24-26` and FLAG 5 stand:
+there are 11 triangles of headroom and adding surface noise is forbidden. Nothing in this
+stream added any.

@@ -13,7 +13,9 @@
  *                    three-quarter render cannot check is that the bay is a THROUGH
  *                    SLOT rather than a recess, and the only proof of that is seeing
  *                    background come out the other side of it.
- *   spin=0|1         slow orbit. Default 1 for `orbit`, 0 for fixed views.
+ *   spin=0|1         slow orbit. Default 0 for EVERY view — see the note on VIEWS.
+ *                    A spinning pose makes the committed PNG a function of frame rate,
+ *                    and this probe's output is a measurement input for §3.
  *   dist=<metres>    camera distance override.
  *   sockets=1        draw the six hardpoint sockets as coloured markers with their
  *                    outward normals, so a module author can see exactly where the
@@ -61,8 +63,57 @@ const POI = 'giant-orbit';
  * not a recess, and the only way to check that is to put the camera under it and see
  * whether background comes through.
  */
+/*
+ * SPIN IS OFF BY DEFAULT, AND THAT IS A MEASUREMENT DECISION, NOT A TASTE ONE.
+ *
+ * `update()` below advances `pose.yaw` by `dt * 0.10` every rendered frame, and
+ * `tools/probe.mjs` screenshots after a fixed COUNT of frames (`--frames`, default 90),
+ * not after a fixed amount of time. So with `spin: true` the pose in the committed PNG
+ * is `0.95 + 0.10 x (wall-clock seconds those 90 frames took)`:
+ *
+ *   hardware raster, ~60 fps    90 frames = 1.5 s   ->  yaw 1.10 rad
+ *   SwiftShader review container, ~5 fps  90 frames = 18 s  ->  yaw 2.75 rad
+ *
+ * That is 94 degrees. `docs/probes/cruiser.png` is the image `ship-language.md` §3
+ * names in its own "ours" row - the project's own surface-frequency number is quoted
+ * off it - and with the spin running that image is a different view of the ship on
+ * every machine and at every frame rate. A reference frame whose framing depends on
+ * how fast the GPU is cannot be compared to its own predecessor.
+ *
+ * MEASURED, `node tools/surface.mjs --frame ship`, 1600x900, hardware raster, on the
+ * tree that this comment ships with (spin off) and on 30841d1 (spin on):
+ *
+ *                     calm         medium       dense      tiles on subject
+ *   spin on,  n=5   44.1-44.6    45.5-46.6    9.1-9.9      505-509
+ *   spin off, n=4   47.0-47.6    44.0-44.6    8.0-8.6      498-501
+ *
+ * BE PRECISE ABOUT WHAT THAT SHOWS, because the obvious reading is wrong. The
+ * run-to-run SPREAD is not much worse with the spin on (0.5 of calm either way). The
+ * problem is the ~3-point SYSTEMATIC offset in calm between the two, produced by
+ * nothing but 0.15 rad of unintended yaw on a machine that happened to be fast - and
+ * that offset is a function of frame rate, so on the SwiftShader review container it
+ * is not 0.15 rad, it is 1.8, and it is not three points, it is unbounded. A number
+ * quoted from a spinning probe is a number whose subject depends on the GPU.
+ *
+ * `docs/probes/cruiser.png` as committed reads 44.3/47.3/8.4, which is inside the
+ * spin-on distribution and outside the spin-off one. It is a spin capture and it is
+ * stale. Regenerating it is one command, but `docs/probes/**` is not this stream's.
+ *
+ * The spin still exists for looking at the hull live: `probe.html?p=cruiser&spin=1`.
+ *
+ * FROM THE CLI IT IS NOT FREE, and this is worth knowing before quoting anything
+ * measured through it. `tools/probe.mjs` forwards only `--seed`, so the CLI route is
+ * `--seed 'probe:cruiser#spin=1'` (see the seed-'#' fallback in setup below). But
+ * `src/probe.js:40` passes that whole string to `new World({ seed })` and
+ * `core/rng.js:19` hashes it entire, so ANY use of the '#' escape hatch reseeds the
+ * world. Measured: `--seed 'probe:cruiser#spin=0'` renders 47.8/42.8/9.4 against the
+ * default seed's 47.0/44.6/8.4 on the same view - medium moves 1.8 points, three times
+ * the 0.6-point same-seed noise floor. It is a different ship. Use it to LOOK, never
+ * to measure against ship-language.md §3. The fix is a `--query` passthrough in
+ * tools/probe.mjs, which is integration's file; requested, not made.
+ */
 const VIEWS = {
-  orbit: { distance: 2050, pitch: 0.28, yaw: 0.95, spin: true },
+  orbit: { distance: 2050, pitch: 0.28, yaw: 0.95, spin: false },
   quarter: { distance: 1950, pitch: 0.34, yaw: 2.30, spin: false },
   top: { distance: 2100, pitch: 1.5, yaw: Math.PI * 0.5, spin: false },
   side: { distance: 2100, pitch: 0.002, yaw: Math.PI * 0.5, spin: false },
@@ -301,6 +352,10 @@ export default {
     ctx.signature = sig;
   },
 
+  /**
+   * Opt-in only. See the note on VIEWS: a spinning pose makes the committed frame a
+   * function of frame rate, and `docs/probes/cruiser.png` is a measurement input.
+   */
   update(dt, ctx) {
     if (ctx.spin) ctx.pose.yaw += dt * 0.10;
   },
