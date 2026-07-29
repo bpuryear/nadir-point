@@ -224,7 +224,14 @@ export class TacticalCamera {
       this.focus.y = 0;
       this._focusTarget.copy(this.focus);
       // Yaw takes the shortest arc; zoom interpolates in log space.
-      this.yaw = s.fromYaw + shortestArc(s.fromYaw, this._yawTarget) * 0;
+      //
+      // The arc term used to be multiplied by 0 rather than by k, which pinned yaw to
+      // s.fromYaw for the whole snap while focus and zoom interpolated correctly. A snap
+      // therefore translated and zoomed toward its target but never turned to face it,
+      // and anything that set a yaw target while a snap was live had it overwritten every
+      // frame -- which is why the `close` and `wide` capture shots, both of which set
+      // yaw and zoom directly, came out framed on empty space.
+      this.yaw = s.fromYaw + shortestArc(s.fromYaw, this._yawTarget) * k;
       this._zoomTTarget = s.fromZoomT + (s.toZoomT - s.fromZoomT) * k;
       this.zoomT = this._zoomTTarget;
       if (s.t >= s.duration) {

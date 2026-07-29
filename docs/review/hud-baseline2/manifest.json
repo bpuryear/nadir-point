@@ -1,0 +1,68 @@
+[
+  {
+    "id": "close",
+    "ok": false,
+    "warnings": [
+      "FRAME IS FLAT OR EMPTY (contrast < 0.02)",
+      "FRAME IS ESSENTIALLY BLACK (>97% near-black)"
+    ],
+    "frame": {
+      "meanLuma": 0.0104,
+      "contrast": 0.0126,
+      "clippedPct": 0,
+      "nearBlackPct": 99.2
+    },
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/hud-baseline2/close.png",
+    "stats": {
+      "fps": 70,
+      "cpuMs": 5.399999988078889,
+      "stepMs": 0.09999996423721313,
+      "renderMs": 0.800000011920929,
+      "steps": 1,
+      "calls": 135,
+      "triangles": 72553,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 72,
+      "textures": 78
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "wide",
+    "ok": false,
+    "warnings": [
+      "FRAME IS FLAT OR EMPTY (contrast < 0.02)",
+      "FRAME IS ESSENTIALLY BLACK (>97% near-black)"
+    ],
+    "frame": {
+      "meanLuma": 0.0104,
+      "contrast": 0.0122,
+      "clippedPct": 0,
+      "nearBlackPct": 99.38
+    },
+    "description": "Maximum tactical zoom. Cruiser a bright speck against the gas giant. The shot that sells the game, and it only sells anything if the giant is actually in frame: the camera yaw is SOLVED from the celestial's own direction rather than guessed at 1.7 rad, because a max-zoom frame with no large object and no small object cannot answer 'how big is this'. HUD suppressed, like the other look-review frames.",
+    "hud": false,
+    "file": "docs/review/hud-baseline2/wide.png",
+    "stats": {
+      "fps": 79.16089452184315,
+      "cpuMs": 3.79999998807898,
+      "stepMs": 0,
+      "renderMs": 1,
+      "steps": 0,
+      "calls": 102,
+      "triangles": 66133,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 64,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]
