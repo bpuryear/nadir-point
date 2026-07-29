@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { COMBAT_PLANE_Y } from '../core/units.js';
 import { Ship } from '../sim/ship.js';
 import { CombatSystem } from '../sim/combat.js';
-import { allShipClasses, getShipClass } from '../core/contracts.js';
+import { allShipClasses } from '../core/contracts.js';
+import { registerPlayerCruiser, applyClassHandling } from '../camera/feel.js';
 
 /**
  * THE COMMITTED BENCHMARK SCENE.
@@ -57,18 +58,18 @@ export default {
     const hullResult = cruiserMod.buildCruiser(bctx());
     world.hullResult = hullResult;
 
-    const playerClass = getShipClass('player_cruiser') ?? {
-      id: 'bench_cruiser', name: 'Salvager Cruiser', faction: 'player', role: 'cruiser',
-      length: 1400, mass: 62000, maxSpeed: 140, accel: 14, turnRate: 0.22,
-      hullHP: 12000, triBudget: 2000, planeLocked: true,
-      build: () => hullResult.root,
-      subsystems: hullResult.subsystems ?? [],
-      weapons: [],
-    };
+    // The registered class, not a literal. This file used to carry its own
+    // 62000/140/14/0.22 fallback while probes/ui.js and probes/worldsim.js carried
+    // 620000/180/6.0/0.085 — so the benchmark was measuring a different ship from the
+    // UI probe, and both from the game. There is one class now and it is this one.
+    const playerClass = registerPlayerCruiser({
+      root: hullResult.root, subsystems: hullResult.subsystems ?? null,
+    });
     const player = new Ship({
       classDef: playerClass, world, faction: 'player', isPlayer: true,
       root: hullResult.root, position: new THREE.Vector3(0, COMBAT_PLANE_Y, 0),
     });
+    applyClassHandling(player.body, playerClass);
     world.player = player;
     world.addShip(player);
 

@@ -51,7 +51,8 @@ import '../art/geometry/modules/index.js';
 import '../art/geometry/ships/index.js';
 
 import { getShipClass, getModule, allModules, HARDPOINTS } from '../core/contracts.js';
-import { HULL_LENGTH, COMBAT_PLANE_Y } from '../core/units.js';
+import { registerPlayerCruiser, applyClassHandling } from '../camera/feel.js';
+import { COMBAT_PLANE_Y } from '../core/units.js';
 import { Ship } from '../sim/ship.js';
 import { CombatSystem } from '../sim/combat.js';
 import { SalvageSystem } from '../sim/salvage.js';
@@ -197,6 +198,7 @@ export default {
       position: new THREE.Vector3(0, COMBAT_PLANE_Y, 0),
       heading: 0.28,
     });
+    applyClassHandling(player.body, player.classDef);
     world.player = player;
     world.addShip(player);
 
@@ -464,24 +466,15 @@ function makeHold(ui, screenName) {
 // Scenario construction
 // ---------------------------------------------------------------------------
 
+/**
+ * The registered player class. This used to be a local literal carrying
+ * 620000/180/6.0/0.085 — controls.md 6.1's numbers — while `src/game.js` synthesised
+ * 62000/140/14/0.22, so every UI panel this probe screenshotted was drawn against a
+ * hull the player never flew. `hullHP` 26000 is kept: it is this probe's own scenario
+ * dressing, not a handling number.
+ */
 function playerClass(hull) {
-  return {
-    id: 'probe_player_cruiser',
-    name: 'Nadir',
-    faction: 'player',
-    role: 'cruiser',
-    length: HULL_LENGTH.cruiser,
-    mass: 620000,
-    maxSpeed: 180,
-    accel: 6.0,
-    turnRate: 0.085,
-    hullHP: 26000,
-    triBudget: 2000,
-    planeLocked: true,
-    build: () => hull.root,
-    subsystems: CRUISER_SUBSYSTEMS,
-    weapons: [],
-  };
+  return registerPlayerCruiser({ root: hull.root, subsystems: CRUISER_SUBSYSTEMS, hullHP: 26000 });
 }
 
 function spawnEnemies(world, registry, screenName) {

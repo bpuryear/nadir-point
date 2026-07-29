@@ -11,6 +11,7 @@
     "capture": "node tools/capture.mjs",
     "bench": "node tools/bench.mjs",
     "smoke": "node tools/smoke.mjs",
+    "flight": "node tools/flight.mjs",
     "uicheck": "node tools/uicheck.mjs",
     "occlusion": "node tools/occlusion.mjs"
   },

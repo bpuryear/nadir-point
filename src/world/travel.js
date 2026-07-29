@@ -43,12 +43,17 @@ import { DOCK_RANGE, DOCK_SPEED } from './system.js';
 import { MEV } from '../sim/meta/events.js';
 
 /**
- * Transit constants. These mirror `CRUISER_FEEL` in docs/design/controls.md 6.1; the
- * camera stream owns that block for the combat half, and the transit half has no home
- * outside this file yet.
+ * Transit constants. The combat half now lives in `src/camera/feel.js#CRUISER_FEEL`
+ * (controls.md:1035 always claimed it did; before this commit it did not exist at all).
+ * The transit half still has no home outside this file, which is correct — it is a
+ * property of the drive, not of the hull.
+ *
+ * `combatArrivalSpeed` USED TO LIVE HERE as a bare `180`. It was deleted rather than
+ * corrected: it is not an independent constant, it is "whatever the hull's own ceiling
+ * is", and as a literal it was 28.6% above the live 140 m/s. `_updateBurning` reads the
+ * saved pre-transit `maxSpeed` instead, so it tracks the registered class forever.
  */
 export const TRANSIT = {
-  combatArrivalSpeed: 180,
   maxSpeed: 3600,
   accel: 30.0,
   spool: 25.0,
@@ -452,10 +457,19 @@ export class TravelSystem {
     helm.heading = Math.atan2(dx, dz);
 
     const v = body.speed;
-    const arriveAt = this.legIndex === this.course.legs.length - 1 ? TRANSIT.combatArrivalSpeed : v;
+    // Hand the hull back at ITS OWN combat ceiling, not a literal. `_saved.maxSpeed` is
+    // the pre-transit value stashed by `_enterTransit`, so this is the registered
+    // class's `maxSpeed` through refit and damage alike. The old `TRANSIT.combatArrival
+    // Speed: 180` handed a 140 m/s hull back 28.6% over its maximum, which also pinned
+    // `effectiveTurnRate`'s speedFrac at 1 — the player arrived at MINIMUM turn
+    // authority — and drew a 129%-full speed bar in the HUD.
+    const arrivalSpeed = this._saved?.maxSpeed ?? body.maxSpeed;
+    const arriveAt = this.legIndex === this.course.legs.length - 1 ? arrivalSpeed : v;
     const brakeDist = Math.max(0, (v * v - arriveAt * arriveAt) / (2 * this.accel));
     // Throttle zero decelerates at exactly the same rate the assisted-flight model
-    // accelerates, so the braking half of the profile is symmetric for free.
+    // accelerates, so the braking half of the profile is symmetric for free. That is
+    // true DURING TRANSIT ONLY because `_enterTransit` forces `body.retroAccel` equal
+    // to `this.accel`; in combat the hull brakes at CRUISER_FEEL.accelRetro.
     helm.throttle = remaining > brakeDist ? 1 : 0;
 
     this.riskTimer += dt;
@@ -503,6 +517,14 @@ export class TravelSystem {
     this._saved = {
       maxSpeed: body.maxSpeed,
       accel: body.accel,
+      // The hull's braking authority is asymmetric in combat (CRUISER_FEEL.accelRetro
+      // 5.5 against accelFwd 8.0) and MUST NOT be during the burn. `legProfile` above
+      // is a closed form that assumes throttle-zero decelerates at exactly the
+      // acceleration rate, and the published 120/300/600 km timings of 151/225/312 s,
+      // the propellant quotes derived from them and the interception percentages the
+      // player agrees to at plot time are all built on that symmetry. Save it, force it
+      // symmetric for the burn, restore it on the way out.
+      retroAccel: body.retroAccel,
       turnRate: body.turnRate,
       shieldMax: player.shields.max,
       shieldCurrent: player.shields.current,
@@ -510,6 +532,7 @@ export class TravelSystem {
     };
     body.maxSpeed = this.maxSpeed;
     body.accel = this.accel;
+    body.retroAccel = this.accel;
     body.turnRate = this._saved.turnRate * TRANSIT.turnMul;
     this._saved.move = player.move;
     this._helm = new TransitHelm(body);
@@ -527,6 +550,7 @@ export class TravelSystem {
     const body = player.body;
     body.maxSpeed = this._saved.maxSpeed;
     body.accel = this._saved.accel;
+    body.retroAccel = this._saved.retroAccel;
     body.turnRate = this._saved.turnRate;
     player.shields.max = this._saved.shieldMax;
     if (player.move === this._helm) player.move = this._saved.move ?? null;

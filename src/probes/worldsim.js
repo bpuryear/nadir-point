@@ -40,6 +40,7 @@ import { usingFallbackRoster } from '../sim/ai/roster.js';
 import { effectiveRange } from '../sim/ai/shipAI.js';
 import { KM } from '../core/units.js';
 import { angleDelta, yawOf } from '../sim/physics.js';
+import { registerPlayerCruiser, applyClassHandling } from '../camera/feel.js';
 
 /** World metres per map unit is 1/MAP_SCALE. 1640 km of system inside 123 km of map. */
 const MAP_SCALE = 0.075;
@@ -198,6 +199,7 @@ export default {
     // ---- the sim ---------------------------------------------------------
     const playerClass = probePlayerClass();
     const player = new Ship({ classDef: playerClass, world, faction: 'player', isPlayer: true });
+    applyClassHandling(player.body, playerClass);
     world.player = player;
     world.addShip(player);
 
@@ -891,18 +893,20 @@ class ArcMeter {
   }
 }
 
+/**
+ * The registered player class. Was a local literal carrying 620000/180/6.0/0.085; the
+ * broadside- and bearing-percentage numbers this probe publishes were therefore
+ * measured on a hull with a 180 m/s ceiling the game's own player never had.
+ */
 function probePlayerClass() {
-  return {
-    id: 'probe_cruiser', name: 'Salvager Cruiser', faction: 'player', role: 'cruiser',
-    length: 1400, mass: 620000, maxSpeed: 180, accel: 6, turnRate: 0.085, hullHP: 26000,
-    triBudget: 2000, planeLocked: true,
-    build: () => new THREE.Group(),
+  return registerPlayerCruiser({
+    root: new THREE.Group(),
+    hullHP: 26000,
     subsystems: [
       { id: 'engine_main', kind: 'engine', hp: 3000, position: [0, 0, -560], radius: 150, salvageValue: 0.2, label: 'Main Drive' },
       { id: 'reactor', kind: 'reactor', hp: 4200, position: [0, 0, -60], radius: 130, salvageValue: 0.3, label: 'Reactor' },
     ],
-    weapons: [],
-  };
+  });
 }
 
 /** The hottest genuinely contested POI: the best place to stand to see a war. */

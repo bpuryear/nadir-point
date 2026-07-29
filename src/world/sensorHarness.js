@@ -32,6 +32,7 @@ import { buildSystem, TERRAIN, START_POI } from './system.js';
 import { FactionWarSystem } from './factionWar.js';
 import { TravelSystem } from './travel.js';
 import { DiscoverySystem } from './discovery.js';
+import { registerPlayerCruiser, applyClassHandling } from '../camera/feel.js';
 
 // The module library registers itself on import. Without it `allModules()` is empty and
 // section 6 has nothing to bias, which would make the codex test a tautology.
@@ -58,15 +59,18 @@ function advance(engine, seconds, dt = 1 / 60) {
   return steps;
 }
 
-const CRUISER = {
-  id: 'harness_cruiser', name: 'Harness Cruiser', faction: 'player', role: 'cruiser',
-  length: 1400, mass: 62000, maxSpeed: 140, accel: 14, turnRate: 0.22, hullHP: 12000,
-  triBudget: 2000, planeLocked: true, build: () => new THREE.Group(),
+/**
+ * The registered player class, not a local literal. This file used to carry
+ * 62000/140/14/0.22, one of five copies that disagreed two ways across the tree; the
+ * transit-interception section below reads `body.maxSpeed` and `body.accel`, so the
+ * literal made this harness measure a hull the game does not fly.
+ */
+const CRUISER = registerPlayerCruiser({
+  root: new THREE.Group(),
   subsystems: [
     { id: 'reactor', kind: 'reactor', hp: 1800, position: [0, 20, -60], radius: 130, salvageValue: 0.3, label: 'Reactor' },
   ],
-  weapons: [],
-};
+});
 
 function victimClass(faction, id) {
   return {
@@ -100,6 +104,7 @@ function makeRig({ seed = 'harness/sensors/001', startPOI = START_POI, sensors =
   world.engine.add(discovery);
 
   const player = new Ship({ classDef: CRUISER, world, faction: 'player', isPlayer: true, root: new THREE.Group() });
+  applyClassHandling(player.body, CRUISER);
   world.player = player;
   world.addShip(player);
   world.engine.add({ name: 'ships', order: 60, fixedUpdate: (dt) => { for (const s of world.ships) s.fixedUpdate(dt); } });

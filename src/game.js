@@ -9,7 +9,9 @@ import { StrikeCraftSystem } from './sim/strikecraft.js';
 import { TacticalCamera } from './camera/tactical.js';
 import { CinematicCamera } from './camera/cinematic.js';
 import { Controls } from './input/controls.js';
-import { getShipClass, allShipClasses, registryReport } from './core/contracts.js';
+import { allShipClasses, registryReport } from './core/contracts.js';
+import { registerPlayerCruiser, applyClassHandling } from './camera/feel.js';
+import { START_POI } from './world/system.js';
 
 /**
  * Game assembly. This is the single seam every stream plugs into.
@@ -72,7 +74,21 @@ export async function bootGame(world, params) {
 
   // ---------------------------------------------------------------- materials
   const materialsMod = await optional('./art/materials/index.js', 'materials');
-  const poiId = params.get('poi') ?? 'giant-orbit';
+  /*
+   * The boot POI must be the one the world sim believes the player is standing in.
+   * It was not: this line read `?? 'giant-orbit'` while `installWorldSim`
+   * (`world/index.js:78`) takes `opts.startPOI ?? START_POI` = 'graveyard', sees that
+   * integration has already dressed a sky, and calls `travel.adoptCurrent('graveyard')`
+   * against giant-orbit's lighting, celestials and fields. The player was standing in
+   * the graveyard looking at a gas giant.
+   *
+   * MEASURED CONSEQUENCE of correcting it, through the same path `npm run smoke` uses:
+   * 119 draws / 93,357 tris / 58 programs / 61 geometries / 75 textures becomes
+   * 114 / 70,283 / 54 / 58 / 70. That movement is the fix landing, not a regression —
+   * the graveyard is a sparser place than a gas giant's orbit. Any stream holding the
+   * old five numbers as a baseline needs the new ones.
+   */
+  const poiId = params.get('poi') ?? START_POI;
   let materials = null;
   if (materialsMod?.createMaterialRegistry) {
     materials = materialsMod.createMaterialRegistry({
@@ -97,6 +113,21 @@ export async function bootGame(world, params) {
   });
 
   // --------------------------------------------------------------- environment
+  /*
+   * The authored POI definitions. Importing this module IS its registration — it calls
+   * `registerPOI` three times at module scope for `giant-orbit`, `graveyard` and
+   * `near-star`. `world/system.js:526`'s `registerSystemPOIs()` skips any id that is
+   * already registered and says so in its own comment ("owned by world/lighting/pois.js
+   * and left exactly as that stream authored them"), but nothing on the game path ever
+   * imported the file, so `system.js` won its own race every boot and registered generic
+   * versions instead. Only the probe tree imported it, which is why it looked fine there.
+   *
+   * This must run BEFORE `installWorldSim` (below) and before anything calls `getPOI`.
+   * Delegated from the visual stream, which does not own this file.
+   */
+  const poiDefs = await optional('./world/lighting/pois.js', 'poi-defs');
+  note('poi-defs', !!poiDefs);
+
   const lightingMod = await optional('./world/lighting/poi.js', 'poi-lighting');
   let lighting = null;
   if (lightingMod?.buildPOILighting) {
@@ -133,15 +164,31 @@ export async function bootGame(world, params) {
   }
   note('cruiser-geometry', !!hullResult);
 
-  const playerClass = getShipClass('player_cruiser') ?? synthesisePlayerClass(hullResult);
+  /*
+   * ONE registered player class, derived from CRUISER_FEEL.
+   *
+   * This used to read `getShipClass('player_cruiser') ?? synthesisePlayerClass(...)`.
+   * No `player_cruiser` was ever registered — the registry holds 13 classes after
+   * importing the ship index and that was not among them — so the fallback fired on
+   * every boot. A fallback that always fires is not a fallback, it is the definition,
+   * and it drifted: its own comment claimed "numbers match the feel tuning in
+   * docs/design/controls.md" and was false in all four fields. `synthesisePlayerClass`
+   * is deleted; `tools/flight.mjs` check 2 fails if anything re-creates it.
+   */
+  const root = hullResult?.root ?? placeholderHull(materials);
+  const playerClass = registerPlayerCruiser({ root, subsystems: hullResult?.subsystems ?? null });
   const player = new Ship({
     classDef: playerClass,
     world,
     faction: 'player',
     isPlayer: true,
-    root: hullResult?.root ?? placeholderHull(materials),
+    root,
     position: new THREE.Vector3(0, COMBAT_PLANE_Y, 0),
   });
+  // `Ship` builds its bodySpec from five named classDef fields and does not forward
+  // `angAccel`/`retroAccel`; `sim/ship.js` is the Ship & refit stream's file. See the
+  // one-line request in the W1-C report.
+  applyClassHandling(player.body, playerClass);
   world.player = player;
   world.addShip(player);
 
@@ -293,34 +340,6 @@ function placeholderHull(materials) {
   body.receiveShadow = true;
   g.add(body);
   return g;
-}
-
-/**
- * Minimal class definition for the player cruiser when the geometry stream has not
- * registered one. Numbers match the feel tuning in docs/design/controls.md.
- */
-function synthesisePlayerClass(hullResult) {
-  return {
-    id: 'player_cruiser_fallback',
-    name: 'Salvager Cruiser',
-    faction: 'player',
-    role: 'cruiser',
-    length: HULL_LENGTH.cruiser,
-    mass: 62000,
-    maxSpeed: 140,
-    accel: 14,
-    turnRate: 0.22,
-    hullHP: 12000,
-    triBudget: 2000,
-    planeLocked: true,
-    build: () => hullResult?.root ?? new THREE.Group(),
-    subsystems: hullResult?.subsystems ?? [
-      { id: 'engine_main', kind: 'engine', hp: 1400, position: [0, 0, -560], radius: 150, salvageValue: 0.2, label: 'Main Drive' },
-      { id: 'reactor', kind: 'reactor', hp: 1800, position: [0, 20, -60], radius: 130, salvageValue: 0.3, label: 'Reactor' },
-      { id: 'sensor', kind: 'sensor', hp: 700, position: [0, 90, 320], radius: 90, salvageValue: 0.1, label: 'Sensor Mast' },
-    ],
-    weapons: [],
-  };
 }
 
 /**
