@@ -206,7 +206,10 @@ export class PowerPanel {
     // block that says "sealed". No rule shares a y with a baseline.
     if (!unlocked) {
       const bandY = py + Math.round((h + 26) * 0.5) - 20;
-      P.plate(px + 1, bandY, w + 22, 40, { fill: C.panelTitle, border: C.warnDim });
+      // OPAQUE. `C.panelTitle` is a translucent lift meant to be composited over an
+      // existing plate, not a ground of its own — using it here let the WEAPONS and
+      // ENGINES rows read straight through the banner that is explaining them.
+      P.plate(px + 1, bandY, w + 22, 40, { border: C.warnDim });
       P.text('REACTOR GOVERNOR SEALED', px + (w + 24) * 0.5, bandY + 16, {
         font: F.microBold, color: C.warn, align: 'center', track: TRACK.head,
       });

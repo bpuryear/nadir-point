@@ -1150,3 +1150,30 @@ is asserted anywhere. Requires a run on target hardware to close.
 ### A2 · WebGPU path unverified — ACCEPTED (environmental)
 `navigator.gpu` is unavailable here, so a `WebGPURenderer` path could not be validated
 at build time. §5 of the brief permits shipping WebGL2 and saying so.
+
+---
+
+## Integration observation — art-direction pass, form stream round 1
+
+### D-INT1 · Surface may have overcorrected from "all medium" to "all calm" · OPEN
+`docs/review/ad-form/close.png`. The form work is a clear improvement — mass hierarchy,
+varied section, genuine see-through negative space in the ventral cradle, an asymmetric
+hull number, and the cobalt flat fills are gone.
+
+But at this range the hull now reads as almost entirely **calm**: panel plating is barely
+legible anywhere on the primary masses. The brief asked for roughly 60% calm / 30% medium
+/ 10% dense; this looks closer to 95% calm. The previous failure was uniform medium
+detail everywhere, and the risk now is the opposite error — a hull with no surface
+information at all reads as untextured rather than as restrained.
+
+**Caveat, stated because it changes the diagnosis:** the frame is also bright, and
+lighting is a deferred pass. Some of the missing plating read may be exposure washing it
+out rather than the surface genuinely lacking detail. That distinction must be settled by
+measurement — `tools/surface.mjs` reports frequency statistics on a hull mask — and not
+from this screenshot.
+
+**For the next pass:** confirm with `tools/surface.mjs` whether the calm/medium/dense
+split is actually near 60/30/10 on the hull mask. If it is, this is an exposure artefact
+and belongs to the deferred lighting work. If it is not, the dense and medium tiers need
+restoring around machinery, joints between masses, and recesses — the places §3 of the
+ship-language spec says they belong.
