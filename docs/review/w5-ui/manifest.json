@@ -1,35 +1,5 @@
 [
   {
-    "id": "hud-close",
-    "ok": true,
-    "warnings": [],
-    "frame": {
-      "meanLuma": 0.1439,
-      "contrast": 0.249,
-      "clippedPct": 0,
-      "nearBlackPct": 72.36
-    },
-    "description": "Close pose WITH the interface up. The occlusion frame: diff it against `close` to measure what share of the hull the chrome is standing on.",
-    "hud": true,
-    "file": "docs/review/w5-ui/hud-close.png",
-    "stats": {
-      "fps": 4,
-      "cpuMs": 9.400000002991874,
-      "stepMs": 0.6999999992549419,
-      "renderMs": 8.400000002235174,
-      "steps": 6,
-      "calls": 131,
-      "triangles": 72627,
-      "points": 7000,
-      "lines": 0,
-      "programs": 58,
-      "geometries": 71,
-      "textures": 75
-    },
-    "consoleErrors": [],
-    "pageErrors": []
-  },
-  {
     "id": "hud-three-quarter",
     "ok": true,
     "warnings": [],
@@ -37,16 +7,16 @@
       "meanLuma": 0.0652,
       "contrast": 0.1373,
       "clippedPct": 0,
-      "nearBlackPct": 71.01
+      "nearBlackPct": 70.82
     },
     "description": "The everyday playing view WITH the interface up. This is the frame the HUD-occludes-the-ship finding was measured on.",
     "hud": true,
     "file": "docs/review/w5-ui/hud-three-quarter.png",
     "stats": {
       "fps": 4,
-      "cpuMs": 29.900000000023283,
-      "stepMs": 1,
-      "renderMs": 6.100000001490116,
+      "cpuMs": 17.199999999254942,
+      "stepMs": 0.6000000014901161,
+      "renderMs": 4.699999999254942,
       "steps": 6,
       "calls": 134,
       "triangles": 95171,
@@ -54,36 +24,6 @@
       "lines": 0,
       "programs": 58,
       "geometries": 71,
-      "textures": 75
-    },
-    "consoleErrors": [],
-    "pageErrors": []
-  },
-  {
-    "id": "hud-engagement",
-    "ok": true,
-    "warnings": [],
-    "frame": {
-      "meanLuma": 0.0315,
-      "contrast": 0.0825,
-      "clippedPct": 0,
-      "nearBlackPct": 85.26
-    },
-    "description": "Fight, interface up, hostiles on the plane. Tests the target block and the world-anchored label chips over a lit backdrop.",
-    "hud": true,
-    "file": "docs/review/w5-ui/hud-engagement.png",
-    "stats": {
-      "fps": 4,
-      "cpuMs": 16.19999999704305,
-      "stepMs": 1.300000000745058,
-      "renderMs": 4.899999998509884,
-      "steps": 6,
-      "calls": 117,
-      "triangles": 93071,
-      "points": 7000,
-      "lines": 0,
-      "programs": 58,
-      "geometries": 61,
       "textures": 75
     },
     "consoleErrors": [],

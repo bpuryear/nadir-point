@@ -212,23 +212,23 @@ export const RUNNING_LIGHT_AXIS_SPACING_M = SCALE_CUE.runningLightSpacingM;
  */
 const HULL_STATIONS = [
   // ZONE E — STERN BLOCK. Maximum beam is an ENDPOINT here, not a bump.
-  [-700, 150, 80, -86, 34, 20, 26, 0.80],
-  [-620, 146, 82, -88, 32, 20, 24, 0.80],
-  [-540, 124, 74, -78, 28, 18, 22, 0.80],
+  [-700, 150, 80, -86, 22, 13, 26, 0.72],
+  [-620, 146, 82, -88, 21, 13, 24, 0.72],
+  [-540, 124, 74, -78, 18, 12, 22, 0.72],
   // ZONE W — WAIST. 30 m of beam lost in 70 m of length; the ship is visibly pinched.
-  [-470, 94, 58, -56, 22, 15, 18, 0.84],
-  [-400, 100, 52, -60, 22, 14, 18, 0.84],
+  [-470, 94, 58, -56, 14, 9, 18, 0.76],
+  [-400, 100, 52, -60, 14, 9, 18, 0.76],
   // ZONE M — MIDBODY, rising to the shoulder.
-  [-260, 114, 74, -66, 26, 16, 20, 0.80],
-  [-40, 136, 70, -70, 28, 17, 20, 0.78],
+  [-260, 114, 74, -66, 16, 10, 20, 0.72],
+  [-40, 136, 70, -70, 17, 10, 20, 0.70],
   // ZONE F — FOREBODY. THE FOREDECK. The section is carried forward nearly whole:
   // at z = +300 the hull is still 224 m across and 136 m deep, i.e. 82% of the
   // shoulder's beam and 97% of its depth, five hundred metres ahead of the bridge.
   // This is the correction the first pass got wrong - it collapsed the beam to 74 m
   // by z = +400 and the forward third became two sticks and a gantry.
-  [120, 126, 66, -76, 26, 16, 20, 0.80],
-  [300, 114, 58, -84, 22, 14, 18, 0.88],
-  [460, 96, 46, -90, 18, 12, 16, 1.00],
+  [120, 126, 66, -76, 16, 10, 20, 0.72],
+  [300, 114, 58, -84, 14, 9, 18, 0.84],
+  [460, 96, 46, -90, 12, 8, 16, 1.00],
   // ZONE P — PROW. A CHISEL, not a needle, and it starts with a KNUCKLE.
   //
   // The deck falls 3.4 degrees over the whole 340 m foredeck and then 21.8 degrees in
