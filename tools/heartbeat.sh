@@ -66,14 +66,12 @@ while true; do
     echo "SWEPT $orph orphaned vite server(s) older than 1h - the failure mode that stalled the last run"
   fi
 
-  # --- a held port is the specific thing that kills agents; report it early ---
-  for p in 5178 5179 5188 5191; do
-    if ! (exec 3<>/dev/tcp/127.0.0.1/$p) 2>/dev/null; then :; else
-      exec 3<&- 2>/dev/null
-      owner=$(ps -eo pid,etimes,args | awk -v P=":$p" '$0 ~ /vite/ && $0 ~ P {print $2; exit}')
-      [ -n "$owner" ] && [ "$owner" -gt 1800 ] && echo "WARN: port $p held by a vite server ${owner}s old"
-    fi
-  done
+  # A per-port "is it held" check lived here and was removed. It matched ":5179"
+  # against args that actually read "--port 5179", so it reported an unrelated process
+  # and printed a 130-year-old server. It was also redundant: a busy agent legitimately
+  # holds ports, so the only genuinely bad case is a server old enough to be an orphan,
+  # and the sweep above already kills those. The harness itself now moves off a taken
+  # port rather than inheriting it, which is the real fix.
 
   if [ $(( now - last_beat )) -gt "$BEAT_SECONDS" ]; then
     if [ "$incomplete" -eq 1 ]; then
