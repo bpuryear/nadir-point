@@ -11,13 +11,18 @@
  * an hour to find and one line to prevent.
  */
 
-// The ammunition defaults live with the magazine simulation, and duplicating them
-// here to avoid the import would be a second source of truth for the number this
-// file exists to check against. `core/persistence.js` already reaches into
-// `sim/meta/events.js` for the same reason. `sim/stores.js` imports only
-// `core/events.js` and `sim/condition.js`, neither of which imports this file, so
-// there is no cycle — verified by importing stores.js standalone.
-import { AMMO_SPEC, ammoClassOf } from '../sim/stores.js';
+// The ammunition defaults are the source of truth this file validates against, so they
+// are imported rather than duplicated. They live in `core/ammo.js`, which imports
+// nothing.
+//
+// This used to import them from `sim/stores.js`, under a comment asserting that no cycle
+// existed because "stores.js imports only core/events.js and sim/condition.js, neither of
+// which imports this file". That enumerated stores.js's DIRECT imports and stopped one hop
+// short: `sim/condition.js:27` imports `./meta/materials.js`, whose first line imports
+// `getModule` from here. The cycle was real, and the stated check — importing stores.js
+// standalone — could not have detected it, because it traverses the whole loop and
+// completes silently. See `core/ammo.js` for the full account.
+import { AMMO_SPEC, ammoClassOf } from './ammo.js';
 
 /** The six hardpoints on the player cruiser. Order matters for UI layout. */
 export const HARDPOINTS = ['bow', 'dorsal', 'ventral', 'port', 'starboard', 'engine'];

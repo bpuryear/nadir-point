@@ -21,7 +21,20 @@ import { breakDownItem } from './meta/index.js';
  * 1900. At the old 1800 that is massLoad 6.567: -84.8% acceleration, -61.0% turn and,
  * through `stores.js:284`, a 6.57x propellant bill — "never fit anything heavy".
  * At 35500 it is massLoad 1.282: -22.0% acceleration and, at the 0.6 exponent below,
- * -13.9% turn rate. `docs/design/controls.md:1165-1169` asks for -22% and -14%.
+ * -13.9% turn rate FROM MASS ALONE.
+ *
+ * That is not what the player feels, and this comment used to stop at that number and
+ * claim it matched `docs/design/controls.md:1165-1169`'s -22%/-14% target. Measured
+ * through the real RefitSystem with those six modules actually installed, the hull loses
+ * -22.8% acceleration and -24.2% turn rate. The turn figure is 10 points worse than the
+ * mass model alone predicts because modules also carry explicit handling `grants` --
+ * `ventral_hangar_deck` alone declares `{ thrust: -0.10, turnRate: -0.12 }`
+ * (`art/geometry/modules/ventral.js:181`) -- and those multiply on top of massLoad.
+ *
+ * So mass is calibrated against the spec; the DELIVERED figure is the mass model plus
+ * whatever the fitted modules grant, and only the acceleration half lands near target.
+ * Quote -22.8/-24.2 when describing the fit, and -22.0/-13.9 only when describing this
+ * constant in isolation.
  */
 const REFERENCE_FIT_MASS = 35500;
 

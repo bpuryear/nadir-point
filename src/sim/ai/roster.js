@@ -167,11 +167,11 @@ const ROLES = {
     ],
     weapons: [
       weapon('fg_port', 'Port Mass Driver Bank', 'cannon', {
-        mount: [-26, 4, -6], yawCentre: PI * 0.5, yawWidth: PI * 0.605,
+        mount: [-26, 4, -6], yawCentre: -PI * 0.5, yawWidth: PI * 0.605,
         range: RANGE.cannon, damage: 46, shotsPerBurst: 4, cooldown: 3.8, tracking: 0.5,
       }),
       weapon('fg_stbd', 'Starboard Mass Driver Bank', 'cannon', {
-        mount: [26, 4, -6], yawCentre: -PI * 0.5, yawWidth: PI * 0.605,
+        mount: [26, 4, -6], yawCentre: PI * 0.5, yawWidth: PI * 0.605,
         range: RANGE.cannon, damage: 46, shotsPerBurst: 4, cooldown: 3.8, tracking: 0.5,
       }),
       weapon('fg_pd', 'Point Defence', 'pd', {
@@ -200,12 +200,12 @@ const ROLES = {
     ],
     weapons: [
       weapon('dd_port', 'Port Heavy Battery', 'cannon', {
-        mount: [-52, 8, -20], yawCentre: PI * 0.5, yawWidth: PI * 0.545,
+        mount: [-52, 8, -20], yawCentre: -PI * 0.5, yawWidth: PI * 0.545,
         range: RANGE.cannon * 1.15, damage: 92, shotsPerBurst: 3, cooldown: 4.6,
         projectileSpeed: 1250, tracking: 0.38,
       }),
       weapon('dd_stbd', 'Starboard Heavy Battery', 'cannon', {
-        mount: [52, 8, -20], yawCentre: -PI * 0.5, yawWidth: PI * 0.545,
+        mount: [52, 8, -20], yawCentre: PI * 0.5, yawWidth: PI * 0.545,
         range: RANGE.cannon * 1.15, damage: 92, shotsPerBurst: 3, cooldown: 4.6,
         projectileSpeed: 1250, tracking: 0.38,
       }),

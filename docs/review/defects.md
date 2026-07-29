@@ -1335,7 +1335,7 @@ The structural cause is worth recording separately: `ARCHITECTURE.md`'s ownershi
 assigns **no owner to `src/sim/meta/**`**, so the stream that wrote it had no legitimate
 place to wire itself and documented a workaround instead.
 
-### D59 · `src/world/lighting/pois.js` never runs in the assembled game · OPEN
+### D59 · `src/world/lighting/pois.js` never runs in the assembled game · FIXED
 227 lines that author art-directed versions of `giant-orbit`, `graveyard` and
 `near-star`. The only importer in the tree is `src/probes/poi_common.js`, so
 `world.systems.pois` is absent at runtime and `src/world/system.js` registers its own

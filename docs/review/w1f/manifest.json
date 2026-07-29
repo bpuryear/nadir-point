@@ -1,0 +1,95 @@
+[
+  {
+    "id": "close",
+    "ok": false,
+    "warnings": [
+      "FRAME IS FLAT OR EMPTY (contrast < 0.02)",
+      "FRAME IS ESSENTIALLY BLACK (>97% near-black)"
+    ],
+    "frame": {
+      "meanLuma": 0.0098,
+      "contrast": 0.0039,
+      "clippedPct": 0,
+      "nearBlackPct": 99.97
+    },
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/w1f/close.png",
+    "stats": {
+      "fps": 87.6843363889996,
+      "cpuMs": 1.499999964237304,
+      "stepMs": 0.10000002384185791,
+      "renderMs": 1.399999976158142,
+      "steps": 1,
+      "calls": 135,
+      "triangles": 72553,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 72,
+      "textures": 78
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "three-quarter",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0642,
+      "contrast": 0.1355,
+      "clippedPct": 0,
+      "nearBlackPct": 71.65
+    },
+    "description": "Mid tactical range, raking key. The everyday playing view. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/w1f/three-quarter.png",
+    "stats": {
+      "fps": 93.18001586042821,
+      "cpuMs": 1.600000035762605,
+      "stepMs": 0.10000002384185791,
+      "renderMs": 1.300000011920929,
+      "steps": 1,
+      "calls": 138,
+      "triangles": 95097,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 72,
+      "textures": 78
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "wide",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0523,
+      "contrast": 0.1044,
+      "clippedPct": 0,
+      "nearBlackPct": 69.38
+    },
+    "description": "The cruiser as a small bright hull against a ringed gas giant, seen ACROSS the combat plane. The shot that sells the game: scale comes from a recognisable object in front of an enormous one, so the ship has to stay identifiable and the giant has to fill the frame.",
+    "hud": false,
+    "file": "docs/review/w1f/wide.png",
+    "stats": {
+      "fps": 93.66281387006774,
+      "cpuMs": 1.20000001192102,
+      "stepMs": 0,
+      "renderMs": 1.100000023841858,
+      "steps": 0,
+      "calls": 104,
+      "triangles": 88229,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 64,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

@@ -1,0 +1,95 @@
+[
+  {
+    "id": "close",
+    "ok": false,
+    "warnings": [
+      "FRAME IS FLAT OR EMPTY (contrast < 0.02)",
+      "FRAME IS ESSENTIALLY BLACK (>97% near-black)"
+    ],
+    "frame": {
+      "meanLuma": 0.0103,
+      "contrast": 0.0126,
+      "clippedPct": 0,
+      "nearBlackPct": 99.25
+    },
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/postwave1/close.png",
+    "stats": {
+      "fps": 67.63285024154588,
+      "cpuMs": 1.5000000476838977,
+      "stepMs": 0,
+      "renderMs": 1.100000023841858,
+      "steps": 0,
+      "calls": 135,
+      "triangles": 72553,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 72,
+      "textures": 78
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "wide",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0519,
+      "contrast": 0.1046,
+      "clippedPct": 0,
+      "nearBlackPct": 69.62
+    },
+    "description": "The cruiser as a small bright hull against a ringed gas giant, seen ACROSS the combat plane. The shot that sells the game: scale comes from a recognisable object in front of an enormous one, so the ship has to stay identifiable and the giant has to fill the frame.",
+    "hud": false,
+    "file": "docs/review/postwave1/wide.png",
+    "stats": {
+      "fps": 75.86344579936987,
+      "cpuMs": 3,
+      "stepMs": 0,
+      "renderMs": 0.6000000238418579,
+      "steps": 0,
+      "calls": 104,
+      "triangles": 88229,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 64,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "engagement",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0314,
+      "contrast": 0.0358,
+      "clippedPct": 0,
+      "nearBlackPct": 14.74
+    },
+    "description": "Cruiser under way with hostiles on the plane. Tests scale cues and the fight read.",
+    "hud": true,
+    "file": "docs/review/postwave1/engagement.png",
+    "stats": {
+      "fps": 81.7873528883402,
+      "cpuMs": 0.7000000357627414,
+      "stepMs": 0,
+      "renderMs": 0.6000000238418579,
+      "steps": 1,
+      "calls": 112,
+      "triangles": 70179,
+      "points": 7200,
+      "lines": 0,
+      "programs": 54,
+      "geometries": 58,
+      "textures": 70
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

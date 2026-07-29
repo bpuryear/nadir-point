@@ -29,29 +29,19 @@
 import { EV } from '../core/events.js';
 import { clamp01 } from './condition.js';
 
-/** Weapon archetype -> ammunition class. Absent means energy-fed. */
-export const AMMO_FOR_TYPE = {
-  cannon: 'shell',
-  rail: 'railslug',
-  missile: 'missile',
-  flak: 'flakcan',
-  pd: 'pdslug',
-};
-
-/**
- * Per-class magazine data.
+/*
+ * The ammunition classes and magazine data now live in `core/ammo.js` and are re-exported
+ * here, so every existing `from './stores.js'` import keeps working unchanged.
  *
- * `fab` is what a round costs to manufacture from materials. It is deliberately in the
- * same units as repair, because ammunition and repair are the same alloy: reloading the
- * rail battery is materials you cannot spend fixing the shield pylons.
+ * They moved because `core/contracts.js` needs the ready-round defaults to validate that
+ * a weapon's burst fits its magazine, and importing them from here closed a cycle
+ * (contracts -> stores -> condition -> meta/materials -> contracts). See the header of
+ * `core/ammo.js` for why that cycle was invisible to the check that was run against it.
  */
-export const AMMO_SPEC = {
-  shell:    { label: 'SHELL',   capacity: 420, ready: 24, reload: 6.0,  fabAlloy: 1.0, fabComposite: 0.0, salvagePer: 34 },
-  railslug: { label: 'SLUG',    capacity: 90,  ready: 6,  reload: 9.0,  fabAlloy: 3.5, fabComposite: 0.6, salvagePer: 9 },
-  missile:  { label: 'MISSILE', capacity: 48,  ready: 4,  reload: 11.0, fabAlloy: 5.0, fabComposite: 2.0, salvagePer: 5 },
-  flakcan:  { label: 'FLAK',    capacity: 300, ready: 20, reload: 5.0,  fabAlloy: 0.8, fabComposite: 0.2, salvagePer: 28 },
-  pdslug:   { label: 'PD',      capacity: 900, ready: 60, reload: 4.0,  fabAlloy: 0.3, fabComposite: 0.0, salvagePer: 90 },
-};
+export {
+  AMMO_FOR_TYPE, AMMO_SPEC, ammoSalvage, ammoClassOf, isEnergyWeapon,
+} from '../core/ammo.js';
+import { AMMO_SPEC } from '../core/ammo.js';
 
 export const STORES = {
   /** Charge buffer, in reactor units. Sized so a beam bank empties it in ~6 seconds. */
@@ -77,18 +67,6 @@ export const STORES = {
   /** Engine authority once you are down to the reserve. You can limp, not fight. */
   starvedEfficiency: 0.45,
 };
-
-/** Rounds a wreck section of this ammunition class is worth. */
-export function ammoSalvage(cls) {
-  return AMMO_SPEC[cls]?.salvagePer ?? 0;
-}
-
-export function ammoClassOf(weaponDef) {
-  if (weaponDef.ammoClass !== undefined) return weaponDef.ammoClass;
-  return AMMO_FOR_TYPE[weaponDef.type] ?? null;
-}
-
-export const isEnergyWeapon = (weaponDef) => ammoClassOf(weaponDef) === null;
 
 /**
  * Everything a hull carries that a fight can use up.
