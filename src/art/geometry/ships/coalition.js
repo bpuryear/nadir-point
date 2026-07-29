@@ -1128,11 +1128,11 @@ export const COALITION_SHIPS = [
     ],
     weapons: [
       weapon('fg_port', 'Port Mass Driver Bank', 'cannon', {
-        mount: [-48, 5, 12], yawCentre: PI * 0.5, yawWidth: PI * 0.605,
+        mount: [-48, 5, 12], yawCentre: -PI * 0.5, yawWidth: PI * 0.605,
         range: RANGE.cannon, damage: 46, shotsPerBurst: 4, cooldown: 3.8, tracking: 0.5,
       }),
       weapon('fg_stbd', 'Starboard Mass Driver Bank', 'cannon', {
-        mount: [48, 5, 12], yawCentre: -PI * 0.5, yawWidth: PI * 0.605,
+        mount: [48, 5, 12], yawCentre: PI * 0.5, yawWidth: PI * 0.605,
         range: RANGE.cannon, damage: 46, shotsPerBurst: 4, cooldown: 3.8, tracking: 0.5,
       }),
       weapon('fg_pd', 'Point Defence', 'pd', {
@@ -1203,12 +1203,12 @@ export const COALITION_SHIPS = [
         projectileSpeed: 1300, tracking: 0.42,
       }),
       weapon('dd_port', 'Port Heavy Battery', 'cannon', {
-        mount: [-38, 3, -128], yawCentre: PI * 0.5, yawWidth: PI * 0.545,
+        mount: [-38, 3, -128], yawCentre: -PI * 0.5, yawWidth: PI * 0.545,
         range: RANGE.cannon * 1.15, damage: 92, shotsPerBurst: 3, cooldown: 4.6,
         projectileSpeed: 1250, tracking: 0.38,
       }),
       weapon('dd_stbd', 'Starboard Heavy Battery', 'cannon', {
-        mount: [38, 3, -128], yawCentre: -PI * 0.5, yawWidth: PI * 0.545,
+        mount: [38, 3, -128], yawCentre: PI * 0.5, yawWidth: PI * 0.545,
         range: RANGE.cannon * 1.15, damage: 92, shotsPerBurst: 3, cooldown: 4.6,
         projectileSpeed: 1250, tracking: 0.38,
       }),
@@ -1240,12 +1240,12 @@ export const COALITION_SHIPS = [
     ],
     weapons: [
       weapon('cr_port', 'Port Casemates', 'cannon', {
-        mount: [-154, 14, -40], yawCentre: PI * 0.5, yawWidth: PI * 0.62,
+        mount: [-154, 14, -40], yawCentre: -PI * 0.5, yawWidth: PI * 0.62,
         range: RANGE.cannon * 0.9, damage: 58, shotsPerBurst: 4, cooldown: 4.0,
         projectileSpeed: 1500, tracking: 0.5,
       }),
       weapon('cr_stbd', 'Starboard Casemates', 'cannon', {
-        mount: [154, 14, -40], yawCentre: -PI * 0.5, yawWidth: PI * 0.62,
+        mount: [154, 14, -40], yawCentre: PI * 0.5, yawWidth: PI * 0.62,
         range: RANGE.cannon * 0.9, damage: 58, shotsPerBurst: 4, cooldown: 4.0,
         projectileSpeed: 1500, tracking: 0.5,
       }),

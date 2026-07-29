@@ -40,15 +40,31 @@
 import { registerModule } from '../../../core/contracts.js';
 import { RANGE } from '../../../core/units.js';
 import * as G from '../greeble.js';
-import { ModuleBuilder, MODULE_TRI_BUDGET, barrel, aimed } from './kit.js';
+import { ModuleBuilder, MODULE_TRI_BUDGET, barrel, aimed, muzzleAlong } from './kit.js';
 
 const HALF_PI = Math.PI * 0.5;
 /** Rotation that sends a +Z-authored primitive outboard to port. */
 const OUTBOARD = [0, -HALF_PI, 0];
+/** …and the direction that rotation actually sends +Z, for `muzzleAlong`. */
+const OUTBOARD_DIR = [-1, 0, 0];
 
 // ---------------------------------------------------------------------------
 // T1 — Coalition Cannon Bank
 // ---------------------------------------------------------------------------
+
+/**
+ * THE FOUR GUNS, as `[z, length, x]` — the echeloned staircase described below.
+ * Hoisted to module scope because the ModuleDef's `muzzles` are computed from these
+ * same three numbers per gun, so a barrel that moves takes its muzzle with it.
+ *
+ * The LOD1 pair is a SEPARATE table and is deliberately not what `muzzles` reads:
+ * the declared muzzle list is the LOD0 set at every quality level (see kit.js).
+ */
+const CANNON_ROWS = [[-66, 70, -106], [-22, 90, -114], [22, 110, -122], [66, 130, -130]];
+const CANNON_ROWS_LOD1 = [[-52, 80, -110], [36, 120, -126]];
+/** Barrels are canted 15 degrees down and struck outboard from y = -58. */
+const CANNON_AIM = [-1, -0.27, 0];
+const CANNON_BREECH_Y = -58;
 
 /**
  * Four mass drivers in a row on a boxy casemate. The cheapest broadside in the
@@ -113,12 +129,10 @@ function buildCannonBank(ctx) {
   // ship (tools/silhouette.mjs, top view - and the old rasteriser hid it by stamping
   // an edge-on facet's whole bounding box). Every root is now buried 14 m inside the
   // face, which is also how a casemate works: the gun is IN the box.
-  const rows = full
-    ? [[-66, 70, -106], [-22, 90, -114], [22, 110, -122], [66, 130, -130]]
-    : [[-52, 80, -110], [36, 120, -126]];
+  const rows = full ? CANNON_ROWS : CANNON_ROWS_LOD1;
   for (const [z, len, x] of rows) {
     b.add('greeble', aimed(barrel({ length: len, radius: 10, detail: D }),
-      [-1, -0.27, 0], [x, -58, z]));
+      CANNON_AIM, [x, CANNON_BREECH_Y, z]));
   }
 
   // Ammunition hoist. It is the one part that stands ABOVE the shelf, so the module
@@ -146,6 +160,9 @@ registerModule({
   triBudget: MODULE_TRI_BUDGET,
   mass: 420,
   build: buildCannonBank,
+  // Four muzzles for four shots, stepping 28 m further outboard and 44 m further
+  // forward each time — so the ripple visibly walks up the staircase.
+  muzzles: CANNON_ROWS.map(([z, len, x]) => muzzleAlong([x, CANNON_BREECH_Y, z], CANNON_AIM, len)),
   weapon: {
     id: 'w_cannon_bank', name: 'Cannon Bank', type: 'cannon',
     range: RANGE.cannon, damage: 130, shotsPerBurst: 4, burstInterval: 0.22,
@@ -158,6 +175,16 @@ registerModule({
 // ---------------------------------------------------------------------------
 // T2 — Concord Beam Array
 // ---------------------------------------------------------------------------
+
+/**
+ * The three emitter rods as `[z, y, length]`. THE MIDDLE ONE IS INDEX 1 AND IT IS
+ * THE FIRING ROD — see the `muzzles` note on the def below.
+ */
+const BEAM_RODS = [[-74, 12, 168], [2, 36, 216], [76, 12, 168]];
+/** At LOD1/2 only the long middle rod is built. Same rod, so the aperture is stable. */
+const BEAM_RODS_LOD1 = [BEAM_RODS[1]];
+/** The rod's root is at x = -186 and it runs outboard; the aperture sits 8 m proud. */
+const beamAperture = ([z, y, len]) => [-162 - len - 8, y, z];
 
 /**
  * A ceramic fairing with three staggered emitter rods and a pair of swept radiators
@@ -189,11 +216,12 @@ function buildBeamArray(ctx) {
 
   // Three emitter rods, staggered fore-aft and in height so they never read as a
   // grille. The middle one is longest.
-  const rods = full ? [[-74, 12, 168], [2, 36, 216], [76, 12, 168]] : [[2, 36, 216]];
-  for (const [z, y, len] of rods) {
+  const rods = full ? BEAM_RODS : BEAM_RODS_LOD1;
+  for (const rod of rods) {
+    const [z, y, len] = rod;
     b.add('greeble', G.hexStrut({ length: len, radius: 11, radiusEnd: 7, axis: 'z', detail: D }),
       { pos: [-186, y, z], rot: OUTBOARD });
-    b.glow([-162 - len - 8, y, z], 13, OUTBOARD);
+    b.glow(beamAperture(rod), 13, OUTBOARD);
   }
 
   // Two radiators, laid back over the fairing rather than standing up like fins.
@@ -221,6 +249,13 @@ registerModule({
   triBudget: MODULE_TRI_BUDGET,
   mass: 560,
   build: buildBeamArray,
+  // ONE muzzle, because `shotsPerBurst` is 1. This module is the reason the muzzle
+  // list is data on the def rather than a count of glow discs on the built mesh: it
+  // draws THREE apertures at LOD0 and ONE at LOD1/2, so a mesh-derived emitter count
+  // would be 3 on a high-quality client and 1 on a low-quality one, and a seeded
+  // replay would diverge between two players watching the same fight. The rod that
+  // fires is the long middle one — the only one that exists at every LOD.
+  muzzles: [beamAperture(BEAM_RODS[1])],
   weapon: {
     id: 'w_beam_array', name: 'Beam Array', type: 'beam',
     range: RANGE.beam, damage: 280, shotsPerBurst: 1, burstInterval: 0,
@@ -285,6 +320,17 @@ registerModule({
  * carries, minus a bite into it. A number typed by hand is a number that stops
  * being right the first time either end moves.
  */
+
+/** Six barrels as `[yaw, pitch, length]` across a 190 degree fan. LOD0 set. */
+const FLAK_GUNS = [
+  [-1.44, 0.46, 202], [-1.02, -0.34, 246], [-0.47, 0.22, 174],
+  [0.00, -0.46, 224], [0.61, 0.38, 168], [1.05, -0.12, 236],
+];
+const FLAK_GUNS_LOD1 = [[-1.02, -0.30, 232], [0.00, 0.24, 200], [1.05, -0.10, 216]];
+/** Every barrel is struck from INSIDE the hub, not off its outboard face. */
+const FLAK_BREECH = [-150, 52, 0];
+const flakAim = (yaw, pitch) => [-Math.cos(yaw), pitch, Math.sin(yaw)];
+
 function buildFlakCluster(ctx) {
   const b = new ModuleBuilder(ctx, 'derelict');
   const D = b.detail, full = b.full;
@@ -309,18 +355,13 @@ function buildFlakCluster(ctx) {
   // Six barrels across a 190 degree fan in yaw and a 60 degree spread in pitch.
   // Adjacent yaw separations are 0.42/0.55/0.47/0.61/0.44 rad - all over 24 degrees
   // - and three different lengths, so nothing pairs up.
-  const guns = full
-    ? [
-      [-1.44, 0.46, 202], [-1.02, -0.34, 246], [-0.47, 0.22, 174],
-      [0.00, -0.46, 224], [0.61, 0.38, 168], [1.05, -0.12, 236],
-    ]
-    : [[-1.02, -0.30, 232], [0.00, 0.24, 200], [1.05, -0.10, 216]];
+  const guns = full ? FLAK_GUNS : FLAK_GUNS_LOD1;
   for (const [yaw, pitch, len] of guns) {
     // Outboard (-X) swung by `yaw` in the horizontal and lifted by `pitch`. Struck
     // from INSIDE the hub barrel (x -150, against its -158..-96 run) rather than
     // ten metres off its outboard face.
     b.add('greeble', aimed(barrel({ length: len, radius: 9, brake: false, detail: D }),
-      [-Math.cos(yaw), pitch, Math.sin(yaw)], [-150, 52, 0]));
+      flakAim(yaw, pitch), FLAK_BREECH));
   }
 
   // Two hoppers, on their OWN stalks, well clear of the hub and of each other. Each
@@ -358,6 +399,10 @@ registerModule({
   triBudget: MODULE_TRI_BUDGET,
   mass: 380,
   build: buildFlakCluster,
+  // Six barrels, six shots, and the fan is why: each shot leaves from a different
+  // point on a 190 degree spray, so a flak burst is visibly a spray and not six
+  // rounds out of one hole.
+  muzzles: FLAK_GUNS.map(([yaw, pitch, len]) => muzzleAlong(FLAK_BREECH, flakAim(yaw, pitch), len)),
   weapon: {
     id: 'w_flak_cluster', name: 'Flak Cluster', type: 'flak',
     range: RANGE.flak, damage: 55, shotsPerBurst: 6, burstInterval: 0.12,
@@ -382,6 +427,14 @@ registerModule({
  * resolving a single detail. It reaches 469 m off the centreline against the hull's
  * own 198, and unlike the flak cluster every metre of that is solid mass.
  */
+
+/** Two turrets in a superfiring pair. `s` scales the aft one down to 0.86. */
+const BROADSIDE_TURRETS = [{ z: 100, y: 82, s: 1.0 }, { z: -98, y: 44, s: 0.86 }];
+/** Twin barrels per turret: struck from x = -156, 150 m long, split +-28 m in z. */
+const BROADSIDE_BARREL_X = -156;
+const BROADSIDE_BARREL_LEN = 150;
+const BROADSIDE_BARREL_DZ = 28;
+
 function buildBroadsideBattery(ctx) {
   const b = new ModuleBuilder(ctx, 'coalition');
   const D = b.detail, full = b.full;
@@ -397,8 +450,7 @@ function buildBroadsideBattery(ctx) {
 
   // Two turrets. The forward one is superfiring on a barbette - the height step is
   // what makes this read as a battery rather than as two boxes.
-  const turrets = [{ z: 100, y: 82, s: 1.0 }, { z: -98, y: 44, s: 0.86 }];
-  for (const t of turrets) {
+  for (const t of BROADSIDE_TURRETS) {
     b.add('plating', G.panelledSlab({
       width: 100 * t.s, height: 52 * t.s, depth: 116 * t.s, chamfer: 15 * t.s, detail: D,
     }), { pos: [-104, t.y, t.z] });
@@ -406,9 +458,9 @@ function buildBroadsideBattery(ctx) {
       b.add('hull', G.pipeRun({ length: 42, radius: 54, sides: 6, axis: 'y', flanges: 0, detail: D }),
         { pos: [-104, 32, t.z] });
     }
-    for (const dz of [-28 * t.s, 28 * t.s]) {
-      b.add('greeble', barrel({ length: 150 * t.s, radius: 13 * t.s, detail: D }),
-        { pos: [-156, t.y + 2, t.z + dz], rot: OUTBOARD });
+    for (const dz of [-BROADSIDE_BARREL_DZ * t.s, BROADSIDE_BARREL_DZ * t.s]) {
+      b.add('greeble', barrel({ length: BROADSIDE_BARREL_LEN * t.s, radius: 13 * t.s, detail: D }),
+        { pos: [BROADSIDE_BARREL_X, t.y + 2, t.z + dz], rot: OUTBOARD });
     }
   }
 
@@ -450,6 +502,13 @@ registerModule({
   triBudget: MODULE_TRI_BUDGET,
   mass: 1560,
   build: buildBroadsideBattery,
+  // Four muzzles: two turrets, twin barrels each, forward turret first. The forward
+  // pair sits 38 m higher and 198 m further forward than the aft pair, which is what
+  // makes a four-shot burst read as a superfiring battery rather than as one gun.
+  muzzles: BROADSIDE_TURRETS.flatMap((t) => [-BROADSIDE_BARREL_DZ * t.s, BROADSIDE_BARREL_DZ * t.s]
+    .map((dz) => muzzleAlong(
+      [BROADSIDE_BARREL_X, t.y + 2, t.z + dz], OUTBOARD_DIR, BROADSIDE_BARREL_LEN * t.s,
+    ))),
   weapon: {
     id: 'w_heavy_broadside', name: 'Heavy Broadside', type: 'cannon',
     range: RANGE.cannon, damage: 340, shotsPerBurst: 4, burstInterval: 0.30,
@@ -475,6 +534,12 @@ registerModule({
  * z ranges down the ship's flanks - the single largest change any pair of modules
  * makes to the plan outline.
  */
+
+/** The rail's line in module space, and the aperture 8 m off the end of the cap. */
+const GAUSS_RAIL_X = -176;
+const GAUSS_RAIL_Y = 212;
+const GAUSS_MUZZLE_Z = 350;
+
 function buildGaussOutrigger(ctx) {
   const b = new ModuleBuilder(ctx, 'concord');
   const D = b.detail, full = b.full;
@@ -494,16 +559,16 @@ function buildGaussOutrigger(ctx) {
 
   // The rail itself, running fore-and-aft, outboard and HIGH.
   b.add('plating', G.hexStrut({ length: 520, radius: 17, radiusEnd: 14, axis: 'z', detail: D }),
-    { pos: [-176, 212, -222] });
+    { pos: [GAUSS_RAIL_X, GAUSS_RAIL_Y, -222] });
   b.add('greeble', G.hexStrut({ length: 44, radius: 26, radiusEnd: 20, axis: 'z', detail: D }),
-    { pos: [-176, 212, 298] });
-  b.glow([-176, 212, 350], 18);
+    { pos: [GAUSS_RAIL_X, GAUSS_RAIL_Y, 298] });
+  b.glow([GAUSS_RAIL_X, GAUSS_RAIL_Y, GAUSS_MUZZLE_Z], 18);
 
   // Two focus rings along the run.
   const rings = full ? [-64, 140] : [40];
   for (const z of rings) {
     b.add('greeble', G.dockingCollar({ radius: 32, innerRadius: 20, depth: 13, sides: 6, detail: D }),
-      { pos: [-176, 212, z] });
+      { pos: [GAUSS_RAIL_X, GAUSS_RAIL_Y, z] });
   }
 
   // Capacitor blister slung under the rail between the pylons, so the gap between
@@ -528,6 +593,9 @@ registerModule({
   triBudget: MODULE_TRI_BUDGET,
   mass: 1240,
   build: buildGaussOutrigger,
+  // One shot, one muzzle, 210 m above the sponson deck. This is the highest muzzle
+  // on any flank fit, so the flash is the one that reads against sky.
+  muzzles: [[GAUSS_RAIL_X, GAUSS_RAIL_Y, GAUSS_MUZZLE_Z]],
   weapon: {
     id: 'w_gauss_outrigger', name: 'Gauss Rail', type: 'rail',
     range: RANGE.rail, damage: 690, shotsPerBurst: 1, burstInterval: 0,

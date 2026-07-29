@@ -54,6 +54,32 @@ import { RANGE } from '../../../core/units.js';
 import * as G from '../greeble.js';
 import { ModuleBuilder, MODULE_TRI_BUDGET, throat, aimed } from './kit.js';
 
+/**
+ * The tractor yoke's three arms. Not thirds of a circle and not equal lengths,
+ * because nothing the derelicts built is. Hoisted so the emitter apertures the
+ * geometry draws and the muzzle the ModuleDef declares come from one table.
+ */
+const TRACTOR_ARMS = [
+  { x: -1, z: 0.26, len: 300, tilt: 0.86 },
+  { x: 1, z: 0.14, len: 246, tilt: 0.70 },
+  { x: 0.06, z: 1, len: 336, tilt: 0.52 },
+];
+const TRACTOR_HUB_Y = -96;
+const TRACTOR_HUB_R = 34;
+/** The horn's bell hangs 62 m below the end of its arm; that is the aperture. */
+const TRACTOR_HORN_DROP = 62;
+
+/** One arm resolved: strike point, direction, where the arm ends, where it emits. */
+function tractorArm(arm) {
+  const a = Math.atan2(arm.z, arm.x);
+  const ca = Math.cos(a), sa = Math.sin(a);
+  const dir = [ca * arm.tilt, -1, sa * arm.tilt];
+  const k = arm.len / Math.hypot(ca * arm.tilt, 1, sa * arm.tilt);
+  const root = [ca * TRACTOR_HUB_R, TRACTOR_HUB_Y, sa * TRACTOR_HUB_R];
+  const head = [root[0] + ca * arm.tilt * k, TRACTOR_HUB_Y - k, root[2] + sa * arm.tilt * k];
+  return { dir, root, head, aperture: [head[0], head[1] - TRACTOR_HORN_DROP, head[2]] };
+}
+
 const HALF_PI = Math.PI * 0.5;
 
 const oct = (hw, top, bot, cw, ct, cb) => G.octProfile(hw, top, bot, cw, ct, cb);
@@ -203,27 +229,18 @@ function buildSalvageTractor(ctx) {
 
   // Three arms, splayed down and out, none the same length and none at a third of
   // a circle. Every tip clears the hull envelope by more than 100 m.
-  const arms = [
-    { x: -1, z: 0.26, len: 300, tilt: 0.86 },
-    { x: 1, z: 0.14, len: 246, tilt: 0.70 },
-    { x: 0.06, z: 1, len: 336, tilt: 0.52 },
-  ];
-  for (const arm of arms) {
-    const a = Math.atan2(arm.z, arm.x);
-    const ca = Math.cos(a), sa = Math.sin(a);
-    const dir = [ca * arm.tilt, -1, sa * arm.tilt];
-    const k = arm.len / Math.hypot(ca * arm.tilt, 1, sa * arm.tilt);
+  for (const arm of TRACTOR_ARMS) {
+    const { dir, root, head, aperture } = tractorArm(arm);
     b.add('hull', aimed(
       G.hexStrut({ length: arm.len, radius: 16, radiusEnd: 11, axis: 'z', detail: D }),
-      dir, [ca * 34, -96, sa * 34],
+      dir, root,
     ));
-    const hx = ca * 34 + ca * arm.tilt * k, hy = -96 - k, hz = sa * 34 + sa * arm.tilt * k;
     // Emitter horn: a short bell flaring downward off the end of the arm.
     b.add('plating', aimed(
       G.hexStrut({ length: 58, radius: 20, radiusEnd: 36, axis: 'z', detail: D }),
-      [0, -1, 0], [hx, hy, hz],
+      [0, -1, 0], head,
     ));
-    b.glow([hx, hy - 62, hz], 32, [HALF_PI, 0, 0]);
+    b.glow(aperture, 32, [HALF_PI, 0, 0]);
   }
 
   if (full) {
@@ -251,6 +268,10 @@ registerModule({
   triBudget: MODULE_TRI_BUDGET,
   mass: 320,
   build: buildSalvageTractor,
+  // THREE horns are drawn; ONE emits, because `shotsPerBurst` is 1. The firing horn
+  // is the longest arm (336 m, the one that reaches forward), which is also the one
+  // that clears the salvage cradle. Same rule as bow_mining_array.
+  muzzles: [tractorArm(TRACTOR_ARMS[2]).aperture],
   weapon: {
     id: 'w_tractor_beam', name: 'Tractor Beam', type: 'mining',
     range: RANGE.salvageBeam, damage: 20, shotsPerBurst: 1, burstInterval: 0,

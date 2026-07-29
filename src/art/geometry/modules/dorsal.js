@@ -31,9 +31,15 @@
 import { registerModule } from '../../../core/contracts.js';
 import { RANGE } from '../../../core/units.js';
 import * as G from '../greeble.js';
-import { ModuleBuilder, MODULE_TRI_BUDGET, barrel, aimed } from './kit.js';
+import { ModuleBuilder, MODULE_TRI_BUDGET, barrel, aimed, muzzleAlong } from './kit.js';
 
 const HALF_PI = Math.PI * 0.5;
+
+/** Twin rails: struck from z = 56, 208 m long, muzzle glow 8 m proud of the tip. */
+const RAIL_SIDES = [-1, 1];
+const RAIL_X = 30;
+const RAIL_Y = 82;
+const RAIL_MUZZLE_Z = 272;
 
 // ---------------------------------------------------------------------------
 // T3 — Coalition Rail Battery
@@ -70,10 +76,10 @@ function buildRailBattery(ctx) {
     { pos: [-10, 42, -104] });
 
   // The rails. Long, thin, parallel: the read.
-  for (const s of [-1, 1]) {
+  for (const s of RAIL_SIDES) {
     b.add('greeble', barrel({ length: 208, radius: 11, radiusEnd: 9, detail: D }),
-      { pos: [s * 30, 82, 56] });
-    b.glow([s * 30, 82, 272], 9);
+      { pos: [s * RAIL_X, RAIL_Y, 56] });
+    b.glow([s * RAIL_X, RAIL_Y, RAIL_MUZZLE_Z], 9);
   }
   // Recoil cradle under the rails.
   b.add('greeble', G.panelledSlab({ width: 92, height: 14, depth: 84, detail: D }), { pos: [0, 64, 92] });
@@ -113,6 +119,9 @@ registerModule({
   triBudget: MODULE_TRI_BUDGET,
   mass: 1420,
   build: buildRailBattery,
+  // Two rails, two shots. This module already drew its two apertures in the right
+  // places; the declaration makes them the SIM's numbers instead of the renderer's.
+  muzzles: RAIL_SIDES.map((s) => [s * RAIL_X, RAIL_Y, RAIL_MUZZLE_Z]),
   weapon: {
     id: 'w_rail_battery', name: 'Twin Rails', type: 'rail',
     range: RANGE.rail, damage: 780, shotsPerBurst: 2, burstInterval: 0.35,
@@ -203,6 +212,14 @@ registerModule({
  * sounds: a lone thin arm was setting this module's whole silhouette height, so
  * the raft measured "tall" while looking flat.
  */
+
+/** Six cells as `[x, z]`. LOD1 builds three of them; the muzzle list is these six. */
+const VLS_CELLS = [[-92, -50], [0, -50], [92, -50], [-92, 44], [0, 44], [92, 44]];
+const VLS_CELLS_LOD1 = [VLS_CELLS[0], VLS_CELLS[2], VLS_CELLS[4]];
+/** The cell tube is struck at y = 20 and runs 74 m up, so the mouth is at y = 94. */
+const VLS_CELL_Y = 20;
+const VLS_CELL_LEN = 74;
+
 function buildMissileCells(ctx) {
   const b = new ModuleBuilder(ctx, 'coalition');
   const D = b.detail, full = b.full;
@@ -213,12 +230,10 @@ function buildMissileCells(ctx) {
   b.graft([0, -8, 0], [-HALF_PI, 0, 0], 42);
 
   // Six cells. Open at the top; you can see down into them.
-  const cells = full
-    ? [[-92, -50], [0, -50], [92, -50], [-92, 44], [0, 44], [92, 44]]
-    : [[-92, -50], [92, -50], [0, 44]];
+  const cells = full ? VLS_CELLS : VLS_CELLS_LOD1;
   for (const [x, z] of cells) {
-    b.add('plating', G.hexStrut({ length: 74, radius: 25, axis: 'y', caps: false, detail: D }),
-      { pos: [x, 20, z] });
+    b.add('plating', G.hexStrut({ length: VLS_CELL_LEN, radius: 25, axis: 'y', caps: false, detail: D }),
+      { pos: [x, VLS_CELL_Y, z] });
     b.add('dark', G.hexStrut({ length: 68, radius: 22, axis: 'y', caps: true, detail: D }),
       { pos: [x, 18, z] });
   }
@@ -252,11 +267,20 @@ registerModule({
   triBudget: MODULE_TRI_BUDGET,
   mass: 780,
   build: buildMissileCells,
+  // Six cells, six missiles, one muzzle per cell at the mouth of its tube.
+  muzzles: VLS_CELLS.map(([x, z]) => [x, VLS_CELL_Y + VLS_CELL_LEN, z]),
   weapon: {
     id: 'w_vls_cells', name: 'Vertical Launch Cells', type: 'missile',
     range: RANGE.missile, damage: 460, shotsPerBurst: 6, burstInterval: 0.35,
     cooldown: 12.0, projectileSpeed: 300, tracking: 0.55, powerDraw: 16,
     yawWidth: Math.PI * 2, pitchWidth: Math.PI * 0.8, subsystemAccuracy: 0.20,
+    // SIX CELLS, SIX ROUNDS IN THE FEED. Without this override `WeaponMount.readyMax`
+    // falls back to `AMMO_SPEC.missile.ready` = 4 (stores.js), so this launcher has
+    // been firing four of its six cells and then forcing a 0.5 s stall and an 11 s
+    // reload for the whole life of the project. Nothing caught it because nothing
+    // checked the relation; `contracts.js` now throws on it, and this is the one
+    // violator that fix was written against. The two must stay in the same commit.
+    ready: 6,
   },
   silhouetteTags: ['raft', 'cell-cluster', 'wide', 'flat'],
 });
@@ -285,6 +309,36 @@ registerModule({
  * on one hardpoint not sharing a tag set. It costs nothing: a longer strut is the
  * same eight triangles as a short one, and the splay is a rotation.
  */
+
+/** Four mounts, NOT at 90 degree intervals — offset so the ring has a front. */
+const PD_MOUNTS = [0.35, 1.72, 3.30, 4.75];
+const PD_MOUNTS_LOD1 = [PD_MOUNTS[0], PD_MOUNTS[2]];
+const PD_SPLAY = 0.34;                   // radians the stalks lean outboard
+const PD_STALK = 150;
+const PD_RING_R = 52;                    // where a stalk is struck from the pad
+const PD_GUN_OFFSET = 30;                // barrel block centre, outboard of the head
+const PD_GUN_DEPTH = 40;                 // its depth; the aperture is half of that further out
+const PD_GUN_WIDTH = 12;                 // twin barrels sit +-width/4 across it
+
+/**
+ * One PD mount resolved from its bearing. Returns the stalk root, the gun-head
+ * platform, and the TWO barrel apertures — this is a twin mount, so four mounts
+ * publish the eight muzzles `shotsPerBurst` promises.
+ */
+function pdMount(a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  const reach = PD_STALK * Math.sin(PD_SPLAY);
+  const rise = PD_STALK * Math.cos(PD_SPLAY);
+  const root = [c * PD_RING_R, 10, s * PD_RING_R];
+  const head = [c * (PD_RING_R + reach), 10 + rise, s * (PD_RING_R + reach)];
+  const gr = PD_RING_R + reach + PD_GUN_OFFSET + PD_GUN_DEPTH * 0.5;
+  const t = PD_GUN_WIDTH * 0.25;         // half the separation between the twins
+  // The block is yawed to HALF_PI - a, which sends its +Z radially outboard and its
+  // +X tangential; the twins are split along that tangent.
+  const muzzles = [-1, 1].map((k) => [c * gr + k * t * s, 12 + rise, s * gr - k * t * c]);
+  return { c, s, reach, rise, root, head, muzzles };
+}
+
 function buildPDRing(ctx) {
   const b = new ModuleBuilder(ctx, 'concord');
   const D = b.detail, full = b.full;
@@ -292,25 +346,22 @@ function buildPDRing(ctx) {
   b.add('hull', G.mountPad({ radius: 76, height: 16, sides: 8, detail: D }), { pos: [0, 0, 0] });
   b.graft([0, 16, 0], [-HALF_PI, 0, 0], 72);
 
-  // Four mounts. Not at 90 degree intervals — offset so the ring has a front.
-  const mounts = full ? [0.35, 1.72, 3.30, 4.75] : [0.35, 3.30];
-  const SPLAY = 0.34;                      // radians the stalks lean outboard
-  const STALK = 150;
+  const mounts = full ? PD_MOUNTS : PD_MOUNTS_LOD1;
   for (const a of mounts) {
-    const c = Math.cos(a), s = Math.sin(a);
-    const x = c * 52, z = s * 52;
+    const { c, s, reach, rise, root, head } = pdMount(a);
     // Lean each stalk away from the axis. The head lands at radius
-    // 52 + 96 sin(SPLAY) = 87 m, i.e. outside the 76 m pad, so the four guns are
+    // 52 + 150 sin(SPLAY) = 102 m, i.e. outside the 76 m pad, so the four guns are
     // silhouetted against sky rather than against the module's own body.
-    const reach = STALK * Math.sin(SPLAY);
-    const rise = STALK * Math.cos(SPLAY);
-    b.add('greeble', G.hexStrut({ length: STALK, radius: 8, radiusEnd: 6, axis: 'y', detail: D }),
-      { pos: [x, 10, z], rot: [s * SPLAY, 0, -c * SPLAY] });
+    b.add('greeble', G.hexStrut({ length: PD_STALK, radius: 8, radiusEnd: 6, axis: 'y', detail: D }),
+      { pos: root, rot: [s * PD_SPLAY, 0, -c * PD_SPLAY] });
     b.add('plating', G.panelledSlab({ width: 26, height: 18, depth: 30, chamfer: 6, detail: D }),
-      { pos: [x + c * reach, 10 + rise, z + s * reach] });
+      { pos: head });
     // Twin barrels, pointing outboard along the ring radius.
-    b.add('greeble', G.panelledSlab({ width: 12, height: 6, depth: 40, detail: D }),
-      { pos: [x + c * (reach + 30), 12 + rise, z + s * (reach + 30)], rot: [0, HALF_PI - a, 0] });
+    b.add('greeble', G.panelledSlab({ width: PD_GUN_WIDTH, height: 6, depth: PD_GUN_DEPTH, detail: D }),
+      {
+        pos: [c * (PD_RING_R + reach + PD_GUN_OFFSET), 12 + rise, s * (PD_RING_R + reach + PD_GUN_OFFSET)],
+        rot: [0, HALF_PI - a, 0],
+      });
   }
 
   // Central AESA panel: a flat plate standing on edge, canted forward. It stays
@@ -339,6 +390,10 @@ registerModule({
   triBudget: MODULE_TRI_BUDGET,
   mass: 290,
   build: buildPDRing,
+  // Eight muzzles: four twin mounts. PD is locked to AUTO and is excluded from the
+  // ripple, but it still needs per-barrel origins so its tracers leave the barrel
+  // that is actually pointing at the missile rather than the centre of the pad.
+  muzzles: PD_MOUNTS.flatMap((a) => pdMount(a).muzzles),
   weapon: {
     id: 'w_pd_ring', name: 'PD Ring', type: 'pd',
     range: RANGE.pointDefence, damage: 26, shotsPerBurst: 8, burstInterval: 0.09,

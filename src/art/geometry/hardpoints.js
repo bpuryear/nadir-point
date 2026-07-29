@@ -82,9 +82,36 @@
  * ---------------------------------------------------------------------------
  * 4. FIRING ARCS
  * ---------------------------------------------------------------------------
- * `yawCentre` is radians from ship forward (+Z), counter-clockwise looking DOWN.
- * Port is +PI/2, starboard is -PI/2, bow is 0, engine is PI. `yawWidth` is the TOTAL
- * arc, so a mount covers [yawCentre - yawWidth/2, yawCentre + yawWidth/2].
+ * `yawCentre` is radians from ship forward (+Z). POSITIVE YAW TURNS +Z TOWARD +X.
+ *
+ * State it that way and nothing else, because every other phrasing of this has
+ * already cost this project a bug. The code the number is fed to is:
+ *
+ *     yawOf(x, z) = Math.atan2(x, z)                       physics.js
+ *     worldForward.set(sin(aim), 0, cos(aim))              ship.js, aim = heading + yawCentre
+ *
+ * so `yawCentre = +PI/2` produces the direction (1, 0, 0), which is +X, which is
+ * STARBOARD (see §2). It is the same convention as three.js's own `rotation.y`:
+ * `rotation.y = +PI/2` maps a local +Z to world +X, verified rather than assumed.
+ *
+ * BEWARE "counter-clockwise looking down", which this comment used to say and
+ * `physics.js#yawOf` still says. It is true under the right-hand rule — positive
+ * rotation about +Y appears counter-clockwise viewed from +Y — but it is read the
+ * other way round by anyone holding a plan view drawn the way plan views are drawn,
+ * with forward up the page and starboard to the right. That layout is a view from
+ * BELOW the ship, not above it, and the sign flips. The rule above has no such
+ * reading: +Z toward +X, and the two lines of code that implement it.
+ *
+ * So: bow is 0, STARBOARD is +PI/2, PORT is -PI/2, engine is PI. Each mount's arc
+ * is centred on ITS OWN SIDE OF THE HULL — the port sponson sits at x = -158 and
+ * fires to port. This was inverted until it was measured: every port battery in the
+ * game, player and NPC, had its firing arc on the starboard beam and vice versa,
+ * because the anchors were authored from §2 (+X is starboard, which is correct) and
+ * the yaw centres from the "counter-clockwise" sentence above (which is ambiguous).
+ * `assertMountArcsFaceOutboard` below is the check that stops it coming back.
+ *
+ * `yawWidth` is the TOTAL arc, so a mount covers
+ * [yawCentre - yawWidth/2, yawCentre + yawWidth/2].
  *
  * The six arcs are chosen so that a fully fitted hull TILES THE CIRCLE with a 30-34
  * degree overlap at every seam and no gap anywhere. The only blind wedge in the
@@ -96,6 +123,8 @@
  * 5. THE API
  * ---------------------------------------------------------------------------
  *   CRUISER_HARDPOINTS                                  HardpointDef[]
+ *   restForward(yawCentre)                              -> [x, y, z] unit vector
+ *   assertMountArcsFaceOutboard(defs, label)            throws on an inverted arc
  *   createSockets(root)                                 -> Map<id, {socket, def}>
  *   attachModule(hullResult, id, moduleDef, ctx)        -> { object, detach() }
  *   detachModule(hullResult, id)                        -> boolean
@@ -150,24 +179,29 @@ export const ARC_RATIONALE = {
   ventral: 'Not a firing arc. The ventral mount is the utility bay - grapples, '
     + 'tractors, hangar throats - so it is declared full-circle and any weapon that '
     + 'mounts here overrides with its own yawWidth.',
-  port: '140 degrees centred on the beam (+PI/2), i.e. 20 to 160 degrees. Broadside '
-    + 'is the cruiser\'s natural fighting position.',
-  starboard: 'Mirror of port: -20 to -160 degrees.',
+  port: '140 degrees centred on the PORT beam (-PI/2), i.e. -20 to -160 degrees. '
+    + 'Broadside is the cruiser\'s natural fighting position.',
+  starboard: 'Mirror of port, on the starboard beam (+PI/2): +20 to +160 degrees.',
   engine: '108 degrees centred astern. Covers exactly the 40-degree gap the two '
     + 'sponsons leave behind the ship, so a stern chaser closes the rear blind spot.',
 };
 
 /**
- * The six mounts. Measured counter-clockwise from ship forward, the four weapon
- * arcs cover the full circle:
+ * The six mounts. Measured from ship forward with positive yaw turning +Z toward
+ * +X (see §4), the four weapon arcs cover the full circle:
  *   bow        -50 ..  +50
- *   port       +20 .. +160
+ *   starboard  +20 .. +160
  *   engine    +126 .. +234
- *   starboard +200 .. +340   (i.e. -20 .. -160)
+ *   port      +200 .. +340   (i.e. -20 .. -160)
  * Every seam overlaps by 30-34 degrees, so a target crossing from the bow arc into
  * the broadside is never briefly untouchable. There is no bearing a fully fitted
  * hull cannot answer, which is the promise the refit screen makes to the player -
  * and the reason a HALF-fitted hull has holes the player can feel.
+ *
+ * The COVERAGE here is unchanged from the version that had port and starboard the
+ * wrong way round: the same four wedges, tiled the same way, with the same overlaps.
+ * All that moved is which mount owns which wedge, and that is the whole defect -
+ * the guns are on one flank and the arc was on the other.
  *
  * @type {import('../../core/contracts.js').HardpointDef[]}
  */
@@ -206,7 +240,7 @@ export const CRUISER_HARDPOINTS = [
     id: 'port',
     anchor: CRUISER_ANCHORS.port,
     normal: [-1, 0, 0],
-    yawCentre: Math.PI * 0.5,
+    yawCentre: -Math.PI * 0.5,      // -X. The port sponson fires to PORT. See §4.
     yawWidth: Math.PI * 0.778,      // 140 degrees
     maxTier: 3,
     structureHP: 1200,
@@ -216,7 +250,7 @@ export const CRUISER_HARDPOINTS = [
     id: 'starboard',
     anchor: CRUISER_ANCHORS.starboard,
     normal: [1, 0, 0],
-    yawCentre: -Math.PI * 0.5,
+    yawCentre: Math.PI * 0.5,       // +X. The starboard sponson fires to STARBOARD.
     yawWidth: Math.PI * 0.778,
     maxTier: 3,
     structureHP: 1200,
@@ -249,6 +283,89 @@ for (const id of HARDPOINTS) {
 for (const h of CRUISER_HARDPOINTS) {
   if (!HARDPOINTS.includes(h.id)) throw new Error(`[hardpoints] "${h.id}" is not a HARDPOINT in contracts.js`);
 }
+
+// ---------------------------------------------------------------------------
+// THE HANDEDNESS ASSERTION
+//
+// A mount's guns must point out of the side of the hull they are bolted to. That
+// is not a naming preference and it is not an art note - it is the one relation
+// between `anchor`/`normal` (authored by geometry) and `yawCentre` (consumed by the
+// sim) that nothing in the codebase checked, and it was wrong on every flank mount
+// in the game: the port sponson at x = -158 had its 140 degree arc centred on +X.
+// Nothing exposed it, because `_fire` spawns from `mount.worldPosition` (the right
+// side) and aims at the target, and `mount.worldForward` had exactly one consumer.
+// Per-emitter muzzle flashes and a ripple that walks down one flank make it loud.
+//
+// The check is one dot product, at import time, and it costs nothing.
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a mount points with the ship at heading 0 and the turret centred.
+ * This is `ship.js#WeaponMount.updateWorld`'s `worldForward` with `shipHeading` and
+ * `traverse` both zero, written out so the two cannot drift.
+ *
+ * @param {number} yawCentre  radians; positive turns +Z toward +X
+ * @returns {[number,number,number]} unit vector in ship space
+ */
+export function restForward(yawCentre) {
+  return [Math.sin(yawCentre), 0, Math.cos(yawCentre)];
+}
+
+/** How closely a mount's rest bearing must agree with its own outward normal. */
+export const HANDEDNESS_MIN_DOT = 0.9;
+
+/**
+ * Throw if any mount's firing arc is centred on the wrong side of the hull.
+ *
+ * Compares `restForward(yawCentre)` against the mount's outward `normal`, in the
+ * HORIZONTAL PLANE ONLY, and requires the dot product to exceed
+ * `HANDEDNESS_MIN_DOT`. Two things about that are deliberate:
+ *
+ *   - IT IS A YAW TEST, so it is projected onto XZ. `yawCentre` says nothing about
+ *     elevation, and a mount whose normal is vertical carries no yaw information at
+ *     all: the dorsal bed (normal [0,1,0]) and the ventral cradle (normal [0,-1,0])
+ *     both have a horizontal projection of zero length. Testing them against the raw
+ *     3-D normal would demand `dot([0,0,1], [0,1,0]) > 0.9`, which is 0 and can
+ *     never pass for any `yawCentre`. They are SKIPPED, and both are declared
+ *     near-full-traverse anyway (306 and 360 degrees), so there is no side for them
+ *     to be on. This is the one place the check's specification as written could not
+ *     be implemented literally.
+ *   - 0.9 IS 25.8 DEGREES, which is generous on purpose. It is not measuring
+ *     precision, it is catching a SIGN: the failure mode is 180 degrees out, and
+ *     every legitimate value in the table is exact.
+ *
+ * @param {Array} defs        HardpointDef-shaped objects with `normal` and `yawCentre`
+ * @param {string} [label]    what to name in the error
+ * @returns {number} how many mounts were actually checked - see the sample-size rule
+ */
+export function assertMountArcsFaceOutboard(defs, label = 'cruiser') {
+  let checked = 0;
+  for (const d of defs) {
+    const n = d?.normal;
+    if (!n) continue;
+    const h = Math.hypot(n[0], n[2]);
+    if (h < 1e-6) continue;                     // vertical normal: no yaw to check
+    const f = restForward(d.yawCentre ?? 0);
+    const dot = (f[0] * n[0] + f[2] * n[2]) / h;
+    checked++;
+    if (dot <= HANDEDNESS_MIN_DOT) {
+      const deg = (r) => (r * 180 / Math.PI).toFixed(1);
+      throw new Error(
+        `[hardpoints] ${label} mount "${d.id}" has its firing arc on the wrong side of the `
+        + `hull. Its outward normal is [${n.join(', ')}] but yawCentre ${deg(d.yawCentre ?? 0)} `
+        + `deg points it at [${f.map((v) => v.toFixed(2)).join(', ')}] - dot ${dot.toFixed(3)}, `
+        + `needs > ${HANDEDNESS_MIN_DOT}. Positive yaw turns +Z toward +X, so a mount whose `
+        + `normal is -X wants yawCentre -PI/2. See section 4 of this file.`,
+      );
+    }
+  }
+  return checked;
+}
+
+// Four of the six mounts carry a horizontal normal and are checked here; the dorsal
+// and ventral mounts face straight up and down and are skipped, for the reason in
+// the doc comment above.
+assertMountArcsFaceOutboard(CRUISER_HARDPOINTS);
 
 // ---------------------------------------------------------------------------
 // Sockets

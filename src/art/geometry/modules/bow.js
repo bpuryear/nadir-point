@@ -37,9 +37,12 @@
 import { registerModule } from '../../../core/contracts.js';
 import { RANGE } from '../../../core/units.js';
 import * as G from '../greeble.js';
-import { ModuleBuilder, MODULE_TRI_BUDGET, barrel, throat, aimed } from './kit.js';
+import { ModuleBuilder, MODULE_TRI_BUDGET, barrel, throat, aimed, muzzleAlong } from './kit.js';
 
 const HALF_PI = Math.PI * 0.5;
+
+/** The lance's aperture, at the far end of the flared muzzle. */
+const LANCE_MUZZLE = [0, 58, 545];
 
 // ---------------------------------------------------------------------------
 // T3 — Concord Siege Lance
@@ -67,7 +70,7 @@ function buildSiegeLance(ctx) {
   // Flared muzzle and the aperture itself.
   b.add('greeble', G.hexStrut({ length: 40, radius: 32, radiusEnd: 25, axis: 'z', detail: D }),
     { pos: [0, 58, 500] });
-  b.glow([0, 58, 545], 22);
+  b.glow(LANCE_MUZZLE, 22);
 
   // Focus rings. Two, not five: they are a rhythm along the tube, not a texture.
   const rings = full ? [200, 370] : [280];
@@ -112,6 +115,9 @@ registerModule({
   triBudget: MODULE_TRI_BUDGET,
   mass: 1180,
   build: buildSiegeLance,
+  // One shot, one aperture, 545 m forward of the mount and therefore 250 m past the
+  // ship's own stem. The CHARGE archetype anchors its pre-fire VFX and audio here.
+  muzzles: [LANCE_MUZZLE],
   weapon: {
     id: 'w_siege_lance', name: 'Siege Lance', type: 'lance',
     range: RANGE.lance, damage: 2600, shotsPerBurst: 1, burstInterval: 0,
@@ -136,6 +142,13 @@ registerModule({
  * now puts everything ABOVE the mount plane on an open lattice - this is a solid
  * shape with an opposite sign. See the file header.
  */
+
+/** Twin harpoon tubes slung under the ram root, angled down and out. */
+const HARPOON_SIDES = [-1, 1];
+const HARPOON_LEN = 156;
+const harpoonAim = (s) => [s * 0.16, -0.34, 1];
+const harpoonRoot = (s) => [s * 64, -54, 20];
+
 function buildBreachingProw(ctx) {
   const b = new ModuleBuilder(ctx, 'coalition');
   const D = b.detail, full = b.full;
@@ -188,9 +201,9 @@ function buildBreachingProw(ctx) {
   // Harpoon tubes, slung UNDER the ram root and angled down and out. On the old
   // version these sat above the block and were the one part that read the same as
   // the torpedo battery's tubes.
-  for (const s of [-1, 1]) {
-    b.add('greeble', aimed(barrel({ length: 156, radius: 14, brake: false, detail: D }),
-      [s * 0.16, -0.34, 1], [s * 64, -54, 20]));
+  for (const s of HARPOON_SIDES) {
+    b.add('greeble', aimed(barrel({ length: HARPOON_LEN, radius: 14, brake: false, detail: D }),
+      harpoonAim(s), harpoonRoot(s)));
   }
   // Winch drum: to port only, and below the deck line. Somebody bolted it where
   // there was room.
@@ -226,6 +239,9 @@ registerModule({
   triBudget: MODULE_TRI_BUDGET,
   mass: 860,
   build: buildBreachingProw,
+  // Two harpoons, two tubes, port tube first. Both sit 104 m BELOW the mount plane,
+  // which is the whole point of this module against the torpedo battery's stack.
+  muzzles: HARPOON_SIDES.map((s) => muzzleAlong(harpoonRoot(s), harpoonAim(s), HARPOON_LEN)),
   weapon: {
     id: 'w_harpoon_tubes', name: 'Harpoon Tubes', type: 'missile',
     range: 1800, damage: 420, shotsPerBurst: 2, burstInterval: 0.7,
@@ -246,6 +262,31 @@ registerModule({
  * and still unmistakable at distance: a forward-facing CLAW that is 300 m across
  * and open in the middle, so the bow of the ship acquires a hole in it.
  */
+
+/** Three arms at 20, 128 and 235 degrees around the axis - deliberately not thirds. */
+const MINING_ARMS = [
+  { a: 0.35, len: 320, r: 96 },
+  { a: 2.24, len: 244, r: 84 },
+  { a: 4.10, len: 282, r: 88 },
+];
+const MINING_SPLAY = 0.52;
+const MINING_HUB_Y = 18;
+
+/**
+ * Everything about one arm derived from its three authored numbers: where it is
+ * struck from, where it points, where its head lands, and where the cutting
+ * aperture ends up. The build loop and the muzzle declaration both read this, so
+ * moving an arm moves its muzzle and neither can be forgotten.
+ */
+function miningArm(arm) {
+  const ca = Math.cos(arm.a), sa = Math.sin(arm.a);
+  const root = [ca * arm.r, MINING_HUB_Y + sa * arm.r, 0];
+  const dir = [ca * MINING_SPLAY, sa * MINING_SPLAY, 1];
+  const k = arm.len / Math.hypot(dir[0], dir[1], dir[2]);
+  const head = [root[0] + dir[0] * k, root[1] + dir[1] * k, k];
+  return { ca, sa, root, dir, head, aperture: [head[0] + ca * 13, head[1] + sa * 13, head[2] + 52] };
+}
+
 function buildMiningArray(ctx) {
   const b = new ModuleBuilder(ctx, 'derelict');
   const D = b.detail, full = b.full;
@@ -255,26 +296,16 @@ function buildMiningArray(ctx) {
     { pos: [0, 18, -44] });
   b.graft([0, -6, -18], [-HALF_PI, 0, 0], 40);
 
-  // Three arms at 20, 128 and 235 degrees around the axis — deliberately not thirds.
-  const arms = [
-    { a: 0.35, len: 320, r: 96 },
-    { a: 2.24, len: 244, r: 84 },
-    { a: 4.10, len: 282, r: 88 },
-  ];
-  for (const arm of arms) {
-    const ca = Math.cos(arm.a), sa = Math.sin(arm.a);
-    const x = ca * arm.r, y = 18 + sa * arm.r;
-    const dir = [ca * 0.52, sa * 0.52, 1];
+  for (const arm of MINING_ARMS) {
+    const { root, dir, head, aperture } = miningArm(arm);
     b.add('greeble', aimed(
-      G.hexStrut({ length: arm.len, radius: 12, radiusEnd: 8, axis: 'z', detail: D }), dir, [x, y, 0],
+      G.hexStrut({ length: arm.len, radius: 12, radiusEnd: 8, axis: 'z', detail: D }), dir, root,
     ));
     // Emitter head: a short flared cone on the end of the arm, aperture glowing.
-    const k = arm.len / Math.hypot(ca * 0.52, sa * 0.52, 1);
-    const hx = x + ca * 0.52 * k, hy = y + sa * 0.52 * k, hz = k;
     b.add('hull', aimed(
-      G.hexStrut({ length: 48, radius: 22, radiusEnd: 16, axis: 'z', detail: D }), dir, [hx, hy, hz],
+      G.hexStrut({ length: 48, radius: 22, radiusEnd: 16, axis: 'z', detail: D }), dir, head,
     ));
-    b.glow([hx + ca * 13, hy + sa * 13, hz + 52], 17);
+    b.glow(aperture, 17);
   }
 
   // Coolant vanes on the drum, three of them, canted.
@@ -303,6 +334,11 @@ registerModule({
   triBudget: MODULE_TRI_BUDGET,
   mass: 310,
   build: buildMiningArray,
+  // THREE apertures are drawn; ONE fires, because `shotsPerBurst` is 1 and the
+  // muzzle list must match it. The firing head is the longest arm (320 m, the one
+  // that reaches furthest forward); the other two stay decorative glows. If the
+  // cutting beam ever becomes a three-shot weapon this becomes `MINING_ARMS.map`.
+  muzzles: [miningArm(MINING_ARMS[0]).aperture],
   weapon: {
     id: 'w_cutting_array', name: 'Cutting Array', type: 'mining',
     range: RANGE.salvageBeam, damage: 90, shotsPerBurst: 1, burstInterval: 0,
@@ -330,32 +366,41 @@ registerModule({
  * The reload magazine is strapped along the starboard flank of the lowest step,
  * because there was nowhere else to put it.
  */
+
+/**
+ * THE FOUR STEPS. Each is 78 m higher and 46 m further forward than the one below.
+ * `y` is the platform, the tube sits 26 m above it, and `len` is how far the tube
+ * runs forward from `z` — so the tube mouth, and the muzzle, is at `z + len`.
+ */
+const TORPEDO_STEPS = [
+  { y: 34, z: 96, w: 132, len: 150, r: 30 },
+  { y: 112, z: 142, w: 112, len: 138, r: 27 },
+  { y: 190, z: 188, w: 94, len: 126, r: 24 },
+  { y: 268, z: 234, w: 78, len: 114, r: 21 },
+];
+/** Steps alternate 8 m either side of the centreline so the stack reads as built. */
+const torpedoX = (i) => (i % 2 ? 8 : -8);
+const torpedoMuzzle = (s, i) => [torpedoX(i), s.y + 26, s.z + s.len];
+
 function buildTorpedoTubes(ctx) {
   const b = new ModuleBuilder(ctx, 'coalition');
   const D = b.detail, full = b.full;
 
   b.graft([0, -14, 10], [-HALF_PI, 0, 0], 44);
 
-  // THE FOUR STEPS. Each is a short tube housing on its own platform; each sits
-  // 78 m higher and 46 m further forward than the one below it, and the lattice
-  // between them is open.
-  const steps = [
-    { y: 34, z: 96, w: 132, len: 150, r: 30 },
-    { y: 112, z: 142, w: 112, len: 138, r: 27 },
-    { y: 190, z: 188, w: 94, len: 126, r: 24 },
-    { y: 268, z: 234, w: 78, len: 114, r: 21 },
-  ];
-  for (let i = 0; i < steps.length; i++) {
-    const s = steps[i];
+  // The lattice between the steps is open; see TORPEDO_STEPS above the function.
+  for (let i = 0; i < TORPEDO_STEPS.length; i++) {
+    const s = TORPEDO_STEPS[i];
+    const x = torpedoX(i);
     // Platform. Square-cornered on purpose: this is the rectilinear navy, and a
     // chamfer on four platforms is sixty-four triangles for an edge nobody reads.
     b.add('hull', G.panelledSlab({ width: s.w, height: 34, depth: 92, detail: D }),
-      { pos: [i % 2 ? 8 : -8, s.y, s.z - 40] });
+      { pos: [x, s.y, s.z - 40] });
     // Tube, open at the muzzle.
     b.add('plating', G.hexStrut({ length: s.len, radius: s.r, axis: 'z', caps: false, detail: D }),
-      { pos: [i % 2 ? 8 : -8, s.y + 26, s.z] });
+      { pos: [x, s.y + 26, s.z] });
     b.add('dark', throat({ width: s.r * 1.5, height: s.r * 1.5, depth: s.r * 2.2, detail: D }),
-      { pos: [i % 2 ? 8 : -8, s.y + 26, s.z + s.len] });
+      { pos: torpedoMuzzle(s, i) });
   }
 
   // THE LATTICE. Two raked legs a side carrying the stack, with the four bays
@@ -394,6 +439,10 @@ registerModule({
   triBudget: MODULE_TRI_BUDGET,
   mass: 940,
   build: buildTorpedoTubes,
+  // Four tubes, four torpedoes, lowest step first. The four muzzles climb 234 m in
+  // y and 102 m in z, so a full salvo walks visibly UP the staircase — the only
+  // module in the library whose burst has a vertical read.
+  muzzles: TORPEDO_STEPS.map(torpedoMuzzle),
   weapon: {
     id: 'w_bow_torpedoes', name: 'Heavy Torpedoes', type: 'missile',
     range: RANGE.missile, damage: 1150, shotsPerBurst: 4, burstInterval: 0.9,

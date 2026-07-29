@@ -11,6 +11,14 @@
  * an hour to find and one line to prevent.
  */
 
+// The ammunition defaults live with the magazine simulation, and duplicating them
+// here to avoid the import would be a second source of truth for the number this
+// file exists to check against. `core/persistence.js` already reaches into
+// `sim/meta/events.js` for the same reason. `sim/stores.js` imports only
+// `core/events.js` and `sim/condition.js`, neither of which imports this file, so
+// there is no cycle — verified by importing stores.js standalone.
+import { AMMO_SPEC, ammoClassOf } from '../sim/stores.js';
+
 /** The six hardpoints on the player cruiser. Order matters for UI layout. */
 export const HARDPOINTS = ['bow', 'dorsal', 'ventral', 'port', 'starboard', 'engine'];
 
@@ -116,6 +124,27 @@ export const AMMO_CLASSES = ['shell', 'railslug', 'missile', 'flakcan', 'pdslug'
  * @property {(ctx:BuildContext) => import('three').Object3D} build
  * @property {number} triBudget                hard ceiling, enforced by the geometry audit
  * @property {WeaponDef} [weapon]
+ * @property {Array<[number,number,number]>} [muzzles]
+ *                                             WHERE THE SHOTS COME OUT, in module space,
+ *                                             one entry per `weapon.shotsPerBurst`, in the
+ *                                             order the barrels are authored.
+ *
+ *                                             This is DATA ON THE DEFINITION and the sim
+ *                                             must never derive it from the built mesh.
+ *                                             Emitter geometry is LOD-gated — `port_beam_array`
+ *                                             draws three glow discs at LOD0 and one at
+ *                                             LOD1/2 — so a mesh-derived count is a
+ *                                             simulation quantity that changes with the
+ *                                             graphics quality setting, and a seeded run
+ *                                             would stop reproducing between two clients.
+ *                                             The declared list is the LOD0 set at every
+ *                                             quality level.
+ *
+ *                                             A port-authored module fitted to the starboard
+ *                                             mount has its geometry mirrored across the YZ
+ *                                             plane (`hardpoints.js#mirrorX`); its muzzles
+ *                                             must be mirrored the same way, x -> -x, by the
+ *                                             consumer.
  * @property {Object} [grants]                 passive effects: {hangarBays, salvageRate, powerOutput, thrust, turnRate, cargo, sensorRange, shieldCapacity}
  * @property {number} [mass]                   tonnes; affects handling
  * @property {string[]} [silhouetteTags]       what it should read as at distance
@@ -203,6 +232,85 @@ const REQUIRED = {
   item: ['id', 'name', 'kind', 'description', 'volume', 'activate'],
 };
 
+/**
+ * TWO ARMAMENT INVARIANTS, AND THEY CARRY DELIBERATELY DIFFERENT WEIGHTS.
+ *
+ * ---------------------------------------------------------------------------
+ * 1. THE FEED IS AT LEAST AS DEEP AS THE BURST IS LONG.  **THROWS**
+ * ---------------------------------------------------------------------------
+ * `WeaponMount.readyMax` is `def.ready ?? AMMO_SPEC[class].ready` (sim/ship.js).
+ * If that is smaller than `shotsPerBurst` the mount runs dry mid-burst every single
+ * time it fires: `consumeShot` returns false, `burstRemaining` is zeroed and the
+ * cooldown is forced up before a full reload. `dorsal_missile_cells` did exactly
+ * that for the whole life of the project — six declared cells, four launched — and
+ * nothing caught it because nothing compared the two numbers. This throws because
+ * it has exactly one known violator and that violator is fixed in this same commit.
+ *
+ * ---------------------------------------------------------------------------
+ * 2. ONE MUZZLE PER SHOT.  **WARNS**
+ * ---------------------------------------------------------------------------
+ * This one deliberately does NOT throw, and the reason is worth writing down:
+ * `registerModule` runs at import time, so a throw here does not fail a test — it
+ * refuses to boot the game. Invariant 1 is checked against numbers that have been
+ * in the tree for months and has one known violator with a known fix. Invariant 2
+ * is checked against `muzzles` arrays authored fresh in the same commit as this
+ * check, across thirteen modules, where a single miscounted barrel would brick
+ * boot at import time for every stream working in parallel.
+ *
+ * So it warns, loudly, with both numbers.
+ *
+ * THE PRECONDITION FOR PROMOTING IT TO A THROW IS ALREADY MET, and is recorded here
+ * so whoever does it does not have to re-establish it. This spot-check:
+ *
+ *   node -e "import('./src/art/geometry/modules/index.js').then(async()=>{ \
+ *     const {allModules}=await import('./src/core/contracts.js'); \
+ *     for(const d of allModules()) if(d.weapon) \
+ *       console.log(d.id, d.muzzles?.length??0, d.weapon.shotsPerBurst)})"
+ *
+ * prints THIRTEEN equal pairs and no warnings, and did so on three separately built
+ * trees on the commit that introduced it. It is still a warn only because six agents
+ * are editing this tree in parallel right now, and an import-time throw in the one
+ * file every geometry module imports turns any half-merged branch into a dead boot
+ * for everybody. Promote it — and the shape check below, which matters more, because
+ * a malformed entry yields NaN in the sim rather than a crash — in the integration
+ * pass, when the tree has one writer. It is a two-line change.
+ */
+function validateArmament(def) {
+  const w = def.weapon;
+
+  // (1) Feed depth. Energy-fed weapons have no magazine and are exempt.
+  const cls = ammoClassOf(w);
+  if (cls != null) {
+    const ready = w.ready ?? AMMO_SPEC[cls]?.ready ?? 0;
+    if (ready < w.shotsPerBurst) {
+      throw new Error(
+        `[contracts] module "${def.id}" weapon "${w.id}" holds ${ready} ready round(s) of `
+        + `${cls} but fires ${w.shotsPerBurst} per burst. It would run dry mid-burst on every `
+        + `shot. Declare "ready: ${w.shotsPerBurst}" on the weapon, or shorten the burst.`,
+      );
+    }
+  }
+
+  // (2) One muzzle per shot. See the header: warn, do not throw.
+  const n = def.muzzles?.length ?? 0;
+  if (n !== w.shotsPerBurst) {
+    console.warn(
+      `[contracts] module "${def.id}" declares ${n} muzzle(s) against shotsPerBurst `
+      + `${w.shotsPerBurst}. Every shot in a burst needs its own origin or the whole burst `
+      + `leaves from one point on the hull.`,
+    );
+  }
+  for (let i = 0; i < n; i++) {
+    const m = def.muzzles[i];
+    if (!Array.isArray(m) || m.length !== 3 || !m.every((v) => Number.isFinite(v))) {
+      console.warn(
+        `[contracts] module "${def.id}" muzzle[${i}] is not a finite [x,y,z] triple: `
+        + `${JSON.stringify(m)}. It will read as NaN in the sim.`,
+      );
+    }
+  }
+}
+
 function validate(kind, def) {
   const missing = REQUIRED[kind].filter((k) => def[k] === undefined || def[k] === null);
   if (missing.length) {
@@ -224,6 +332,7 @@ function validate(kind, def) {
     if (def.weapon?.ammoClass != null && !AMMO_CLASSES.includes(def.weapon.ammoClass)) {
       throw new Error(`[contracts] module "${def.id}" ammoClass "${def.weapon.ammoClass}" is not an AMMO_CLASS`);
     }
+    if (def.weapon) validateArmament(def);
     // Sub-parts are optional. When declared they must be legible aim points, so the
     // budget is enforced here rather than discovered as an unusable UI ring later.
     if (def.parts) {

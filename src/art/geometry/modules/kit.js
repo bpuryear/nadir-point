@@ -167,6 +167,51 @@ export function barrel({ length = 90, radius = 7, radiusEnd = null, brake = true
 const _d = new THREE.Vector3();
 
 /**
+ * MUZZLE DECLARATIONS — where a gun's shots actually leave the module.
+ *
+ * A weapon module declares `muzzles: [[x,y,z], ...]` ON ITS ModuleDef, in module
+ * space, one entry per `weapon.shotsPerBurst`. Three rules, and each of them is a
+ * defect this project has already paid for:
+ *
+ *   1. IT IS DATA ON THE DEF, NEVER READ OFF THE BUILT MESH. `ModuleBuilder.glow`
+ *      is LOD-gated behind `this.full` (lod === 0), so a mesh-derived emitter count
+ *      changes with graphics quality — `port_beam_array` publishes three glow discs
+ *      at LOD0 and one at LOD1/2. A simulation quantity that moves when the player
+ *      drags a quality slider is a broken seed. The declared list is the LOD0 set
+ *      and it does not vary.
+ *   2. IT IS FREE. A glow disc is 8 real triangles (`glowDiscGeo`) against a 400-tri
+ *      module ceiling; an array of numbers costs nothing and shows up nowhere in
+ *      `tools/probe.mjs cruiser`.
+ *   3. IT IS COMPUTED FROM THE SAME LITERALS THE GEOMETRY USES, not typed a second
+ *      time. This file's own hardest-won rule, stated at broadside.js's flak
+ *      cluster: "a number typed by hand is a number that stops being right the first
+ *      time either end moves." Every muzzle table below therefore reads the same
+ *      barrel-root and barrel-length constants the `build()` that draws them reads.
+ *
+ * The consumer is the salvo controller (Wave 2), which transforms each entry by the
+ * mount's local position and the ship's heading, and mirrors x for a port-authored
+ * module fitted to starboard — exactly as `mirrorX` does to the geometry.
+ */
+
+/**
+ * The tip of a primitive of `length` struck from `root` down `dir`.
+ *
+ * This is the muzzle counterpart of `aimed()`: `aimed(barrel({length: L}), d, p)`
+ * puts the breech at `p` and the muzzle at `muzzleAlong(p, d, L)`. `dir` need not
+ * be normalised — it is the same unnormalised triple the geometry call site passes.
+ *
+ * @param {number[]} root    where the primitive's origin sits, module space
+ * @param {number[]} dir     direction its +Z axis was aimed down
+ * @param {number} length    metres along that direction
+ * @returns {[number,number,number]} the tip, module space
+ */
+export function muzzleAlong(root, dir, length) {
+  const m = Math.hypot(dir[0], dir[1], dir[2]);
+  const k = m > 1e-9 ? length / m : 0;
+  return [root[0] + dir[0] * k, root[1] + dir[1] * k, root[2] + dir[2] * k];
+}
+
+/**
  * Point a +Z-authored primitive down an arbitrary direction and place it.
  *
  * Every splayed strut, canted horn and fanned barrel in this stream goes through

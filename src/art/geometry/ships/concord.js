@@ -924,12 +924,12 @@ export const CONCORD_SHIPS = [
     ],
     weapons: [
       weapon('mr_port', 'Port Beam Slots', 'beam', {
-        mount: [-16, 1, -2], yawCentre: PI * 0.5, yawWidth: PI * 0.58,
+        mount: [-16, 1, -2], yawCentre: -PI * 0.5, yawWidth: PI * 0.58,
         range: RANGE.beam, damage: 34, shotsPerBurst: 2, burstInterval: 0.5,
         cooldown: 3.2, projectileSpeed: Infinity, tracking: 0.7, subsystemAccuracy: 0.72,
       }),
       weapon('mr_stbd', 'Starboard Beam Slots', 'beam', {
-        mount: [16, 1, -2], yawCentre: -PI * 0.5, yawWidth: PI * 0.58,
+        mount: [16, 1, -2], yawCentre: PI * 0.5, yawWidth: PI * 0.58,
         range: RANGE.beam, damage: 34, shotsPerBurst: 2, burstInterval: 0.5,
         cooldown: 3.2, projectileSpeed: Infinity, tracking: 0.7, subsystemAccuracy: 0.72,
       }),
@@ -965,12 +965,12 @@ export const CONCORD_SHIPS = [
     ],
     weapons: [
       weapon('hc_port', 'Port Wing Slots', 'beam', {
-        mount: [-58, 4, 4], yawCentre: PI * 0.5, yawWidth: PI * 0.70,
+        mount: [-58, 4, 4], yawCentre: -PI * 0.5, yawWidth: PI * 0.70,
         range: RANGE.beam * 1.05, damage: 48, shotsPerBurst: 3, burstInterval: 0.4,
         cooldown: 3.4, projectileSpeed: Infinity, tracking: 0.8, subsystemAccuracy: 0.70,
       }),
       weapon('hc_stbd', 'Starboard Wing Slots', 'beam', {
-        mount: [58, 4, 4], yawCentre: -PI * 0.5, yawWidth: PI * 0.70,
+        mount: [58, 4, 4], yawCentre: PI * 0.5, yawWidth: PI * 0.70,
         range: RANGE.beam * 1.05, damage: 48, shotsPerBurst: 3, burstInterval: 0.4,
         cooldown: 3.4, projectileSpeed: Infinity, tracking: 0.8, subsystemAccuracy: 0.70,
       }),
@@ -1009,12 +1009,12 @@ export const CONCORD_SHIPS = [
         projectileSpeed: Infinity, tracking: 0.28, subsystemAccuracy: 0.9,
       }),
       weapon('pg_port', 'Port Beam Battery', 'beam', {
-        mount: [-33, 2, 0], yawCentre: PI * 0.5, yawWidth: PI * 0.56,
+        mount: [-33, 2, 0], yawCentre: -PI * 0.5, yawWidth: PI * 0.56,
         range: RANGE.beam * 1.1, damage: 64, shotsPerBurst: 2, burstInterval: 0.55,
         cooldown: 4.2, projectileSpeed: Infinity, tracking: 0.5, subsystemAccuracy: 0.78,
       }),
       weapon('pg_stbd', 'Starboard Beam Battery', 'beam', {
-        mount: [33, 2, 0], yawCentre: -PI * 0.5, yawWidth: PI * 0.56,
+        mount: [33, 2, 0], yawCentre: PI * 0.5, yawWidth: PI * 0.56,
         range: RANGE.beam * 1.1, damage: 64, shotsPerBurst: 2, burstInterval: 0.55,
         cooldown: 4.2, projectileSpeed: Infinity, tracking: 0.5, subsystemAccuracy: 0.78,
       }),
