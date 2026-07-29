@@ -1,0 +1,32 @@
+[
+  {
+    "id": "engagement",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0314,
+      "contrast": 0.0353,
+      "clippedPct": 0,
+      "nearBlackPct": 15.87
+    },
+    "description": "Cruiser under way with hostiles on the plane. Tests scale cues and the fight read.",
+    "hud": true,
+    "file": "docs/review/w1e-after/engagement.png",
+    "stats": {
+      "fps": 91.14325340926084,
+      "cpuMs": 1.099999988079162,
+      "stepMs": 0,
+      "renderMs": 1,
+      "steps": 0,
+      "calls": 112,
+      "triangles": 70179,
+      "points": 7200,
+      "lines": 0,
+      "programs": 54,
+      "geometries": 58,
+      "textures": 70
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

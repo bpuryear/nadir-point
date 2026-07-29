@@ -147,8 +147,11 @@ export class CodexPanel extends Panel {
       tx += tw + 5;
     }
 
-    // The discovery ladder, explained once, here, rather than in five tooltips.
-    P.label('DISCOVERY', x + w - 262, y + 27, { color: C.inkFaint });
+    // The discovery ladder, explained once, here, rather than in five tooltips. The
+    // legend is DROPPED, not overlapped, when the tab row has already taken the width:
+    // `MATERIALS 3/7` ran 64 px through `DISCOVERY` on a clamped window, and a caption
+    // half-buried under a tab is worse than no caption.
+    if (tx < x + w - 268) P.label('DISCOVERY', x + w - 262, y + 27, { color: C.inkFaint });
     let lx = x + w - 175;
     for (let i = 0; i < DISCOVERY_STATES.length; i++) {
       P.fill(lx, y + 20, 7, 7, i === 0 ? C.track : C.inkFaint);
@@ -218,8 +221,12 @@ export class CodexPanel extends Panel {
 
     // Name, and the faction it belongs to. A tier-3 Concord lance and a tier-1 derelict
     // mount are not interchangeable and the card must not make them look it.
+    // Clipped to the card. `COALITION HEAVY BROADSIDE` is 379 px at F.large and the
+    // card is narrower than that the moment the window is clamped to the frame — it
+    // was drawn straight through the panel's own right border.
     P.text(String(entry.name).toUpperCase(), x, y + 12, {
       font: F.large, color: unknown ? C.inkFaint : C.inkStrong, track: TRACK.head,
+      maxW: Math.max(60, w - 52),
     });
     if (entry.faction) {
       const fi = factionInk(entry.faction);

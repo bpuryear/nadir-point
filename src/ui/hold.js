@@ -34,12 +34,24 @@ import { C, F, TRACK, factionInk, fmtPct, fmtMass } from './theme.js';
 import { moduleName, itemName } from './names.js';
 import { Panel, PAD, TITLE_H, tableHead, rowBack, fmtClock } from './panels.js';
 
-/** Widest status chip the MATERIALS table can emit. See perks.js for the argument. */
-const CLAIM_CHIPS = ['AFFORDABLE', 'SHORT 999 ELEC · 99 EXOT', 'LOCKED'];
-function claimLane(P) {
-  let w = 0;
-  for (const s of CLAIM_CHIPS) w = Math.max(w, P.measure(s, F.microBold, TRACK.label) + 12);
-  return w;
+/**
+ * Widest status chip the MATERIALS table can emit — measured from the REAL demands,
+ * not from three samples. See perks.js for the argument; the failure is identical, and
+ * here it printed the shortfall chip straight over the cost it is a shortfall against
+ * (`140 ALLO · 16…` under `SHORT 56 ALLO · 160 ELEC · 1…`, a measured 20.1 x 10.0 px).
+ * Capped at 46 % of the row so the lane cannot eat the item name.
+ */
+const CLAIM_FLOOR = ['AFFORDABLE', 'LOCKED'];
+function claimLane(P, demands, w) {
+  let out = 0;
+  const take = (s) => { if (s) out = Math.max(out, P.measure(s, F.microBold, TRACK.label) + 12); };
+  for (const s of CLAIM_FLOOR) take(s);
+  for (const dm of demands ?? []) {
+    if (!dm.ok && dm.shortfall && Object.keys(dm.shortfall).length) {
+      take(`SHORT ${costText(dm.shortfall)}`);
+    }
+  }
+  return Math.min(out, Math.round((w || 500) * 0.46));
 }
 
 const ROW_H = 15;
@@ -264,8 +276,12 @@ export class HoldPanel extends Panel {
       let scrapUnits = 0;
       for (const g of SCRAP_GRADES) scrapUnits += econ.scrap[g];
       P.fill(x, cy - 9, 2, ROW_H - 3, C.inkDim);
-      P.text(`MATERIAL STOCK — ${Math.round(scrapUnits)} SCRAP`, x + 6, cy, { font: F.small, color: C.inkDim });
-      P.label('PRESS K FOR THE CHAIN', x + COL.mount, cy, { color: C.inkFaint });
+      // Clipped to the lane before the MOUNT column, the same discipline every other
+      // row in this table follows. It ran 12.7 px into `PRESS K FOR THE CHAIN`.
+      P.text(`MATERIAL STOCK — ${Math.round(scrapUnits)} SCRAP`, x + 6, cy,
+        { font: F.small, color: C.inkDim, maxW: Math.max(40, COL.mount - 14) });
+      P.label('PRESS K FOR THE CHAIN', x + COL.mount, cy,
+        { color: C.inkFaint, maxW: Math.max(20, COL.cond - COL.mount - 6) });
       P.text(fmtM3(d.breakdown.materialsM3), x + COL.vol, cy, { font: F.small, color: C.inkDim, align: 'right' });
       cy += ROW_H;
     }
@@ -475,8 +491,10 @@ export class MaterialsPanel extends Panel {
       }
     } else {
       P.text('IDLE', x, cy, { font: F.small, color: C.inkFaint, track: TRACK.label });
+      // Clipped to the panel. 602 px of type inside a 512 px window drew through its
+      // own right border and out into the frame.
       P.text('CLICK A SCRAP ROW TO QUEUE IT · REFINING IS LOSSY AND COMPRESSES ~6:1 BY VOLUME',
-        x + 44, cy, { font: F.micro, color: C.inkFaint, track: TRACK.label });
+        x + 44, cy, { font: F.micro, color: C.inkFaint, track: TRACK.label, maxW: w - 48 });
     }
     cy += 18;
 
@@ -521,7 +539,7 @@ export class MaterialsPanel extends Panel {
     });
     P.hline(x, cy + 4, w, C.rule);
     cy += 15;
-    const lane = claimLane(P);
+    const lane = claimLane(P, this._demands, w);
     const colCost = Math.max(200, w - lane - 190);
     cy = tableHead(P, x, cy, w, [['GROUP', 0], ['ITEM', 66], ['COST', colCost]]) + 13;
 
@@ -538,7 +556,11 @@ export class MaterialsPanel extends Panel {
       if (dm.ok) {
         P.chipOutline('AFFORDABLE', x + w, cy - 10, { color: C.inkDim, align: 'right', h: 13 });
       } else if (dm.shortfall && Object.keys(dm.shortfall).length) {
-        P.chip(P.clip(`SHORT ${costText(dm.shortfall)}`, F.microBold, lane - 10), x + w, cy - 10, {
+        // CLIPPED AT THE TRACKING IT IS DRAWN AT. `P.clip` defaults to `TRACK.value`
+        // at 0.02em while the chip draws at `TRACK.label` 0.16em, so a string "clipped"
+        // to 216 px came out at 251 and ran back over the cost it is a shortfall
+        // against. theme.js:820-825 documents this exact class; this was another of it.
+        P.chip(P.clip(`SHORT ${costText(dm.shortfall)}`, F.microBold, lane - 10, TRACK.label), x + w, cy - 10, {
           fill: C.warn, color: C.void, align: 'right', h: 13,
         });
       } else {

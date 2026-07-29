@@ -37,11 +37,35 @@ import { Panel, PAD, tableHead, rowBack } from './panels.js';
  * glyph to an AFFORDABLE chip that way. The lane is measured once from the widest
  * chip the panel can emit and every other column is laid out inside what is left.
  */
-const CHIP_SAMPLES = ['AT MAXIMUM', 'SHORT 999 ELEC', 'BUY · 160 ALLO · 55 COMP', 'BUILD'];
-function statusLane(P) {
-  let w = 0;
-  for (const s of CHIP_SAMPLES) w = Math.max(w, P.measure(s, F.microBold, TRACK.label) + 10);
-  return w;
+const CHIP_FLOOR = ['AT MAXIMUM', 'BUILD', 'LOCKED'];
+/**
+ * …AND THE WIDEST CHIP IS MEASURED FROM THE REAL STRINGS, not from four samples.
+ *
+ * It used to measure `['AT MAXIMUM', 'SHORT 999 ELEC', 'BUY · 160 ALLO · 55 COMP',
+ * 'BUILD']`, which is a fixed column offset wearing a measurement's clothes — the same
+ * failure mode the paragraph above says this lane exists to end. The real strings
+ * outgrew the samples and the panel clipped the PRICE out of its own BUY button:
+ * `BUY · 120 ALLO · 60 COMP · 3…`, `FIELD REFINERY +60% REFINING RATE AND +5% YIELD
+ * PER …`, `4 MATERIAL ENTRIES AT SA…`. A buy button that does not show what it costs
+ * is the one clipping case with a mechanical consequence.
+ *
+ * Capped at 46 % of the row: a lane wide enough for every possible cost string is a
+ * lane with no room left for the perk's name, and a name is worth more than a
+ * three-pool cost the player can also read off the chip once it is short.
+ */
+function statusLane(P, perks, patterns, w) {
+  let out = 0;
+  const take = (s) => { if (s) out = Math.max(out, P.measure(s, F.microBold, TRACK.label) + 10); };
+  for (const s of CHIP_FLOOR) take(s);
+  for (const p of perks ?? []) {
+    if (p.gate && !p.gate.met) take(`${p.gate.have}/${p.gate.need}`);
+    else if (p.affordable) take(`BUY · ${costText(p.cost)}`);
+    else if (p.rank < p.maxRank) take(`SHORT ${costText(p.shortfall)}`);
+  }
+  for (const pt of patterns ?? []) {
+    take(pt.affordable ? `BUILD · ${costText(pt.cost)}` : `SHORT ${costText(pt.shortfall)}`);
+  }
+  return Math.min(out, Math.round((w || 520) * 0.46));
 }
 
 export class PerksPanel extends Panel {
@@ -87,10 +111,14 @@ export class PerksPanel extends Panel {
     }
     this._refresh(this.ui.time);
 
+    // Two headings on one line, each clipped to its own half. They were drawn left and
+    // right with nothing between them and met in the middle the moment the window was
+    // clamped to the frame — the same failure the status lane below fixes for chips.
     let cy = y + 8;
-    P.label('PERMANENT WORK ON THIS HULL', x, cy, { color: C.inkFaint });
+    const half = Math.max(60, Math.round(w * 0.44));
+    P.label('PERMANENT WORK ON THIS HULL', x, cy, { color: C.inkFaint, maxW: half });
     P.label('PAID FOR OUT OF THE SAME POOLS AS REPAIRS', x + w, cy,
-      { color: C.inkFaint, align: 'right' });
+      { color: C.inkFaint, align: 'right', maxW: w - half - 10 });
     P.hline(x, cy + 5, w, C.rule);
     cy += 16;
 
@@ -103,12 +131,12 @@ export class PerksPanel extends Panel {
 
     // --- patterns -----------------------------------------------------------
     cy += 10;
-    P.label('PATTERNS HELD', x, cy, { color: C.inkFaint });
+    P.label('PATTERNS HELD', x, cy, { color: C.inkFaint, maxW: Math.max(40, w * 0.3) });
     P.label('REBUILDS COME OUT AT 85% — FINDING ONE IS STILL BETTER',
-      x + w, cy, { color: C.inkFaint, align: 'right' });
+      x + w, cy, { color: C.inkFaint, align: 'right', maxW: Math.round(w * 0.66) });
     P.hline(x, cy + 5, w, C.rule);
     cy += 15;
-    const lane = statusLane(P);
+    const lane = statusLane(P, this._perks, this._patterns, w);
     const colMount = Math.max(150, w - lane - 190);
     const colCost = colMount + 52;
     cy = tableHead(P, x, cy, w, [['MODULE', 0], ['MOUNT', colMount], ['COST', colCost]]) + 14;
@@ -152,7 +180,7 @@ export class PerksPanel extends Panel {
     const maxed = p.rank >= p.maxRank;
     const locked = !!(p.gate && !p.gate.met);
     const col = maxed ? C.inkDim : p.buyable ? C.inkStrong : locked ? C.inkDim : C.ink;
-    const lane = statusLane(P);
+    const lane = statusLane(P, this._perks, this._patterns, w);
     const textW = w - lane - 20;
 
     rowBack(P, x, y, w, 46, { selected: this.selected === p.id });
@@ -182,11 +210,14 @@ export class PerksPanel extends Panel {
       P.text(String(g.text).toUpperCase(), rx, y + 42,
         { font: F.micro, color: C.inkFaint, align: 'right', track: TRACK.label, maxW: lane });
     } else if (p.affordable) {
-      P.chip(P.clip(`BUY · ${costText(p.cost)}`, F.microBold, lane - 10), rx, y + 5, {
+      // Clipped AT THE TRACKING IT IS DRAWN AT — `P.clip` defaults to `TRACK.value`
+      // 0.02em and the chip draws at `TRACK.label` 0.16em, so a string clipped to the
+      // lane came out 16 % wider than the lane. theme.js:820-825 names the class.
+      P.chip(P.clip(`BUY · ${costText(p.cost)}`, F.microBold, lane - 10, TRACK.label), rx, y + 5, {
         fill: C.ink, color: C.void, h: 14, align: 'right',
       });
     } else {
-      P.chip(`SHORT ${costText(p.shortfall)}`, rx, y + 5, {
+      P.chip(P.clip(`SHORT ${costText(p.shortfall)}`, F.microBold, lane - 10, TRACK.label), rx, y + 5, {
         fill: C.warn, color: C.void, h: 14, align: 'right',
       });
       P.text(costText(p.cost), rx, y + 32, {

@@ -32,6 +32,7 @@ import {
   C, F, TRACK, screenPointRing, fmtRange, fmtPct, smoothstep, arcUnion,
   projectedSalvageState, projectedYieldsModule,
 } from './theme.js';
+import { ARC_BASE, ROSE_PLATE_W } from './layout.js';
 
 const ARC_SEGS = 40;
 const RING_SEGS = 72;
@@ -99,6 +100,20 @@ export class TacticalOverlay {
     this._tally = { INTACT: 0, DAMAGED: 0, SCRAP: 0, modules: 0 };
   }
 
+  /**
+   * How many mounts have a real firing arc. Read by `layout.js` BEFORE this layer
+   * draws, so the rose's reserved rectangle matches the form it is about to take
+   * rather than the form it took last frame.
+   */
+  arcCount(player) {
+    let n = 0;
+    for (const m of player?.weapons ?? []) {
+      if (!m.online || m.def.type === 'pd') continue;
+      if (Math.min(m.yawWidth, Math.PI * 2) < Math.PI * 1.98) n++;
+    }
+    return n;
+  }
+
   /** Hit regions produced by the world layer this frame. Written by `draw`. */
   draw(P, hit = null) {
     if (!this.enabled) return;
@@ -108,14 +123,33 @@ export class TacticalOverlay {
     const player = world.player;
     if (!player || player.dead) return;
     const combat = world.systems?.combat;
+    const target = player.target && !player.target.dead ? player.target : null;
 
+    P.owner = 'world';
+    /**
+     * THE LOCKED TARGET'S BRACKET GOES FIRST, AND IT CLAIMS.
+     *
+     * It used to be drawn inside `_drawTargetRing`, AFTER `_drawArcs`, with bare
+     * `P.chip`/`P.chipOutline` calls that neither claimed a rectangle nor yielded to
+     * one — so it overpainted whatever the arc layer had already written. The live
+     * evidence is in `docs/probes/ui.png` at 1280x720: the arc caption reads
+     * `…NCE 6.80 KM`, its leading `LA` painted out by the `PEREGRINE [DESTROYER]`
+     * chip, a measured 15.9 x 6.0 px overlap.
+     *
+     * `Painter.claim` is first-writer-wins (theme.js:602-613), which makes DRAWING
+     * ORDER into PRIORITY ORDER. A locked target outranks an ambient arc caption, so
+     * it draws first and the caption moves — instead of the caption drawing first and
+     * being destroyed.
+     */
+    if (target) this._drawTargetBracket(P, player, target);
     // Arcs are the floor of the overlay; contacts and the target ring sit on them.
     if (combat) this._drawArcs(P, player, combat);
     this._drawRangeRings(P, player);
     this._drawContacts(P, player);
-    const target = player.target && !player.target.dead ? player.target : null;
     if (target) this._drawTargetRing(P, player, target, combat);
+    P.owner = 'arc';
     this._drawCoverageRose(P, player, combat);
+    P.owner = '';
   }
 
   // =========================================================================
@@ -356,6 +390,47 @@ export class TacticalOverlay {
   // Target ring and subsystem segments
   // =========================================================================
 
+  /**
+   * THE WORLD-SPACE BRACKET, reference-ui-language.md §4.
+   *
+   * A solid filled label chip above the object, a distance chip directly beneath it,
+   * and a thin leader down to the hull. Observed first-hand off the reference frame
+   * and adopted wholesale: far more legible than a wireframe box, it scales to any
+   * object size, and it puts the range where the eye already is.
+   *
+   * Clamped clear of the top strip: at close range the ring is larger than the
+   * viewport and an unclamped bracket climbs off the top of the frame, through the
+   * time controls on its way out. When the clamp bites the leader is dropped — a
+   * leader drawn from inside the ring to the ring is noise.
+   *
+   * Routed through `P.worldLabel`, which CLAIMS its rectangle, so this is now the only
+   * world-anchored element in the file that participates in the occupancy system it
+   * shares with five others — and, drawn first, it is the one that wins.
+   */
+  _drawTargetBracket(P, player, target) {
+    const proj = this.ui.projector;
+    if (!proj.vec(target.position, this._pt)) return;
+    const cx = this._pt.x;
+    const cy = this._pt.y;
+    const hullR = Math.max(22, proj.radiusAt(target.position, target.radius ?? 60));
+    const ringR = Math.max(82, hullR * 1.7);
+
+    const wantY = cy - ringR - 42;
+    const chipY = Math.max(150, Math.min(P.h - 90, wantY));
+    const label = `${target.classDef.name.toUpperCase()} [${String(target.classDef.role ?? 'CONTACT').toUpperCase()}]`;
+    if (!P.worldLabel(label, cx, chipY, {
+      fill: C.hostile, color: C.void, h: 14, font: F.microBold, align: 'center', pad: 2,
+    })) return;
+    const dist = fmtRange(player.position.distanceTo(target.position));
+    const dw = P.measure(dist, F.microBold, TRACK.label) + 8;
+    if (P.claim(cx - dw * 0.5, chipY + 16, dw, 12, 2)) {
+      P.chipOutline(dist, cx, chipY + 16, {
+        color: C.hostile, border: C.hostileDim, h: 12, align: 'center',
+      });
+    }
+    if (chipY === wantY) P.leader(cx, chipY + 29, cx, cy - ringR - 4, C.hostileDim, 1);
+  }
+
   _drawTargetRing(P, player, target, combat) {
     const proj = this.ui.projector;
     if (!proj.vec(target.position, this._pt)) return;
@@ -367,25 +442,6 @@ export class TacticalOverlay {
 
     // Hard bracket on the hull.
     P.corners(cx, cy, hullR, hullR * 0.74, Math.min(16, hullR * 0.5), C.hostile, 1.5);
-
-    // --- the world-space bracket, reference-ui-language.md §4 -----------------
-    // A solid filled label chip above the object, a distance chip directly beneath it,
-    // and a thin leader line down to the hull. Observed first-hand off the reference
-    // frame and adopted wholesale: it is far more legible than a wireframe box, it
-    // scales to any object size, and it puts the range where the eye already is.
-    // Clamped clear of the top strip: at close range the ring is larger than the
-    // viewport and an unclamped bracket climbs off the top of the frame, through the
-    // time controls on its way out. When the clamp bites, the leader is dropped -
-    // a leader line drawn from inside the ring to the ring is noise.
-    const wantY = cy - ringR - 42;
-    const chipY = Math.max(150, Math.min(P.h - 90, wantY));
-    const label = `${target.classDef.name.toUpperCase()} [${String(target.classDef.role ?? 'CONTACT').toUpperCase()}]`;
-    P.chip(label, cx, chipY, { fill: C.hostile, color: C.void, h: 14, align: 'center', font: F.microBold });
-    const dist = player.position.distanceTo(target.position);
-    P.chipOutline(fmtRange(dist), cx, chipY + 16, {
-      color: C.hostile, border: C.hostileDim, h: 12, align: 'center',
-    });
-    if (chipY === wantY) P.leader(cx, chipY + 29, cx, cy - ringR - 4, C.hostileDim, 1);
 
     // Ring track.
     const c = P.ctx;
@@ -502,10 +558,25 @@ export class TacticalOverlay {
 
     }
 
-    // --- labels, de-overlapped ---------------------------------------------
-    // Nine subsystems on one ring will always collide if each label is drawn at its
-    // own angle. Split by side, sort down the screen and push apart to a minimum
-    // pitch, keeping a leader back to the segment so the association survives.
+    /**
+     * --- labels, de-overlapped, AND ON CHIPS --------------------------------
+     *
+     * Nine subsystems on one ring will always collide if each label is drawn at its
+     * own angle. Split by side, sort down the screen and push apart to a minimum
+     * pitch, keeping a leader back to the segment so the association survives. That
+     * pass is doing real work and is kept.
+     *
+     * What changed is the GROUND. These two stacks — ten to fourteen lines of
+     * `C.ink` / `C.inkFaint` / `C.hostileDim` / cyan — were the last world-anchored
+     * strings in the codebase still drawn onto nothing, against `theme.js:1034-1041`
+     * which documents this exact defect and states that the fix is the chip, "because
+     * no ink survives an arbitrary backdrop": light ink measured 1.64:1 against a gas
+     * giant's limb. Contacts, hulks, arc captions, range rings and order markers were
+     * all converted; these two were missed.
+     *
+     * The pitch goes 21 -> 27 so two 13 px chips and a gap fit, and each label claims
+     * so the caption block below the ring can still find space.
+     */
     let labelBottom = cy + ringR;
     for (const side of [-1, 1]) {
       const list = [];
@@ -515,7 +586,7 @@ export class TacticalOverlay {
         list.push({ e, y: cy + Math.sin(e.angle) * (ringR + 12) });
       }
       list.sort((a, b) => a.y - b.y);
-      const pitch = 21;
+      const pitch = 27;
       // Centre the stack on the group's own mean so it does not drift off the hull.
       let mean = 0;
       for (const it of list) mean += it.y;
@@ -527,7 +598,7 @@ export class TacticalOverlay {
       }
 
       for (const it of list) {
-        if (it.ly + 10 > labelBottom) labelBottom = it.ly + 10;
+        if (it.ly + 16 > labelBottom) labelBottom = it.ly + 16;
         const e = it.e;
         const s = e.sub;
         const dead = s.destroyed;
@@ -537,24 +608,42 @@ export class TacticalOverlay {
         const align = side < 0 ? 'right' : 'left';
         const anchorX = cx + Math.cos(e.angle) * (ringR + 3);
         const anchorY = cy + Math.sin(e.angle) * (ringR + 3);
-        P.leader(anchorX, anchorY, tx - side * 4, it.ly - 3,
-          dead ? C.track : e.bears ? C.hostileGhost : C.track, 1);
 
         const name = (s.def.label ?? s.def.id).toUpperCase();
-        P.text(dead ? `${name} ✕` : name, tx, it.ly, {
-          font: isAim ? F.microBold : F.micro,
-          color: dead ? C.inkFaint : e.bears ? C.ink : C.inkFaint,
-          align, track: TRACK.label,
-        });
+        const nameStr = dead ? `${name} ✕` : name;
         // Two figures per entry, and they say opposite things: what is left to shoot,
         // and what is left to keep. Printing only the first is what made salvage a
         // die roll the player discovered afterwards.
         const hpText = dead ? 'DESTROYED' : fmtPct(frac);
-        P.text(e.salvageState ? `${hpText}  ${e.salvageState}` : hpText, tx, it.ly + 10, {
-          font: F.micro,
+        const figStr = e.salvageState ? `${hpText}  ${e.salvageState}` : hpText;
+        const font = isAim ? F.microBold : F.micro;
+        const cw = Math.max(P.measure(nameStr, font, TRACK.label),
+          P.measure(figStr, F.micro, TRACK.label)) + 8;
+        const left = side < 0 ? tx - cw : tx;
+        // One claim for the pair. Dropped whole rather than half-drawn: the label and
+        // its figures are one statement and half of it is worse than none of it.
+        if (!P.claim(left, it.ly - 11, cw, 26, 1)) continue;
+
+        P.leader(anchorX, anchorY, tx - side * 4, it.ly - 3,
+          dead ? C.track : e.bears ? C.hostileGhost : C.track, 1);
+        // The AIMED entry gets the filled chip — the reference's loudest primitive,
+        // spent on the one row the player has actually chosen. Everything else is the
+        // hollow form, which still carries its own opaque plate.
+        if (isAim) {
+          P.chip(nameStr, tx, it.ly - 10, {
+            fill: C.hostile, color: C.void, h: 13, align, font, track: TRACK.label,
+          });
+        } else {
+          P.chipOutline(nameStr, tx, it.ly - 10, {
+            color: dead ? C.inkFaint : e.bears ? C.ink : C.inkFaint,
+            border: dead ? C.track : e.bears ? C.hostileDim : C.ruleDim,
+            h: 13, align, font,
+          });
+        }
+        P.chipOutline(figStr, tx, it.ly + 3, {
           color: e.salvageState ? (SALVAGE_INK[e.salvageState] ?? C.inkFaint)
-            : dead ? C.track : e.bears ? C.hostileDim : C.track,
-          align,
+            : dead ? C.inkFaint : e.bears ? C.hostileDim : C.inkFaint,
+          border: C.ruleDim, h: 12, align, font: F.micro,
         });
       }
     }
@@ -749,20 +838,39 @@ export class TacticalOverlay {
       // The label fans outward along the segment's own bearing, with the consequence
       // underneath. `PART_CONSEQUENCE` is one line of plain text per failure mode and
       // it is the reason a player would ever aim here rather than at the hull.
+      // Chips, for the same reason as the subsystem stack above: this ring is drawn
+      // over whatever the camera happens to be pointing at, and no ink survives an
+      // arbitrary backdrop. `PART_CONSEQUENCE` is one line of plain text per failure
+      // mode and it is the reason a player would aim here rather than at the hull —
+      // it has to be readable over a gas giant.
       const mid = (a0 + a1) * 0.5;
       const lx = cx + Math.cos(mid) * (R + 14);
       const ly = cy + Math.sin(mid) * (R + 14);
       const align = Math.cos(mid) < 0 ? 'right' : 'left';
-      P.text(part.destroyed ? `${part.label} ✕` : part.label, lx, ly, {
-        font: isAim ? F.microBold : F.micro,
-        color: part.destroyed ? C.inkFaint : e.bears ? C.ink : C.inkFaint,
-        align, track: TRACK.label,
-      });
-      P.text(part.destroyed ? 'GONE' : `${fmtPct(part.health)} · ${PART_CONSEQUENCE[part.kind] ?? ''}`, lx, ly + 10, {
-        font: F.micro,
-        color: part.destroyed ? C.inkFaint : e.bears ? C.hostileDim : C.inkFaint,
-        align, track: TRACK.label,
-      });
+      const font = isAim ? F.microBold : F.micro;
+      const nameStr = part.destroyed ? `${part.label} ✕` : part.label;
+      const noteStr = part.destroyed ? 'GONE'
+        : `${fmtPct(part.health)} · ${PART_CONSEQUENCE[part.kind] ?? ''}`;
+      const cw = Math.max(P.measure(nameStr, font, TRACK.label),
+        P.measure(noteStr, F.micro, TRACK.label)) + 8;
+      const left = align === 'right' ? lx - cw : lx;
+      if (P.claim(left, ly - 11, cw, 25, 1)) {
+        if (isAim) {
+          P.chip(nameStr, lx, ly - 10, {
+            fill: C.hostile, color: C.void, h: 13, align, font, track: TRACK.label,
+          });
+        } else {
+          P.chipOutline(nameStr, lx, ly - 10, {
+            color: part.destroyed ? C.inkFaint : e.bears ? C.ink : C.inkFaint,
+            border: part.destroyed ? C.track : e.bears ? C.hostileDim : C.ruleDim,
+            h: 13, align, font,
+          });
+        }
+        P.chipOutline(noteStr, lx, ly + 3, {
+          color: part.destroyed ? C.inkFaint : e.bears ? C.hostileDim : C.inkFaint,
+          border: C.ruleDim, h: 12, align, font: F.micro,
+        });
+      }
 
       // A cross on the part itself, plus a leader, so the ring segment and the metal
       // it describes are unambiguously the same thing.
@@ -801,9 +909,12 @@ export class TacticalOverlay {
     const pct = drawable ? arcUnion(this._cov) / (Math.PI * 2) : 0;
 
     // The dial lives above the player-state block, in the one column of the frame
-    // that no welded readout and no window is allowed into.
-    const cx = 76;
-    const baseY = P.h - this.ui.hud.shipPanelH - 30;
+    // that no welded readout and no window is allowed into. Both the position and the
+    // reserved rectangle come off `layout.ship` and the shared `ARC_BASE`, so the
+    // block and the reservation cannot drift the way they used to.
+    const shipRect = this.ui.layout?.ship;
+    const cx = (shipRect ? shipRect.x : 14) + 62;
+    const baseY = (shipRect ? shipRect.y : P.h - 312) - ARC_BASE;
 
     /**
      * COLLAPSED UNTIL IT HAS AN ARC TO DRAW.
@@ -825,7 +936,12 @@ export class TacticalOverlay {
     const cy = baseY - R - 16;
     const c = P.ctx;
 
-    P.plate(cx - R - 12, cy - R - 24, R * 2 + 24, R * 2 + 54, { border: C.ruleDim });
+    // 140, not R*2+24 = 96. The plate was narrower than its own two captions:
+    // `ARC COVERAGE` is 104 px at micro and ran 18 px off the right edge, and the
+    // centred `100% OF CIRCLE` ran 13 px off BOTH edges. Neither was visible to the
+    // audit because this block draws welded, with no owner, so nothing asserted on it.
+    const plateW = ROSE_PLATE_W;
+    P.plate(cx - R - 12, cy - R - 24, plateW, R * 2 + 54, { border: C.ruleDim });
     P.label('ARC COVERAGE', cx - R - 2, cy - R - 10, { color: C.inkDim });
 
     // Ship-relative: bow at the top. This is the one place in the interface that is
@@ -875,7 +991,9 @@ export class TacticalOverlay {
         { fill: bears ? C.friendly : C.warn });
     }
 
-    P.text(`${Math.round(pct * 100)}% OF CIRCLE`, cx, cy + R + 18, {
+    // Centred on the PLATE, not on the dial. The plate is anchored at `cx - R - 12`
+    // and is wider than the dial, so centring this on `cx` hung it off the left edge.
+    P.text(`${Math.round(pct * 100)}% OF CIRCLE`, cx - R - 12 + plateW * 0.5, cy + R + 18, {
       font: F.micro, color: pct > 0.92 ? C.inkDim : C.warn, align: 'center', track: TRACK.label,
     });
   }

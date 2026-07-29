@@ -66,6 +66,15 @@ export class Panel {
      */
     this.maxH = maxH || Math.round(h * 1.5);
     this.baseH = h;
+    /** The AUTHORED width. `w` is clamped to the frame each layout; this is not. */
+    this.baseW = w;
+    /**
+     * The narrowest this window may be squeezed to. A body has a legible floor — six
+     * armament cells at 63 px print `BOWLANCE` — so the frame clamp is allowed to
+     * shrink a window a long way and not infinitely. 0.78 is measured: it is the
+     * point at which the widest panel's own columns stop colliding.
+     */
+    this.minW = Math.round(w * 0.78);
     this.hint = hint;
     this.open = false;
     this.collapsed = false;
@@ -123,6 +132,27 @@ export class Panel {
  * far enough to matter, and it never touches a window the player has dragged.
  */
 const GRID = 24;
+
+/**
+ * NO WINDOW MAY TAKE MORE THAN THIS SHARE OF THE FRAME.
+ *
+ * The windows were authored at fixed widths — CODEX 820, ARMAMENT 766, HOLD 578 — while
+ * the frame is not fixed. Measured before this clamp existed, screen=combat at 1280x720:
+ * the FIRST window opened, ARMAMENT, landed at 508,76 and covered 31.1 % of the central
+ * half and 10.1 % of the player's own hull; a second took it to 75.7 % and 26.5 %. The
+ * solver was not misbehaving — it docked ARMAMENT hard against the right edge — there
+ * was simply nowhere for a 766 px window on a 1280 px frame to go that was not most of
+ * the frame.
+ *
+ * 0.40 is the number that makes the arithmetic work: two windows plus their gutters fit
+ * side by side against opposite edges at every viewport, which is what "docked to an
+ * edge" means when more than one is open. Bodies lay their columns out from the width
+ * they are handed (`columns()` measures, it does not assume), so shrinking is safe.
+ */
+const MAX_PANEL_W_FRAC = 0.40;
+const MIN_PANEL_W = 300;
+/** …and the same in the other axis, so a window cannot span a whole column. */
+const MAX_PANEL_H_FRAC = 0.72;
 
 function overlap(ax, ay, aw, ah, b) {
   if (!b) return 0;
@@ -239,14 +269,21 @@ export class PanelHost {
 
   /** Resolve a position on first show, then keep the panel inside the frame. */
   _layout(P, panel) {
+    // WIDTH FIRST: the solver scores rectangles, so it has to be scoring the rectangle
+    // the window is actually going to occupy. See MAX_PANEL_W_FRAC.
+    const want = Math.max(panel.minW, MIN_PANEL_W, P.w * MAX_PANEL_W_FRAC);
+    panel.w = Math.round(Math.min(panel.baseW, want, Math.max(120, P.w - 8)));
     if (panel.x === null || panel.y === null) {
       const at = this.solve(P, panel);
       panel.x = at.x;
       panel.y = at.y;
     }
     // A panel may never be taller than the frame it lives in: growth toward `maxH`
-    // is only worth having while the extra rows are still on screen.
-    panel.h = Math.min(panel.h, Math.max(TITLE_H + FOOT_H + 40, P.h - 8));
+    // is only worth having while the extra rows are still on screen. The 0.72 cap is
+    // the same argument as the width one — a window that spans a whole column has
+    // stopped being a window and become a second HUD.
+    panel.h = Math.min(panel.h,
+      Math.max(TITLE_H + FOOT_H + 40, Math.round(P.h * MAX_PANEL_H_FRAC)));
     const h = panel.collapsed ? TITLE_H : panel.h;
     panel.x = Math.max(4, Math.min(P.w - panel.w - 4, panel.x));
     panel.y = Math.max(4, Math.min(P.h - h - 4, panel.y));
@@ -325,7 +362,13 @@ export class PanelHost {
     // THE OPAQUE PLATE. This is the whole legibility mechanism - see theme.js C.panel.
     P.plate(x, y, w, h, { title: TITLE_H });
 
-    P.label(panel.title, x + PAD, y + 14, { color: C.inkDim, font: F.micro });
+    // The title bar is attributed separately from the body: it draws ABOVE the body's
+    // inner rect, so sharing the body's id would make every window's own title read as
+    // ESCAPED. Four strings per window that the audit used to drop on the floor.
+    P.owner = `${panel.id}:title`;
+    // Clipped to what is left after the hint chip and the two buttons. A window title
+    // is the one string in a window that cannot be scrolled to.
+    P.label(panel.title, x + PAD, y + 14, { color: C.inkDim, font: F.micro, maxW: w - PAD - 48 });
     // The key hint sits LEFT of the two buttons, not under them: at x+w-40 the chip
     // and the ⋮ at x+w-34 were drawn into the same six pixels.
     if (panel.hint) {
@@ -338,6 +381,7 @@ export class PanelHost {
     const bx = x + w - 34;
     P.text('⋮', bx + 5, y + 14, { font: F.body, color: C.inkDim, align: 'center' });
     P.text('×', bx + 22, y + 14, { font: F.mid, color: C.inkDim, align: 'center' });
+    P.owner = '';
 
     if (hit) {
       hit.push({ kind: 'panel:collapse', panel: panel.id, x: bx - 3, y: y + 2, w: 16, h: 16 });
@@ -386,6 +430,10 @@ export class PanelHost {
     panel.scroll = Math.min(panel.scroll, panel.scrollMax);
 
     // --- the footer ---------------------------------------------------------
+    // Attributed like the title bar and for the same reason: it draws BELOW the body's
+    // inner rect, so it needs its own region or it reads as an escape. One more string
+    // per window that the audit used to drop.
+    P.owner = `${panel.id}:foot`;
     P.fill(x, footY, w, FOOT_H, C.panelTitle);
     P.hline(x, footY, w, C.rule);
     if (panel.scrollMax > 0.5) {
@@ -400,10 +448,27 @@ export class PanelHost {
       const t = panel.scroll / panel.scrollMax;
       P.fill(x + w - 5, bodyY + 4, 2, trackH, C.track);
       P.fill(x + w - 5, bodyY + 4 + (trackH - thumbH) * t, 2, thumbH, C.inkDim);
-    } else {
-      P.label(panel.footNote ?? '', x + PAD, footY + 11, { color: C.inkFaint });
+    } else if (panel.footNote) {
+      P.label(panel.footNote, x + PAD, footY + 11, { color: C.inkFaint, maxW: w - PAD * 2 });
     }
+    P.owner = '';
     P.frame(x, y, w, h, C.rule);
+
+    /**
+     * THE RECTANGLES THIS WINDOW ACTUALLY DREW, published for the audit.
+     *
+     * `tools/uicheck.mjs` used to reconstruct them from `panel.x/y/w/h` after the
+     * frame — and got them wrong, because GROW-BEFORE-YOU-SCROLL above mutates
+     * `panel.h` and sometimes `panel.y` AFTER the body has been laid out against the
+     * old values. The footer therefore drew at one y and was asserted against another,
+     * which reported two windows' own footers as escaping their own windows. A tool
+     * that recomputes what a draw already knew is a tool that can disagree with it.
+     */
+    panel._drawn = {
+      body: { x, y: bodyY, w, h: bodyH },
+      title: { x, y, w, h: TITLE_H },
+      foot: { x, y: footY, w, h: FOOT_H },
+    };
 
     if (hit) hit.push({ kind: 'panel:body', panel: panel.id, x, y: bodyY, w, h: bodyH + FOOT_H });
   }

@@ -42,6 +42,7 @@ import {
   Surface, Painter, Projector, C, F, TRACK,
   UI_SCALES, setUIScale, uiScale,
 } from './theme.js';
+import { frameLayout } from './layout.js';
 import { HUD, BREACH_WARN_FRACTION } from './hud.js';
 import { TacticalOverlay, bearingAdvice } from './tactical.js';
 import { PowerPanel } from './power.js';
@@ -53,9 +54,11 @@ import { HoldPanel, MaterialsPanel } from './hold.js';
 import { CodexPanel } from './codex.js';
 import { ObjectivesPanel } from './objectives.js';
 import { PerksPanel } from './perks.js';
+import { SortiePanel } from './sortie.js';
 
 export { HUD, TacticalOverlay, PowerPanel, RefitScreen, InventoryPanel };
 export { PanelHost, ArmamentPanel, HoldPanel, MaterialsPanel, CodexPanel, ObjectivesPanel, PerksPanel };
+export { SortiePanel };
 export { C as UI_COLORS, F as UI_FONTS, BREACH_WARN_FRACTION };
 
 /**
@@ -73,7 +76,35 @@ const PANEL_KEYS = {
   keyg: 'hold',
   keyk: 'materials',
   keyp: 'perks',
+  keyb: 'sortie',
 };
+
+/**
+ * THE AUTHORITATIVE FREE-KEY LIST — re-derive it, do not trust a design document.
+ *
+ * Three briefs pick keys from three documents and two of the three disagree with the
+ * code. `docs/design/controls.md` lists `Z B X R H O A T L C V F G I D Tab` as taken;
+ * B, R, O, A, T, L, I, D and Tab are bound NOWHERE in `src/`. Grepped from the two
+ * files that actually own bindings, on this commit:
+ *
+ *   src/input/controls.js  space, digit1-3, bracketleft, bracketright, home, keyf,
+ *                          keyv, keyh, escape, keyz, keyw/a/s/d, keyq/e, arrows,
+ *                          shift, alt   (F1-F5 are the power stances)
+ *   src/ui/index.js        keym (refit, CAPTURE phase), backquote, backslash, equal,
+ *                          keyx, keyc, keyj, keyg, keyk, keyp, keyb, digit4-8
+ *
+ * `M` IS TAKEN. It is claimed at `_onKeyDown` in the capture phase, so it never
+ * reaches the flight controls; `docs/design/firing-feel.md:425` assigns M-hold to
+ * `fire.charge` and its own key audit never read this file. Anything that wants M has
+ * to move the refit screen first, in this file, by agreement — not by adding a second
+ * handler that will never fire.
+ *
+ * Exported so a later wave can bind against a measured list instead of a stale doc.
+ * `B` came off it for the SORTIE window below; the rest are still free.
+ */
+export const FREE_KEYS = Object.freeze(['I', 'L', 'N', 'O', 'R', 'T', 'U', 'Y', ',', '.']);
+/** Single letters this stream holds. Anything here needs agreement before reuse. */
+export const UI_BOUND_KEYS = Object.freeze(['M', 'X', 'C', 'J', 'G', 'K', 'P', 'B', '`', '\\', '=', '4', '5', '6', '7', '8']);
 
 /**
  * HOLD TO SEE THE SHIP.
@@ -146,6 +177,10 @@ export class UILayer {
     this.codexPanel = this.panels.add(new CodexPanel(this));
     this.objectivesPanel = this.panels.add(new ObjectivesPanel(this));
     this.perksPanel = this.panels.add(new PerksPanel(this));
+    this.sortiePanel = this.panels.add(new SortiePanel(this));
+
+    /** The frame layout, recomputed once per frame. See `./layout.js`. */
+    this.layout = null;
 
     /** null while flying; a string while a modal screen owns the frame. */
     this.screen = null;
@@ -614,14 +649,18 @@ export class UILayer {
 
     this._updateMarkers();
     this._measureShip(P);
+    this._computeLayout(P);
     this.hit.length = 0;
 
     try {
       if (this.screen !== 'refit') this._reserveFrame(P);
       if (this.screen === 'refit') {
+        P.owner = 'refit-screen';
         this.refit.draw(P, this.hit);
+        P.owner = 'notify';
         this.hud._drawNotifications(P);
         this.hud._drawOrderBar(P);
+        P.owner = '';
       } else if (this.hideHUD) {
         // Hold-to-look. One line, bottom-centre, on its own plate so it is legible
         // over whatever the player wanted to look at.
@@ -638,7 +677,9 @@ export class UILayer {
         this.panels.reserved = this._regions;
         if (camera) this.tactical.draw(P, this.hit);
         this.hud.draw(P);
+        P.owner = 'power';
         this.power.draw(P);
+        P.owner = '';
         // Windows last: they are opaque plates and they are meant to be on top of the
         // welded layer, not fighting it for the same pixels.
         this.panels.draw(P, this.hit);
@@ -663,35 +704,73 @@ export class UILayer {
    * readable at every zoom and one that only works at the zoom it was authored at.
    */
   /**
-   * The welded readouts' rectangles, rebuilt each frame in logical pixels.
+   * Recompute the frame layout. ONE call, at the top of the frame, before anything
+   * asks where anything is. See `./layout.js` for why the blocks are a function of
+   * the frame rather than a set of literals.
+   */
+  _computeLayout(P) {
+    const player = this.world.player;
+    const target = player?.target && !player.target.dead ? player.target : null;
+    // The notification column and the order bar are claimed for exactly the rows that
+    // are actually on screen, measured — not as a fixed band. See layout.js.
+    let notifyBottom = 0;
+    let notifyL = 0;
+    let notifyR = 0;
+    if (this.orderBar.text && P.t - this.orderBar.t0 < 5.1) {
+      // Centred: hud.js#_drawOrderBar plates from cx - tw/2 - 22 to cx + tw/2 + 22.
+      const tw = P.measure(this.orderBar.text.toUpperCase(), F.bodyBold, TRACK.label);
+      notifyBottom = 120;
+      notifyL = -tw * 0.5 - 22;
+      notifyR = tw * 0.5 + 22;
+    }
+    for (let i = 0; i < this.notifications.count; i++) {
+      const n = this.notifications.items[i];
+      if (P.t - n.t0 > n.ttl + 0.8) break;
+      // Left-anchored: hud.js#_drawNotifications plates from cx - 192, width tw + 22.
+      const tw = P.measure(n.text.toUpperCase(), F.bodyBold, TRACK.label);
+      notifyBottom = Math.max(notifyBottom, 140 + i * 17);
+      notifyL = Math.min(notifyL, -192);
+      notifyR = Math.max(notifyR, -192 + tw + 22);
+    }
+    this.layout = frameLayout(P, {
+      locked: !!target,
+      subsystems: target?.subsystems?.size ?? 8,
+      shieldFitted: (player?.shields?.max ?? 0) > 0,
+      armourFitted: false,
+      powerSealed: !this.world.unlocked?.powerRouting,
+      // Asked of the overlay BEFORE it draws, not read off last frame: the rose has
+      // two forms and the reserved rectangle has to be the one it is about to take.
+      arcCollapsed: this.tactical.arcCount(player) === 0,
+      tabsW: this.hud.measureTabs(P),
+      timeW: this.hud.measureTimeStrip(P),
+      notifyBottom,
+      notifyL,
+      notifyR,
+    });
+    return this.layout;
+  }
+
+  /**
+   * The welded readouts' rectangles, in logical pixels.
    *
-   * ONE list, read by three consumers: `Painter.claim` (so world-anchored captions
-   * get out of the way), the panel solver (so a window never opens on top of the
-   * hull-integrity block) and the HUD itself (so a block and its plate agree about
-   * where the block is). They used to be three sets of numbers in three files and
-   * they disagreed, which is how the OBJECTIVES window came to cover HULL INTEGRITY.
+   * ONE list, read by four consumers: `Painter.claim` (so world-anchored captions get
+   * out of the way), the panel solver (so a window never opens on top of the
+   * hull-integrity block), the HUD itself (so a block and its plate agree about where
+   * the block is) and `tools/uicheck.mjs` (so the 37 % of drawn text that belongs to
+   * welded chrome is actually asserted on). They used to be two sets of numbers in two
+   * files and they disagreed, which is how the OBJECTIVES window came to cover HULL
+   * INTEGRITY — and how the `time` region came to reserve 560 x 150 px for a strip
+   * that draws about 250 x 40.
+   *
+   * `hard` regions are the blocks the player is actually steering by. A window that
+   * covers the hull-integrity stack or the target's salvage projection has taken away
+   * the reason the player is looking at the screen.
    */
   _weldedRegions(P) {
+    const layout = this.layout ?? this._computeLayout(P);
     const r = this._regions;
     r.length = 0;
-    const shipW = this.hud.shipPanelW;
-    const shipH = this.hud.shipPanelH;
-    const tgtW = this.hud.targetPanelW;
-    // `hard` regions are the two blocks the player is actually steering by. A window
-    // that covers the hull-integrity stack or the target's salvage projection has
-    // taken away the reason the player is looking at the screen; everything else here
-    // is chrome that can be covered when the frame genuinely runs out of room.
-    r.push({ id: 'time', x: P.w * 0.5 - 280, y: 0, w: 560, h: 150 });
-    r.push({ id: 'tabs', x: 12, y: 2, w: Math.min(P.w - 24, 620), h: 30 });
-    r.push({ id: 'stores', x: P.w - 214, y: 34, w: 206, h: 96 });
-    r.push({ id: 'ship', x: 14, y: P.h - shipH - 14, w: shipW, h: shipH, hard: true });
-    r.push({ id: 'power', x: P.w * 0.5 - 190, y: P.h - this.power.height - 30, w: 380, h: this.power.height + 26 });
-    const locked = !!(this.world.player?.target && !this.world.player.target.dead);
-    const tgtH = locked ? 360 : 48;
-    r.push({ id: 'target', x: P.w - tgtW - 14, y: P.h - tgtH - 12, w: tgtW, h: tgtH, hard: true });
-    // The arc dial's column, above the player-state block. Reserved even when the
-    // dial is collapsed: the collapsed form is a line of type and it needs a ground.
-    r.push({ id: 'arc', x: 24, y: P.h - shipH - 118, w: 130, h: 106 });
+    for (const rect of layout.regions) if (rect.w > 0 && rect.h > 0) r.push(rect);
     return r;
   }
 

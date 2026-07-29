@@ -134,20 +134,40 @@ export class ArmamentPanel extends Panel {
     const therm = thermalReport(player);
     const stores = storesReport(player);
 
-    this._drawThermal(P, x, y, THERM_W, CELL_H, therm, stores);
-    P.vline(x + THERM_W + 2, y, CELL_H, C.ruleDim);
+    /**
+     * THE MOUNT CELLS ARE A FRACTION OF THE WIDTH HANDED IN. THE THERMAL COLUMN IS NOT.
+     *
+     * `PanelHost._layout` now clamps every window against the frame, because a 766 px
+     * ARMAMENT on a 1280 px frame covered 31 % of the central half on its own. A body
+     * that laid out at `THERM_W + 6 * CELL_W` regardless would have its last two mounts
+     * clipped off by the panel's own border — `panels.js:38-42`'s named defect, a hard
+     * edge through a row of type reading as a rendering fault.
+     *
+     * The thermal column does NOT scale, and that is deliberate: its content is fixed
+     * strings at fixed lanes (`EXT 94.0 / 94.4` is 75 px on its own against a 32 px
+     * value lane at `w * 0.204` on a narrow frame — measured, it printed straight
+     * through the BOW cell's `HEAT` row). A column whose content cannot shrink is a
+     * column that does not get to shrink; the give comes out of the six cells, which
+     * degrade legibly.
+     */
+    const thermW = THERM_W;
+    const cellW = Math.max(52, Math.floor((w - thermW - 6) / HARDPOINTS.length));
+
+    this._drawThermal(P, x, y, thermW, CELL_H, therm, stores);
+    P.vline(x + thermW + 2, y, CELL_H, C.ruleDim);
 
     this._collect(player);
-    let cx = x + THERM_W + 6;
+    let cx = x + thermW + 6;
     for (const cell of this._cells) {
-      this._drawCell(P, cx, y, CELL_W - 4, CELL_H, cell, player, stores, hit);
-      cx += CELL_W;
+      this._drawCell(P, cx, y, cellW - 4, CELL_H, cell, player, stores, hit);
+      cx += cellW;
     }
 
     // The sub-part legend. Five letters carrying five different failure modes is a
     // vocabulary, and an unexplained vocabulary is just noise.
     P.label('SUB-PARTS', x, y + CELL_H + 14, { color: C.inkDim });
-    P.label(PART_LEGEND, x + THERM_W + 6, y + CELL_H + 14, { color: C.inkFaint });
+    P.label(PART_LEGEND, x + thermW + 6, y + CELL_H + 14,
+      { color: C.inkFaint, maxW: w - thermW - 6 });
 
     P.hline(x, y + CELL_H + 20, w, C.rule);
     this._drawHotbar(P, x, y + CELL_H + 34, w, HOTBAR_H, hit);
@@ -298,9 +318,18 @@ export class ArmamentPanel extends Panel {
 
     P.frame(x, y, w, h, C.rule);
 
-    // Header: which mount, and what archetype sits on it.
-    P.label(MOUNT_LABEL[cell.id] ?? cell.id, x + 4, y + 10, { color: C.inkDim });
-    if (mount) {
+    // Header: which mount, and what archetype sits on it. The archetype is DROPPED,
+    // not squeezed, once the cell is too narrow for both — `DORSAL` and `RAIL` are
+    // 46 and 30 px against a 66 px cell, and the two printed as `DORSALRAIL`. The
+    // mount name is the one that has to survive; the archetype is repeated by the
+    // module name on the line below it.
+    const typeStr = mount ? String(mount.def.type).toUpperCase() : '';
+    const typeW = typeStr ? P.measure(typeStr, F.micro, TRACK.label) : 0;
+    const showType = !!typeStr && w >= typeW
+      + P.measure(MOUNT_LABEL[cell.id] ?? cell.id, F.micro, TRACK.label) + 16;
+    P.label(MOUNT_LABEL[cell.id] ?? cell.id, x + 4, y + 10,
+      { color: C.inkDim, maxW: Math.max(12, w - 8 - (showType ? typeW + 6 : 0)) });
+    if (showType) {
       P.label(mount.def.type, x + w - 4, y + 10, { color: C.inkFaint, align: 'right' });
     }
 
@@ -333,7 +362,11 @@ export class ArmamentPanel extends Panel {
       }
       const pulse = spec.tone === 'lost' ? 1 : 0.82 + 0.18 * Math.sin(P.t * 6);
       P.ctx.globalAlpha = pulse;
-      P.chip(label, x + 4, chipY, { fill: ink, color: C.void, h: 15, minW: w - 8 });
+      // Clipped to the cell. `P.chip` sizes itself to `max(minW, measure + pad)`, so
+      // `BREACHED` at 69 px grew a 62 px cell's chip past its own border and into the
+      // neighbouring mount's `PASSIVE`.
+      P.chip(P.clip(label, F.microBold, w - 16, TRACK.label), x + 4, chipY,
+        { fill: ink, color: C.void, h: 15, minW: w - 8 });
       P.ctx.globalAlpha = 1;
     } else if (spec.tone === 'heatLow') {
       P.fill(x + 4, chipY, w - 8, 15, C.panel);
@@ -372,8 +405,9 @@ export class ArmamentPanel extends Panel {
         P.bar(x + 4, y + 64, w - 8, 7, cond, {
           color: cond < CONDITION.worn ? C.warn : C.inkDim, track: C.track,
         });
+        const pctW = P.measure('100%', F.micro, TRACK.value) + 6;
         P.text(fmtPct(cond), x + w - 4, y + 84, { font: F.micro, color: C.inkDim, align: 'right' });
-        P.label('GRANTS', x + 4, y + 84, { color: C.inkFaint });
+        P.label('GRANTS', x + 4, y + 84, { color: C.inkFaint, maxW: Math.max(10, w - 8 - pctW) });
       }
       if (hit) hit.push({ kind: 'armament:mount', panel: this.id, mount: cell.id, x, y, w, h });
       return;
@@ -408,10 +442,14 @@ export class ArmamentPanel extends Panel {
     if (cls) {
       const mag = player.stores ? player.stores.rounds(cls) : 0;
       const dry = mag <= 0 && mount.ready <= 0;
+      // Two lanes, measured. `6/6` and `MAG 90` were drawn left and right with nothing
+      // between them, and at 62 px of cell they met in the middle.
+      const magStr = `MAG ${mag}`;
+      const magW = P.measure(magStr, F.micro, TRACK.value);
       P.text(`${mount.ready}/${mount.readyMax}`, x + 4, y + 82, {
-        font: F.micro, color: dry ? C.inkFaint : C.inkDim,
+        font: F.micro, color: dry ? C.inkFaint : C.inkDim, maxW: Math.max(10, w - 12 - magW),
       });
-      P.text(`MAG ${mag}`, x + w - 4, y + 82, {
+      P.text(magStr, x + w - 4, y + 82, {
         font: F.micro, color: dry ? C.inkFaint : C.inkDim, align: 'right',
       });
       if (dry) P.rule(x + 4, y + 79, w - 8, P.hair, C.inkFaint);
@@ -551,9 +589,13 @@ export class ArmamentPanel extends Panel {
         fill: usable ? C.ink : C.inkFaint, color: C.void, h: 11, padX: 4, font: F.micro,
       });
 
-      // The AUTHORED short name — `COOLANT`, `BOARD CHG` — not `COOLANT PU…`.
+      // The AUTHORED short name — `COOLANT`, `BOARD CHG` — not `COOLANT PU…`. Clipped
+      // to the lane the count leaves: at five slots on a narrowed panel `SURVEY PULSE`
+      // ran through its own `×0` and into the next slot's name.
+      const cntW = P.measure('×88', F.microBold, TRACK.value) + 8;
       P.text(itemName(r.id), sx + 22, sy + 12, {
         font: F.micro, color: usable ? C.ink : C.inkDim, track: TRACK.label,
+        maxW: Math.max(16, slotW - 32 - cntW),
       });
 
       P.text(`×${r.count}`, sx + slotW - 10, sy + 12, {

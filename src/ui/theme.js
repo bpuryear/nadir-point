@@ -851,7 +851,20 @@ export class Painter {
     if (n >= this._boxes.length) return;
     const size = parseFloat(/(\d+(?:\.\d+)?)px/.exec(font)?.[1] ?? '11');
     const b = this._boxes[n];
-    b.x = x; b.y = y - size; b.w = w; b.h = size + 2;
+    /**
+     * `size + 0.5`, not `size + 2`.
+     *
+     * The box is [baseline − size, baseline + slop]. This interface is almost entirely
+     * uppercase and digits, which have no descender, so 2 px of slop below the baseline
+     * was 2 px of overlap invented by the measurement. Against the world-anchored label
+     * stacks — a 10 px line pitch under a 12 px box — that manufactured NINE 2.0 px
+     * COLLIDE reports the moment welded auditing was switched on, none of them real.
+     * The honest fix is the box, not a looser slack: raising the tolerance to 2.5 px
+     * would also have hidden a genuine 2 px collision, and 2 px on a 10 px glyph is a
+     * fifth of the type. The one real overlap in that frame measured 15.9 x 6.0 px and
+     * is still caught.
+     */
+    b.x = x; b.y = y - size; b.w = w; b.h = size + 0.5;
     b.s = String(str); b.font = font; b.owner = this.owner;
     this._boxCount = n + 1;
   }

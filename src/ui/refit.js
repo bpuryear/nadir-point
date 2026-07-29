@@ -244,11 +244,51 @@ export class RefitScreen {
       this.ui.orderBar.say(`CANNOT INSTALL — ${(res?.reason ?? 'unknown').toUpperCase()}`, 'error');
       return;
     }
+
+    /**
+     * `PENDING` IS THE FIELD THAT TELLS THE TRUTH.
+     *
+     * `RefitGate.enforce()` monkey-patches `RefitSystem.install` (refitGate.js:350-368)
+     * to START a job and return `{ ok: true, pending: true, job, module, seconds }`.
+     * This screen never read `pending`: it printed `INSTALLED <NAME> · 2.9 MS` and
+     * cleared the selection the instant the job STARTED — a completed install that had
+     * not happened, priced in the UI's OWN `performance.now()` delta rather than in the
+     * sim's install time. `refitGate.js:250-252` says it in terms: "pending is the
+     * field that tells the truth".
+     *
+     * `look-target.md:74` makes that duration the whole reason the loadout you leave
+     * with is a commitment — "it takes real time, during which the mount is dead and
+     * the ship is vulnerable". A screen that reports it as instant deletes the cost.
+     */
+    if (res.pending) {
+      this.pendingJob = {
+        mount: this.selectedMount,
+        module: res.module?.name ?? '',
+        seconds: res.seconds ?? res.job?.total ?? 0,
+      };
+      this.selectedUid = null;
+      const where = String(r.world?.systems?.refitGate?.status?.().where ?? '').toUpperCase();
+      this.ui.orderBar.say(`FITTING ${(res.module?.name ?? '').toUpperCase()} — `
+        + `${(res.seconds ?? 0).toFixed(0)} S${where ? ` · ${where}` : ''}`, 'info');
+      return;
+    }
+
     this._pendingProfile = true;
     this.lastInstall = { ms, worstFrameMs: 0, outlineMs: 0, framesLeft: 12, module: res.module?.name ?? '' };
     this.selectedUid = null;
     this._queuePrewarm();
     this.ui.orderBar.say(`INSTALLED ${(res.module?.name ?? '').toUpperCase()} · ${ms.toFixed(1)} MS`, 'good');
+  }
+
+  /**
+   * The gate's live job, if it is the one this mount started. `refitGate.status()` and
+   * `refitGate.describe()` both existed as read APIs and NOTHING called either.
+   */
+  _liveJob(mountId) {
+    const st = this.world.systems?.refitGate?.status?.();
+    if (!st?.job) { if (this.pendingJob) this.pendingJob = null; return null; }
+    if (this.pendingJob && this.pendingJob.mount !== mountId) return null;
+    return st.job;
   }
 
   uninstall(mountId = this.selectedMount) {
@@ -470,15 +510,32 @@ export class RefitScreen {
     this._drawChrome(P, hit);
     this._drawCallouts(P, hit);
 
+    /**
+     * EVERY BLOCK GETS THE HOUSE PLATE.
+     *
+     * `SALVAGE HOLD`, `SELECTED MOUNT`, `WHAT CHANGES`, `SILHOUETTE` and `ACTIONS`
+     * were bare labels with hairline rules drawn straight onto the 3D scene, on two
+     * wide gradient scrims — the exact idiom `theme.js:680-687` says was removed
+     * everywhere else because "there is no version of this that a gradient survives".
+     * They survived only because the yard POI happens to be dark; the moment the refit
+     * bay is lit, or a hull fills the frame behind it, they read at the same 1.6:1 the
+     * world-anchored labels used to.
+     *
+     * The plate is opaque and it goes down FIRST, under the block, exactly like every
+     * floating window. Nothing is overlaid.
+     */
     const leftX = 28;
     const leftW = 330;
+    P.plate(leftX - 12, 66, leftW + 24, P.h - 66 - 196, { border: C.rule });
     this.inventory.draw(P, leftX, 78, leftW, {
       selectedUid: this.selectedUid, hoverUid: this.hoverUid, hit,
     });
+    P.plate(leftX - 12, P.h - 202, leftW + 24, 130, { border: C.rule });
     this._drawActions(P, leftX, P.h - 190, leftW, hit);
 
     const rightW = 368;
     const rightX = P.w - 28 - rightW;
+    P.plate(rightX - 12, 66, rightW + 24, P.h - 66 - 84, { border: C.rule });
     let y = this._drawMountPanel(P, rightX, 78, rightW, hit);
     y = this._drawDelta(P, rightX, y + 22, rightW);
     this._drawSilhouette(P, rightX, y + 20, rightW);
@@ -563,8 +620,8 @@ export class RefitScreen {
       P.diamond(c.x, c.y, selected ? 5 : 3.5,
         { fill: selected ? C.select : mod ? C.inkDim : null, stroke: selected ? C.select : C.inkFaint });
 
-      P.scrim(px, py, plateW, 44, { alpha: 0.82 });
-      P.frame(px, py, plateW, 44, edge);
+      // The house plate, not a 0.82 scrim: this tile is drawn over the hull itself.
+      P.plate(px, py, plateW, 44, { border: edge });
       if (selected) P.fill(px, py, 3, 44, C.select);
 
       P.label(`${MOUNT_KEY[id]} ${def?.label ?? id}`, px + 9, py + 14,
@@ -578,10 +635,22 @@ export class RefitScreen {
         P.text(breached ? 'BREACHED' : 'EMPTY', px + 9, py + 27,
           { font: F.small, color: breached ? C.warn : C.inkFaint, track: TRACK.label });
       }
-      P.bar(px + 9, py + 33, plateW - 18, 4, breached ? 0 : frac, {
-        color: breached ? C.warnGhost : frac <= 0.35 ? C.warn : C.inkDim,
-        track: C.track, threshold: 0.35, thresholdColor: C.warnDim,
-      });
+      // A LIVE FIELD SWAP, ON THE MOUNT IT IS HAPPENING TO. `refitGate.status().job`
+      // is the sim's own clock; the screen used to report the swap as finished the
+      // instant it started. See `install()`.
+      const job = this._liveJob(id);
+      if (job) {
+        P.bar(px + 9, py + 33, plateW - 18, 4, job.total > 0 ? 1 - job.remaining / job.total : 0, {
+          color: C.warn, track: C.track, segments: 10,
+        });
+        P.text(`${job.remaining.toFixed(1)} S`, px + plateW - 9, py + 14,
+          { font: F.microBold, color: C.warn, align: 'right' });
+      } else {
+        P.bar(px + 9, py + 33, plateW - 18, 4, breached ? 0 : frac, {
+          color: breached ? C.warnGhost : frac <= 0.35 ? C.warn : C.inkDim,
+          track: C.track, threshold: 0.35, thresholdColor: C.warnDim,
+        });
+      }
 
       hit?.push({ kind: 'mount', id, x: px, y: py, w: plateW, h: 44 });
     }
@@ -894,17 +963,28 @@ export class RefitScreen {
     P.scrim(0, y - 18, P.w, 80, { alpha: 0.80 });
     P.hline(0, y - 18, P.w, C.rule);
 
-    const m = world.materials ?? { alloy: 0, composite: 0, exotic: 0 };
+    /**
+     * FOUR POOLS, NOT THREE.
+     *
+     * `hud.js:775-778` prints four and says why in terms: electronics "landed with the
+     * material chain and was never printed anywhere, which meant every cost quoted in
+     * it read as unpayable". This strip still printed three, on the one screen where
+     * costs are actually paid, while `hold.js:536` quotes perk and pattern prices in
+     * ELEC — so the refit bay showed the player a currency-free wall against a price
+     * list denominated in a currency it refused to name.
+     */
+    const m = world.materials ?? { alloy: 0, composite: 0, electronics: 0, exotic: 0 };
     const cells = [
-      ['ALLOY', String(m.alloy), C.ink],
-      ['COMPOSITE', String(m.composite), C.ink],
-      ['EXOTIC', String(m.exotic), m.exotic > 0 ? C.salvage : C.inkFaint],
+      ['ALLOY', String(Math.round(m.alloy ?? 0)), C.ink],
+      ['COMPOSITE', String(Math.round(m.composite ?? 0)), C.ink],
+      ['ELEC', String(Math.round(m.electronics ?? 0)), (m.electronics ?? 0) > 0 ? C.ink : C.inkFaint],
+      ['EXOTIC', String(Math.round(m.exotic ?? 0)), (m.exotic ?? 0) > 0 ? C.salvage : C.inkFaint],
     ];
     let x = 420;
     for (const [k, v, col] of cells) {
       P.label(k, x, y, { color: C.inkFaint });
       P.text(v, x, y + 18, { font: F.midBold, color: col });
-      x += 110;
+      x += 92;
     }
 
     if (player) {
