@@ -47,6 +47,28 @@ export const HULL_MAP_DEFAULTS = {
   normalStrength: 0.52,
   /** Multiplies the faction's plate size. 1 = plates are the real-world size. */
   scale: 1,
+  /**
+   * THE CHARACTERISTIC SIZE OF THE SURFACE THIS MAP IS GOING ON, IN METRES.
+   *
+   * "A 400 m armour face must not carry the same cell as a 30 m module" - and it did,
+   * because the tile was a function of the FACTION and the frequency TIER and of
+   * nothing else. `modules/kit.js` asks for `get('hull', { tier: 2 })` for a 30-100 m
+   * bolt-on and `cruiser.js` asks for `get('hull', { wear: 0.5, tier: 2 })` for a
+   * 1400 x 330 m capital hull; before this pass those two resolved to the same 187 m
+   * armour tile, so a module wore one sixth of one plate and the plate layout on it
+   * was invisible by construction.
+   *
+   * `surfaceM` is clamped into the tile below (see `resolveTile`) rather than
+   * multiplying it, so a caller that passes nothing keeps exactly the behaviour it
+   * had and a caller that passes a real figure gets a plate its own surface can hold.
+   * Quantised by the registry to 25 m steps, so it cannot fragment the material cache.
+   *
+   * STATED LIMITATION: no geometry call site passes it yet, and this stream does not
+   * edit src/art/geometry. The two one-line changes that would make it bite are named
+   * in the stream report. What ships today is the mechanism plus a default derived
+   * from the tile itself, and a calm tile that is no longer 187 m wide.
+   */
+  surfaceM: 0,
 };
 
 /**
@@ -142,28 +164,59 @@ function busyField(fbm, calm) {
  * `tileMul` also feeds the shader: hullShader.js expresses its domain-warp period
  * and amplitude against the tile, so the warp stays proportional on all three tiers.
  */
+/**
+ * ---------------------------------------------------------------------------
+ * PASS 10: THE TIERS DIFFERED IN SIZE AND IN NOTHING THE EYE USES
+ * ---------------------------------------------------------------------------
+ * Rendered at 1:1 (`node tools/maps.mjs`) the three tiers before this pass were the
+ * same running-bond block field at 187 m, 104 m and 30 m. The previous pass's own
+ * claim - that they "differ in how many seams they have and in which direction they
+ * run" - was true of the STRAKE COUNT and false of everything the eye actually reads,
+ * because every tier still laid exactly one butt per strake per tile at a jittered
+ * phase, which is the definition of running bond. See panelLines.js#buttChance.
+ *
+ * They now differ in WHETHER THEY HAVE BUTTS AT ALL, which is a difference of kind:
+ *
+ *   tier      tileM  strakes  strake h   butts   greeble  rivets  steps  repeats/1400
+ *   hull      109.2     6      18.2 m    0.20      0        0       0       12.8
+ *   plating    52.0     6       8.7 m    0.62     0.34    0.85     yes      26.9
+ *   greeble    16.1     4       4.0 m    1.00     0.90    1.00     yes      86.8
+ *
+ * The calm tier is a plate 109 m long and 18 m tall with two lines across it and, in
+ * four strakes out of five, no vertical break anywhere in the tile. That is one
+ * seam per 18 m of hull against the dense tier's one per 4 m plus a butt every 8 m
+ * plus greeble: a seam-length-per-square-metre ratio of about 1 : 9.
+ *
+ * The calm tile came DOWN from 187 m, and that is not a retreat from calm. A 31 x 187 m
+ * "plate" is not a plate - no yard rolls one and no eye reads one as one - so the
+ * previous tier bought its calm by making the tile too big to have any features in
+ * frame at all, which is why blind review measured 93-97% calm and still called the
+ * result blank. 18 x 109 m is a credible capital armour strake, and the calm now comes
+ * from what has been REMOVED from it rather than from its size. §7's floor (largest
+ * plate module >= 55 m, <= 26 repeats over 1400 m) is met at 109 m and 12.8.
+ */
 function variantSpec(pal, variant) {
   switch (variant) {
     case 'hullDark': return {
       base: pal.baseDark, alt: pal.base, surface: pal.surface.hullDark,
       greeble: 1.0, markings: false, wearMul: 1.15,
-      tileMul: 5.0, calmAdd: 0.06, contrastMul: 0.92, rivetMul: 0.7,
-      strakes: 8, plateAspect: 8.0, stepMul: 0.9,
+      tileMul: 2.6, calmAdd: 0.06, contrastMul: 0.92, rivetMul: 0.7,
+      strakes: 6, plateAspect: 6.0, stepMul: 0.9, buttChance: 0.55,
     };
-    // MEDIUM, and its whole job is to be DIRECTIONAL. Ten strakes to one plate is a
-    // 10:1 plank; the review's ashlar read came from 3:1 blocks in running bond.
+    // MEDIUM. Directional, and it is the tier that has BUTTS - a plate break every
+    // 52 m or so, which is the frequency at which a hull looks assembled.
     case 'plating': return {
       base: pal.plating, alt: pal.base, surface: pal.surface.plating,
-      greeble: 0.38, markings: true, wearMul: 0.85,
-      tileMul: 4.0, calmAdd: 0.02, contrastMul: 1.0, rivetMul: 0.9,
-      strakes: 10, plateAspect: 10.0, stepMul: 1.15,
+      greeble: 0.34, markings: true, wearMul: 0.85,
+      tileMul: 2.0, calmAdd: 0.02, contrastMul: 1.0, rivetMul: 0.85,
+      strakes: 6, plateAspect: 6.0, stepMul: 1.15, buttChance: 0.62,
     };
     // DENSE. Isotropic on purpose - machinery is - and the ONLY tier allowed to be.
     case 'greeble': return {
       base: pal.greeble, alt: pal.baseDark, surface: pal.surface.greeble,
       greeble: 0.90, markings: false, wearMul: 1.0,
-      tileMul: 1.15, calmAdd: -0.26, contrastMul: 1.0, rivetMul: 1.0,
-      strakes: 5, plateAspect: 2.5, stepMul: 1.4,
+      tileMul: 0.62, calmAdd: -0.26, contrastMul: 1.0, rivetMul: 1.0,
+      strakes: 4, plateAspect: 2.0, stepMul: 1.4, buttChance: 1.0,
       // The greeble variant's own base IS the machinery colour and its `alt` is
       // already baseDark, so tinting the mechanical mask towards baseDark a second
       // time drove whole bands to near-black. Every other variant needs the full tint
@@ -173,11 +226,30 @@ function variantSpec(pal, variant) {
     // Trim's second tone must be a darker TRIM, not the hull grey - blending an
     // accent band towards the hull colour is how a faction's identity colour ends
     // up as beige.
+    /**
+     * TRIM IS NO LONGER A FULL-FACE FILL OF THE FACTION ACCENT.
+     *
+     * `ships/common.js#SURFACES` maps the logical surface `trim` onto whole merged
+     * meshes, so whatever `base` is here gets painted across every square metre of
+     * every part geometry called trim. With `base: pal.trim` that was Coalition
+     * safety orange and Concord cobalt applied as a flat fill on arbitrary panels -
+     * the model-kit read, named in review three passes running, and it was in this
+     * one line.
+     *
+     * §4's rule is that accent follows STRUCTURE: edges, hazard zones, functional
+     * markings, recesses. So the FILL is now the faction's own plating - the trim
+     * surface is made of the same steel as the hull, because it is - and the accent
+     * is drawn by `stampAccentEdges` as a band along the strake seams and the tile
+     * edge, i.e. on the structure. A trim part therefore reads as a hull part with a
+     * marked edge instead of as a painted rectangle, and the saturated area drops
+     * from 100% of the part to `accentEdge` (about 9%).
+     */
     case 'trim': return {
-      base: pal.trim, alt: shade(pal.trim, 0.78), surface: pal.surface.trim,
+      base: pal.plating, alt: pal.base, surface: pal.surface.trim,
       greeble: 0.20, markings: false, wearMul: 1.25,
-      tileMul: 1.0, calmAdd: 0.10, contrastMul: 0.85, rivetMul: 0.3,
-      strakes: 3, plateAspect: 3.0, stepMul: 0.6,
+      tileMul: 0.9, calmAdd: 0.10, contrastMul: 0.85, rivetMul: 0.3,
+      strakes: 4, plateAspect: 4.0, stepMul: 0.6, buttChance: 0.7,
+      accentEdge: pal.trim,
     };
     // Debris albedo is deliberately near-neutral and light. An InstancedMesh tints
     // each fragment with setColorAt, and instanceColor MULTIPLIES the map - so if
@@ -187,15 +259,15 @@ function variantSpec(pal, variant) {
       base: desat(pal.bare, 0.18), alt: desat(pal.base, 0.18), surface: pal.surface.hull,
       greeble: 0.8, markings: false, wearMul: 1.3,
       tileMul: 0.85, calmAdd: -0.05, contrastMul: 1.0, rivetMul: 1.0,
-      strakes: 3, plateAspect: 2.6, stepMul: 1.2,
+      strakes: 3, plateAspect: 2.6, stepMul: 1.2, buttChance: 1.0,
     };
     // A 3.4 km hulk needs the largest tile in the game or the whole thing is one
     // weave at one density, which is exactly what defect D5 describes.
     case 'derelictHull': return {
       base: pal.base, alt: pal.baseAlt, surface: pal.surface.hull,
       greeble: 0.8, markings: true, wearMul: 1.0,
-      tileMul: 5.2, calmAdd: 0.14, contrastMul: 0.86, rivetMul: 1.0,
-      strakes: 5, plateAspect: 5.0, stepMul: 1.3,
+      tileMul: 3.4, calmAdd: 0.14, contrastMul: 0.86, rivetMul: 1.0,
+      strakes: 5, plateAspect: 5.0, stepMul: 1.3, buttChance: 0.7,
     };
     /**
      * A HEAT-REJECTION PANEL. Not a hull variant at all — it routes to
@@ -208,7 +280,7 @@ function variantSpec(pal, variant) {
       base: pal.baseDark, alt: shade(pal.baseDark, 0.72), surface: pal.surface.radiator,
       greeble: 0.0, markings: false, wearMul: 0.9,
       tileMul: 1.4, calmAdd: 0.5, contrastMul: 0.9, rivetMul: 0,
-      strakes: 1, plateAspect: 1, stepMul: 0,
+      strakes: 1, plateAspect: 1, stepMul: 0, buttChance: 0,
       radiator: true, greebleTint: 0,
     };
     case 'hull':
@@ -229,11 +301,40 @@ function variantSpec(pal, variant) {
        * bottom under a raking key. Six strakes over a 187 m tile is a 31 x 187 m
        * armour slab: 7.5 repeats over 1400 m, half what the last pass shipped.
        */
+      /**
+       * PASS 10: the calm is bought by SUBTRACTION, not by scale. Zero greeble, zero
+       * fasteners, zero steps stay; `buttChance` 0.20 is the new one and it is the
+       * load-bearing change - four strakes in five now have no vertical break in the
+       * tile, so the dominant read is a long horizontal line and nothing else. The
+       * tile comes down 187 -> 109 m because a 31 x 187 m plate is not an object
+       * anyone recognises, and `contrastMul` comes UP because the previous tier was
+       * measured as blank: fewer events have to be worth seeing.
+       */
       greeble: 0.0, markings: true, wearMul: 0.7,
-      tileMul: 7.2, calmAdd: 0.34, contrastMul: 0.80, rivetMul: 0.0,
-      strakes: 6, plateAspect: 6.0, stepMul: 0.9,
+      tileMul: 4.2, calmAdd: 0.34, contrastMul: 1.05, rivetMul: 0.0,
+      strakes: 6, plateAspect: 6.0, stepMul: 0.0, buttChance: 0.20,
     };
   }
+}
+
+/**
+ * PLATE SCALE TRACKS SURFACE SIZE.
+ *
+ * The tier's tile is the size the plating WANTS to be. `surfaceM` is the size the
+ * surface it is going on actually IS. A tile bigger than the surface shows a fraction
+ * of one plate and reads as an untextured face; a tile far smaller than the surface
+ * repeats until the eye finds the lattice. Both ends are bounded here:
+ *
+ *   at least 1.6 repeats across the surface   (so a plate is never bigger than 62% of it)
+ *   at most  10  repeats across the surface   (so a small part is never a fine weave)
+ *
+ * A 30 m module asking for the calm armour tier therefore gets an 18.7 m tile instead
+ * of a 109 m one, and a 400 m armour face keeps the full 109 m. `surfaceM = 0` means
+ * "not stated" and leaves the tier's own figure alone, which is every caller today.
+ */
+function resolveTile(tileM, surfaceM) {
+  if (!(surfaceM > 0)) return tileM;
+  return Math.max(surfaceM / 10, Math.min(tileM, surfaceM / 1.6));
 }
 
 /**
@@ -261,7 +362,7 @@ export function hullMaps(opts = {}) {
    * armour tile, so the armour reads as one big plate with a hairline in it while
    * the machinery reads as a dense assembly, from the same generator.
    */
-  const tileM = pal.panel.tileM * o.scale * spec.tileMul;
+  const tileM = resolveTile(pal.panel.tileM * o.scale * spec.tileMul, o.surfaceM);
   const strakeCount = Math.max(1, Math.round(spec.strakes * (tier === 3 ? 1.34 : tier === 2 ? 1.0 : 0.8)));
   /**
    * SEAM SIZE IS DERIVED FROM STRAKE HEIGHT, NOT STATED AS A CONSTANT.
@@ -299,6 +400,9 @@ export function hullMaps(opts = {}) {
      */
     strakes: strakeCount,
     plateAspect: spec.plateAspect,
+    // The tier decides whether this surface has butt joints at all. See the pass-10
+    // note above variantSpec and panelLines.js#buttChance.
+    buttChance: spec.buttChance ?? 0.62,
     step: (pal.panel.step ?? 0.10) * spec.stepMul,
     stepM: (pal.panel.stepM ?? 0.35) * Math.max(1, strakeHeightM / 10),
     rivets: pal.panel.rivets * spec.rivetMul,
@@ -440,6 +544,10 @@ export function hullMaps(opts = {}) {
   }
   const albedoCanvas = bytesToCanvas(bytes, size);
 
+  if (spec.accentEdge) {
+    stampAccentEdges(ctx2d(albedoCanvas), size, panel, tileM, spec.accentEdge);
+  }
+
   if (o.markings && spec.markings) {
     stampMarkings(ctx2d(albedoCanvas), size, panel, pal, o.faction, rng.fork(`marks:${o.variant}`), tier);
   }
@@ -506,6 +614,47 @@ export function hullMaps(opts = {}) {
     ormMap: canvasTexture(ormCanvas, { repeat, name: `${o.faction}:${o.variant}:orm` }),
     normalMap: canvasTexture(normalCanvas, { repeat, name: `${o.faction}:${o.variant}:normal` }),
   };
+}
+
+/**
+ * THE FACTION ACCENT, AS AN EDGE BAND ON THE STRUCTURE, NOT AS A FILL.
+ *
+ * §4: accent follows edges, hazard zones, functional markings and recesses, never an
+ * arbitrary whole face. The `trim` variant used to answer that by painting the whole
+ * face; it now answers it by painting a band that RUNS ALONG THE STRAKE SEAM - the
+ * one line on this surface that is genuinely structural and genuinely continuous -
+ * and leaving the rest of the plate as the faction's own steel.
+ *
+ * Every number is in METRES, converted against the tile like everything else here, so
+ * the band is the same physical width on a 15 m fitting and a 90 m sponson:
+ *
+ *   band          2.6 m of accent hard against the seam, on the plate side of it
+ *   saturated area  band / strake height, i.e. ~2.6 / 22 = 12% of the trim surface
+ *
+ * That keeps a trim part inside §4's 3.5% saturated-albedo budget for the ship as a
+ * whole by an enormous margin, because trim is a small fraction of the hull to begin
+ * with, and it means the accent is now a LINE the eye follows rather than a patch it
+ * stops on.
+ */
+function stampAccentEdges(ctx, size, panel, tileM, accentHex) {
+  const strakes = panel.strakes ?? [];
+  if (!strakes.length) return;
+  const px = size / Math.max(1e-3, tileM);
+  const bandPx = Math.max(1.5, 2.6 * px);
+  ctx.save();
+  ctx.fillStyle = css(accentHex);
+  // Hard against the seam on its upper side - the side whose lip stands proud, so the
+  // paint sits on the edge that catches the key rather than in the shadow of it.
+  for (const s of strakes) {
+    const y = s.y0 * size;
+    ctx.globalAlpha = 0.92;
+    ctx.fillRect(0, y, size, bandPx);
+    // A thinner, fainter return on the far side of the groove. Two lines with a dark
+    // gap between them read as a painted edge; one line reads as a stripe.
+    ctx.globalAlpha = 0.45;
+    ctx.fillRect(0, y - bandPx * 0.55, size, bandPx * 0.45);
+  }
+  ctx.restore();
 }
 
 /**

@@ -112,8 +112,20 @@ function buildHangarDeck(ctx) {
 
   // 3. The landing platform, below the block and stepped inboard of it: a
   //    ziggurat in reverse, which is what stops the stack reading as one prism.
-  b.add('plating', G.panelledSlab({ width: 286, height: 46, depth: 540, chamfer: 26, detail: D }),
-    { pos: [0, -432, -14] });
+  //
+  //    IT MUST TOUCH THE BLOCK. It did not. At 46 m tall and hung at y = -432 its
+  //    top edge was -409 against a block whose bottom is -368, so the deepest and
+  //    most distinctive thing on the carrier build was a 286 x 540 m slab floating
+  //    forty-one metres clear of the ship. That is the white band under row B of
+  //    `docs/probes/loadouts.png`, and it is why `tools/silhouette.mjs` exists.
+  //
+  //    Fixed by growing the step rather than by closing the gap with struts: same
+  //    primitive, same twenty-eight triangles, and the module's deepest point stays
+  //    at -455 so the "deepest of the three ventrals" read is untouched. A 92 m
+  //    riser stepped 54 m inboard of the block on each side is a stronger ziggurat
+  //    than a 46 m one was, not a weaker one.
+  b.add('plating', G.panelledSlab({ width: 286, height: 92, depth: 540, chamfer: 26, detail: D }),
+    { pos: [0, -409, -14] });
   b.add('plating', G.blastDoor({ width: 190, height: 300, depth: 9, seam: false, detail: D }),
     { pos: [0, -456, -14], rot: [HALF_PI, 0, 0] });
 
@@ -271,8 +283,11 @@ function buildCargoExpansion(ctx) {
   const D = b.detail, full = b.full;
 
   // Keel spine the whole rack hangs off. Long, so the module reads as one object.
-  b.add('hull', G.panelledSlab({ width: 132, height: 34, depth: 830, chamfer: 10, detail: D }),
-    { pos: [0, -46, -10] });
+  // Its TOP has to reach the collar plate, which sits at local y 0 .. -5.9; at
+  // height 34 hung from y = -46 it topped out at -29 and the rack was bolted to
+  // nothing. Deeper and raised, so it meets the plate and still clears the yokes.
+  b.add('hull', G.panelledSlab({ width: 132, height: 52, depth: 830, chamfer: 10, detail: D }),
+    { pos: [0, -28, -10] });
   b.graft([0, 0, 0], [HALF_PI, 0, 0], 42);
 
   // Two transverse yokes carrying the pods outboard. Unequal spacing: a load path
@@ -345,9 +360,13 @@ function buildRepairBay(ctx) {
   const D = b.detail, full = b.full;
 
   b.graft([0, 0, 0], [HALF_PI, 0, 0], 44);
-  // Spine the cage hangs from, threaded through the cradle throat.
-  b.add('hull', G.panelledSlab({ width: 138, height: 34, depth: 760, chamfer: 10, detail: D }),
-    { pos: [0, -40, -20] });
+  // Spine the cage hangs from, threaded through the cradle throat. Raised and
+  // deepened for the same reason as the cargo rack's: the collar plate stops at
+  // local y = -6.2 and a spine topping out at -23 left the whole 940 m cage hanging
+  // off a seventeen-metre gap. It reads as one object in side view only because the
+  // hull happens to sit behind it.
+  b.add('hull', G.panelledSlab({ width: 138, height: 52, depth: 760, chamfer: 10, detail: D }),
+    { pos: [0, -31, -20] });
 
   // THE THREE PORTAL FRAMES. Each is a transverse beam on two down-legs, and the
   // gaps between them are the module: this is the only thing on the ship you can
@@ -361,12 +380,27 @@ function buildRepairBay(ctx) {
     b.add('plating', G.panelledSlab({ width: w, height: 34, depth: 56, detail: D }),
       { pos: [0, -212, z] });
     for (const s of [-1, 1]) {
-      // Uncapped: the leg meets the beam above it and the rail below it, so both
-      // ends are buried. Twelve triangles instead of twenty, six times over.
+      // Uncapped: the leg meets the spine above it and the working rail below it, so
+      // both ends are buried. Twelve triangles instead of twenty, six times over.
+      //
+      // `hexStrut` runs from its origin along +Y, which is what this got wrong: at
+      // length 190 struck from y = -212 it spanned -212 .. -22 and stopped dead at
+      // the portal beam it was supposed to pass through, leaving the two 940 m rails
+      // and everything on them hanging 29 m below the nearest structure. It now runs
+      // -290 .. -30: spine at the top, beam through the middle, rail at the foot.
       b.add('hull', G.hexStrut({
-        length: 190, radius: 17, radiusEnd: 13, axis: 'y', caps: false, detail: D,
-      }), { pos: [s * (w * 0.5 - 24), -212, z] });
+        length: 260, radius: 17, radiusEnd: 13, axis: 'y', caps: false, detail: D,
+      }), { pos: [s * (w * 0.5 - 24), -290, z] });
     }
+    // KING POST. The down-legs stand at x = +-230 and +-261 and the keel spine is
+    // 138 m higher and only 138 m wide, so the three portal frames, the two 940 m
+    // rails, the arms and the fabricator hung off the ship touching nothing at all.
+    // It read as one object in side and top view purely because the hull's own
+    // salvage cradle sits behind the gap; from the bow it was a dock floating below
+    // a ship. One post per frame, on the centreline, from the spine to the beam.
+    b.add('hull', G.hexStrut({
+      length: 158, radius: 19, radiusEnd: 15, axis: 'y', caps: false, detail: D,
+    }), { pos: [0, -202, z] });
   }
 
   // The two working rails: 940 m fore and aft, well outboard of the hull's beam.
@@ -378,17 +412,24 @@ function buildRepairBay(ctx) {
   // Three arms. Two folded against the starboard rail, one extended to port and
   // working - the module's asymmetry, and the reason it reads as busy machinery
   // rather than as a bridge truss.
+  // Both arms are uncapped: the folded one is buried in the rail at both ends and
+  // the extended one is buried in the rail at its root and in its own working head
+  // at its tip, so sixteen triangles of end cap were paying for nothing. That is
+  // where the three king posts above came from - the module is at its 400 ceiling
+  // and structure that holds the ship together outranks a cap nobody can see.
   if (full) {
-    b.add('greeble', G.hexStrut({ length: 150, radius: 11, axis: 'z', detail: D }), { pos: [204, -232, -150] });
+    b.add('greeble', G.hexStrut({ length: 150, radius: 11, axis: 'z', caps: false, detail: D }),
+      { pos: [204, -232, -150] });
   }
-  b.add('greeble', aimed(G.hexStrut({ length: 210, radius: 13, axis: 'z', detail: D }),
+  b.add('greeble', aimed(G.hexStrut({ length: 210, radius: 13, axis: 'z', caps: false, detail: D }),
     [-1, -0.36, 0], [-220, -196, 150]));
   b.add('greeble', G.panelledSlab({ width: 46, height: 36, depth: 40, detail: D }), { pos: [-418, -264, 150] });
   b.glow([-418, -286, 150], 20, [HALF_PI, 0, 0]);
 
-  // Fabricator drum on the starboard rail: the deepest single point on the module.
+  // Fabricator drum ON the starboard rail - it hung 6 m clear of it, which at this
+  // module's seeded mount cant is a clean break in the outline.
   b.add('greeble', G.pipeRun({ length: 168, radius: 40, sides: 6, axis: 'z', flanges: full ? 1 : 0, detail: D }),
-    { pos: [244, -344, -140] });
+    { pos: [244, -326, -140] });
 
   b.lightRun([-244, -302, -400], [-244, -302, 380], [0, -1, 0], { max: 11 });
 
@@ -448,8 +489,16 @@ function buildDroneBay(ctx) {
   }
 
   if (full) {
-    b.add('greeble', aimed(G.cappedConduit({ length: 62, radius: 13, axis: 'z', detail: D }),
-      [0.34, -1, -0.2], [50, -48, -44]));
+    // One coolant trunk down the OUTSIDE, from the collar plate to the drum rim.
+    // It used to be struck from [50, -48, -44] with a length of 62 - above the
+    // neck's top edge (y = -128) and outboard of the 46 m plate - so it was 45 m of
+    // pipe hanging in vacuum touching nothing at either end (`tools/silhouette.mjs`,
+    // side view). Now it starts on the plate and finishes inside the drum, and
+    // because it runs at a radius of 36 -> 98 m against a 59 m neck it is OUTSIDE
+    // the neck for its whole length, which is the only place a serviceable line
+    // belongs and the only place it is visible from.
+    b.add('greeble', aimed(G.cappedConduit({ length: 150, radius: 13, axis: 'z', detail: D }),
+      [62, -146, 22], [34, -4, 12]));
   }
 
   b.lightRun([0, -352, 96], [0, -352, -96], [0, -0.6, 1], { max: 6 });

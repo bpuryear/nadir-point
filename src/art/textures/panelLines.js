@@ -115,6 +115,45 @@ const H = {
  * that is a value EVENT rather than a line.
  */
 
+/**
+ * ---------------------------------------------------------------------------
+ * PASS 10: THE MASONRY WAS STILL THERE, AND `tools/maps.mjs` SHOWS EXACTLY WHY
+ * ---------------------------------------------------------------------------
+ * The strake rewrite fixed the DIRECTION of the field and was still failed on the
+ * masonry read. Rendering the generated maps at 1:1 (docs/probes/hullmaps.png,
+ * before this pass) shows three mechanisms, none of which the previous pass touched
+ * because all three of them survive the move from BSP leaves to strakes:
+ *
+ * 1. ONE BUTT PER STRAKE PER TILE, AT A JITTERED PHASE, IS RUNNING BOND. That is the
+ *    textbook definition of the pattern, and it is what the generator was producing:
+ *    `nPlates = round(strakes / plateAspect)` came out as exactly 1 on both the calm
+ *    and the medium tier, so every strake carried exactly one vertical break, offset
+ *    from its neighbours. A brick wall. Real plating does not lay one butt per strake
+ *    per hundred metres on a regular offset - most of a strake is uninterrupted, and
+ *    the butts that exist are rare and irregular. `buttChance` now GATES each butt, so
+ *    on the calm tier four strakes in five have no visible break in the tile at all.
+ *
+ * 2. THE LIP WAS A 7 m SOFT BEVEL. `hullMaps.js` derives `lipM = seamM * 2.1`, and on
+ *    the calm tier seamM was 3.37 m, so the lip was 7.1 m - nineteen texels - and it
+ *    was drawn as a squared falloff, i.e. a smooth ramp up on one side of every seam
+ *    and a smooth ramp down on the other. That is a BEVEL. It is the same "bright rim
+ *    on two sides, dark rim on the other two" this file's own header identifies as
+ *    "the single loudest masonry cue available", reintroduced as a soft gradient
+ *    instead of a hard one. A plate lap on a real hull is the THICKNESS OF THE PLATE -
+ *    a few tens of centimetres - and it is a step, not a ramp. `lipM` is now clamped
+ *    hard (see `lipPx` below) and the falloff is linear over at most two texels.
+ *
+ * 3. PER-PLATE ROUGHNESS WAS A UNIFORM RANDOM CONSTANT PER RECTANGLE. `plate.rough`
+ *    was `(rng - 0.5) * 2` - the full ±1 - multiplied downstream by `variance * 0.55`,
+ *    which on the hull tier is a ±8.8 point roughness step at every plate boundary.
+ *    Albedo variance was correctly capped at ±4% by D41 and then the SAME defect was
+ *    left standing in the ORM map, where under a key it reads as a value step just
+ *    like albedo does. The maps sheet shows it plainly: the ORM panel is a field of
+ *    visibly different-toned rectangles while the albedo panel beside it is nearly
+ *    flat. Roughness variation is now mostly PER STRAKE (paint is applied a strake at
+ *    a time, and so is the wear that dulls it) with a small per-plate residue.
+ */
+
 export const PANEL_DEFAULTS = {
   size: 512,
   /**
@@ -127,6 +166,24 @@ export const PANEL_DEFAULTS = {
   strakes: 4,
   /** Plate length / strake height. Real hull plate runs long and narrow. */
   plateAspect: 2.6,
+  /**
+   * FRACTION OF PLATE BOUNDARIES THAT ARE ACTUALLY A VISIBLE BUTT JOINT.
+   *
+   * The single number that separates plating from running bond. At 1.0 every strake
+   * carries its break and the field is a brick wall; at 0.20 four strakes in five run
+   * unbroken across the tile and the eye reads long plate, which is what the calm
+   * reserve is FOR. hullMaps.js sets it per frequency tier - 0.20 calm, 0.62 medium,
+   * 1.0 dense machinery - so the tiers differ in whether they have butts at all,
+   * rather than only in how big they are.
+   */
+  buttChance: 0.62,
+  /**
+   * How much of the per-plate variation budget goes on the PLATE rather than on the
+   * STRAKE, for roughness. 0.25 means three quarters of it is a whole-strake shift.
+   * See mechanism 3 in the header: a uniform random constant per rectangle is a
+   * masonry cue whichever map it is written into.
+   */
+  roughPlateShare: 0.25,
   /**
    * Seam width, METRES — the flat dark floor of the groove, before the lip and the
    * chamfer either side. hullMaps.js sets this from the strake height so it scales
@@ -228,6 +285,10 @@ export function panelLayout(rng, opts = {}) {
      */
     const phase = sr.next();
 
+    // The strake's own roughness shift. This is the LOW-frequency three quarters of
+    // the budget: a strake is painted, weathered and rubbed as one piece.
+    const strakeRough = (sr.next() - 0.5) * 2;
+
     const plates = [];
     for (let p = 0; p < nPlates; p++) {
       const roll = sr.next();
@@ -239,6 +300,17 @@ export function panelLayout(rng, opts = {}) {
       const u1 = (uEdges[p + 1] + phase) % 1;
       const plate = {
         u0, u1, kind, step,
+        /**
+         * IS THE BUTT AT THE START OF THIS PLATE DRAWN AT ALL?
+         *
+         * A plate that steps proud or sunk ALWAYS shows its edge, because that edge
+         * is a real thickness rather than a joint - so `kind !== 'flat'` forces it.
+         * Everything else is gated by `buttChance`. Suppressing the line does not
+         * merge the two plates: they keep separate tones, so the boundary survives as
+         * a barely-there value change, which is what a dressed and painted-over butt
+         * actually looks like.
+         */
+        butt: step !== 0 || sr.next() < o.buttChance,
         /**
          * PLATE AND STRAKE TONE ARE ONE BUDGET, NOT TWO.
          *
@@ -253,7 +325,9 @@ export function panelLayout(rng, opts = {}) {
          * assumes, so +/-4% authored is +/-4% rendered.
          */
         tone: 1 + (sr.next() - 0.5) * 2 * o.toneSpread * 0.6,
-        rough: (sr.next() - 0.5) * 2,
+        // Mechanism 3 in the header: mostly the strake's shift, with a small residue
+        // per plate so the boundary is not perfectly invisible either.
+        rough: strakeRough * (1 - o.roughPlateShare) + (sr.next() - 0.5) * 2 * o.roughPlateShare,
         // Butt at the START of this plate: groove or weld bead.
         weld: sr.next() < o.weld,
       };
@@ -329,7 +403,18 @@ export function panelField(rng, opts = {}) {
    * number of texels on each.
    */
   const relief = (metres) => saturate01(metres / (tileM * 0.09));
-  const lipPx = Math.max(1.0, o.lipM * px);
+  /**
+   * THE LIP IS CLAMPED TO TWO TEXELS, AND THAT CLAMP IS THE ANTI-BEVEL RULE.
+   *
+   * `hullMaps.js` asks for `lipM = seamM * 2.1`, which on a big tier is metres of
+   * ramp - and metres of ramp on both sides of every seam is a bevel, whatever it is
+   * called in the caller. A plate lap is the thickness of the plate; nothing about it
+   * is a gradient. Two texels is the width at which a step is still antialiased
+   * rather than jagged, and it is the widest a step may be before it starts shading
+   * like a chamfer. The metre figure is kept as a FLOOR for the small tiers, where two
+   * texels really is a few tens of centimetres.
+   */
+  const lipPx = Math.min(2.0, Math.max(1.0, o.lipM * px));
   const grooveDepth = relief(o.grooveDepthM) * 0.5;
   const lipH = relief(o.lipHM) * 0.5;
   const seamReach = Math.max(halfGroove + lipPx, halfWeld) + 1;
@@ -424,6 +509,9 @@ export function panelField(rng, opts = {}) {
         const p = s.plates[i];
         const inside = p.u0 <= p.u1 ? (u >= p.u0 && u < p.u1) : (u >= p.u0 || u < p.u1);
         if (inside) plate = p;
+        // A suppressed butt is not a candidate for the nearest-seam test at all, so
+        // the plate to either side of it runs on unbroken. See `plate.butt`.
+        if (!p.butt) continue;
         const d = wrapDist(u, p.u0) * size;
         if (d < dButt) { dButt = d; buttWeld = p.weld; }
       }
@@ -475,17 +563,26 @@ export function panelField(rng, opts = {}) {
             h = H.flat - grooveDepth;
             e = Math.max(e, 1);
           } else {
+            /**
+             * LINEAR OVER AT MOST TWO TEXELS, NOT A SQUARED FALLOFF OVER NINETEEN.
+             *
+             * `t * t` over a `lipPx` measured in metres is a smooth ramp, i.e. a
+             * chamfer, i.e. the bevel this generator exists to have got rid of. `t`
+             * over two texels is an antialiased STEP: the lit lip and the dark floor
+             * are each one flat value with a hard boundary between them, which is
+             * what a lapped plate edge is and what survives a mip drop as a line
+             * rather than dissolving into a soft band.
+             */
             const t = saturate01(1 - (a - halfGroove) / lipPx);
-            const fall = t * t;
             if (dSeam > 0) {
               // Upper side: the plate above laps over, so its edge stands proud and
               // catches the key. This is the light half of the pair.
-              h = H.flat + lipH * fall;
-              e = Math.max(e, fall * 0.30);
+              h = H.flat + lipH * t;
+              e = Math.max(e, t * 0.30);
             } else {
-              // Lower side: chamfer back up out of the groove. The dark half.
-              h = H.flat - grooveDepth * fall;
-              e = Math.max(e, fall * 0.75);
+              // Lower side: the groove wall. One texel of ramp, then plate.
+              h = H.flat - grooveDepth * t;
+              e = Math.max(e, t * 0.75);
             }
           }
         }

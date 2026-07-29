@@ -235,20 +235,52 @@ registerModule({
  *
  * The hoppers moved off the drum onto their own stalks for the same reason: a lump
  * bolted to a lump is one lump.
+ *
+ * ---------------------------------------------------------------------------
+ * AND THEN THE OPENING-OUT WENT TOO FAR: THE MODULE CAME APART.
+ * ---------------------------------------------------------------------------
+ * `tools/silhouette.mjs` rasterises the fitted outline and counts 4-connected
+ * components, and on this module it counted FOUR. The hub, all six barrels, and
+ * both hoppers were floating clear of the ship with nothing touching them:
+ *
+ *   - the trunnion arms SPLAYED outboard (dz = +-0.28 per unit of reach) from
+ *     roots at z +-44, so they finished at z +-78 while the hub they were meant to
+ *     carry ended at z +-30. Forty-eight metres of clear sky at the joint.
+ *   - the barrels were struck from x = -168; the hub's outboard face is at -158.
+ *   - each hopper stalk was a fixed 74 m long aimed at a box 129-154 m away, so
+ *     both stopped roughly fifty metres short of the thing they were holding up.
+ *
+ * None of the existing audits could see it. `modules/audit.mjs` bins the outline
+ * along z and records a top/bottom envelope per bin, and a detached part lands in
+ * the same bin as the hull and simply widens that bin's range - it scores as MORE
+ * silhouette. `probes/cruiser.js#floatingParts` runs a union-find over PART bounding
+ * boxes, and every one of these pieces is merged into a per-surface mesh whose box
+ * spans the whole module. It took rasterising the black shape a reviewer actually
+ * looks at.
+ *
+ * The rule this now holds itself to, and the reason the two stalk lengths below are
+ * COMPUTED rather than typed: a strut's length is the distance to the thing it
+ * carries, minus a bite into it. A number typed by hand is a number that stops
+ * being right the first time either end moves.
  */
 function buildFlakCluster(ctx) {
   const b = new ModuleBuilder(ctx, 'derelict');
   const D = b.detail, full = b.full;
 
-  b.graft([0, -4, 0], [-HALF_PI, 0, 0], 34);
+  // The torn baseplate, 46 m rather than 34: it has to be wide enough in z for the
+  // trunnion roots to sit ON it, which is what the 34 m plate was not.
+  b.graft([0, -4, 0], [-HALF_PI, 0, 0], 46);
 
-  // TWO TRUNNION ARMS, not a casemate. The gap between them is the first hole.
+  // TWO TRUNNION ARMS, not a casemate. The gap between them is the first hole, and
+  // they CONVERGE - 88 m apart at the plate, 39 m apart where they take the hub.
+  // Splayed arms and a narrow hub is the geometry of a thing that has fallen off.
   for (const s of [-1, 1]) {
     b.add('hull', aimed(G.hexStrut({ length: 132, radius: 17, radiusEnd: 13, axis: 'z', detail: D }),
-      [-1, 0.34, s * 0.28], [-14, 6, s * 44]));
+      [-1, 0.34, -s * 0.20], [-16, 4, s * 44]));
   }
 
-  // The hub: small, canted, and hung out in space on the arms.
+  // The hub: small, canted, and hung out in space on the arms. `pipeRun` runs from
+  // its origin along +X, so this spans x -158..-96 and the arms land at -139.
   b.add('hull', G.pipeRun({ length: 62, radius: 30, sides: 6, axis: 'x', flanges: 0, detail: D }),
     { pos: [-158, 52, 0], rot: [0, 0, 0.26] });
 
@@ -262,16 +294,26 @@ function buildFlakCluster(ctx) {
     ]
     : [[-1.02, -0.30, 232], [0.00, 0.24, 200], [1.05, -0.10, 216]];
   for (const [yaw, pitch, len] of guns) {
-    // Outboard (-X) swung by `yaw` in the horizontal and lifted by `pitch`.
+    // Outboard (-X) swung by `yaw` in the horizontal and lifted by `pitch`. Struck
+    // from INSIDE the hub barrel (x -150, against its -158..-96 run) rather than
+    // ten metres off its outboard face.
     b.add('greeble', aimed(barrel({ length: len, radius: 9, brake: false, detail: D }),
-      [-Math.cos(yaw), pitch, Math.sin(yaw)], [-168, 52, 0]));
+      [-Math.cos(yaw), pitch, Math.sin(yaw)], [-150, 52, 0]));
   }
 
-  // Two hoppers, on their OWN stalks, well clear of the hub and of each other.
-  const hoppers = [{ x: -76, y: 96, z: -122, w: 62 }, { x: -60, y: -34, z: 116, w: 42 }];
+  // Two hoppers, on their OWN stalks, well clear of the hub and of each other. Each
+  // stalk is struck from a root ON THE BASEPLATE and cut to the measured distance
+  // to its box, less a bite of a third of the box, so the joint is buried at both
+  // ends. Neither figure is authored; both follow whatever the box does.
+  const hoppers = [
+    { x: -76, y: 96, z: -122, w: 62, root: [-26, 2, -18] },
+    { x: -60, y: -34, z: 116, w: 42, root: [-24, 0, 16] },
+  ];
   for (const h of hoppers) {
-    b.add('greeble', aimed(G.hexStrut({ length: 74, radius: 9, axis: 'z', detail: D }),
-      [h.x < -68 ? -0.8 : -0.6, h.y > 0 ? 1 : -1, h.z < 0 ? -0.9 : 0.9], [-30, 14, 0]));
+    const d = [h.x - h.root[0], h.y - h.root[1], h.z - h.root[2]];
+    b.add('greeble', aimed(G.hexStrut({
+      length: Math.hypot(d[0], d[1], d[2]) - h.w * 0.34, radius: 9, axis: 'z', detail: D,
+    }), d, h.root));
     b.add('plating', G.panelledSlab({
       width: h.w, height: h.w * 0.86, depth: h.w * 0.94, chamfer: h.w * 0.16, detail: D,
     }), { pos: [h.x, h.y, h.z] });

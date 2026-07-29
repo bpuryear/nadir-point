@@ -156,6 +156,17 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
       // tier and wear, so a big hull can be built from 2-3 tiles that read as one
       // material. Each distinct seed is a real extra bake - use 2 or 3, not 20.
       o.seed = Math.max(0, Math.round(o.seed ?? 0));
+      /**
+       * PLATE SCALE TRACKS SURFACE SIZE — the characteristic size, in metres, of the
+       * thing this material is going on. See textures/hullMaps.js#resolveTile.
+       *
+       * Quantised to 25 m so it cannot fragment the material cache: a 380 m armour
+       * face and a 400 m one must return the IDENTICAL material or they are two draw
+       * calls, and the draw budget is the tightest constraint in the project. Absent
+       * or zero means "not stated" and the tier's own tile is used unchanged, which
+       * is every caller today.
+       */
+      o.surfaceM = Math.max(0, quantize(o.surfaceM ?? 0, 25));
       // Part of the cache key: a hull with the macro layer and one without are two
       // different materials and must not share an instance.
       o.macro = o.macro !== false;
@@ -225,7 +236,7 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
   function hullMapsFor(o, variant, cached = true) {
     const args = {
       faction: o.faction, variant, wear: o.wear, tier: o.tier,
-      size: o.size, scale: o.scale, seed: o.seed ?? 0,
+      size: o.size, scale: o.scale, seed: o.seed ?? 0, surfaceM: o.surfaceM ?? 0,
       /**
        * TILING STENCILS ARE OFF, AND THIS IS THE POINT OF THE MACRO LAYER.
        *
@@ -291,6 +302,12 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
        */
       inkColor: pal.marking.ink,
       hazardColor: pal.marking.hazardA,
+      /**
+       * THE THIRD FAMILY. `hazardA` is ACCESS AND MAINTENANCE (orange, identical on
+       * every faction because it names a function) and `sensor` is SENSORS (bone
+       * white). See hullShader.js#nadirMark and the semantic-rule note in palette.js.
+       */
+      sensorColor: pal.marking.sensor,
       sootColor: pal.burn,
       drift: HULL_MACRO_DEFAULTS.drift * spec.macro,
       roughDrift: HULL_MACRO_DEFAULTS.roughDrift * spec.macro,

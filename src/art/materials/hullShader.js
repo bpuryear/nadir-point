@@ -86,7 +86,7 @@ import { MACRO_DEFAULT_M, MACRO_RELIEF_M } from '../textures/macro.js';
  */
 
 /** Bumped when the GLSL below changes, so a stale program cache cannot survive it. */
-const PATCH_VERSION = 'nadir/hull-macro/4';
+const PATCH_VERSION = 'nadir/hull-macro/5';
 
 const PARS_FRAGMENT = /* glsl */`
 varying vec3 vNadirObjPos;
@@ -103,27 +103,39 @@ uniform vec4 nadirWarp;
 uniform vec4 nadirRelief;
 uniform vec3 nadirInkColor;
 uniform vec3 nadirHazardColor;
+uniform vec3 nadirSensorColor;
 uniform vec3 nadirSootColor;
 
 /**
- * TWO MARK FAMILIES OUT OF ONE CHANNEL.
+ * THREE MARK FAMILIES OUT OF ONE CHANNEL, AND THE THIRD ONE IS THE SEMANTIC RULE.
  *
- * textures/macro.js draws §4(c) functional markings (hull numbers, sigils, repair
- * patch outlines) at value 0.42 and §4(a)/(b) accent — edge stripes and hazard
- * zones - at 1.0. Result .x is how much mark is here, .y is which family. Splitting
- * them matters because a stencilled registry number is paint and a hazard band is a
- * warning, and painting a hull number in safety amber is exactly the "model kit"
- * read §4 is about.
+ * closest-comparables.md records Falling Frontier's convention and this pass adopts
+ * it: the colour of a mark encodes what the thing under it IS, applied consistently
+ * enough that function is legible before you read a label.
  *
- * The classification is a smoothstep rather than a step so a filtered texel does not
- * flicker between families. The cost of doing it this way, stated: across the outer
- * edge of a hazard patch the filtered value passes through the ink band for well
- * under one texel, so a hazard patch carries a sub-4 m lighter edging. Real hazard
- * placards have exactly that border; a second texture fetch to avoid it would not
- * have been worth a whole sampler.
+ *   value 0.42  INK      registry lettering, sigils, repair-patch outlines. Paint.
+ *   value 0.72  SENSOR   arrays, apertures, mast heads, the bridge band. Bone white.
+ *   value 1.00  HAZARD   ACCESS AND MAINTENANCE. Hatches, bays, tubes, mount pads,
+ *                        drive wells - anything that opens, moves or is serviced.
+ *                        Orange, and the SAME orange on every faction, because it
+ *                        describes a function rather than a nationality.
+ *
+ * Returned as (amount, sensorWeight, hazardWeight) so the caller can mix three ways
+ * from one fetch. The bands are smoothsteps rather than steps so a filtered texel
+ * cannot flicker between families.
+ *
+ * STATED COST, because it is visible and it is the price of not adding a sampler:
+ * bilinear filtering across the outer edge of a HAZARD patch runs 1.0 -> 0.0 and
+ * therefore passes through the sensor band on its way out, so an access marking
+ * carries a sub-4 m bone-white edging. Real hazard placards have exactly that white
+ * border. The previous two-family version had the same artefact in the ink colour,
+ * where it was less defensible.
  */
-vec2 nadirMark(float a) {
-  return vec2(smoothstep(0.10, 0.30, a), smoothstep(0.50, 0.86, a));
+vec3 nadirMark(float a) {
+  float amount = smoothstep(0.10, 0.30, a);
+  float haz = smoothstep(0.84, 0.94, a);
+  float sen = smoothstep(0.55, 0.66, a) * (1.0 - haz);
+  return vec3(amount, sen, haz);
 }
 
 float nadirHash(vec2 p) {
@@ -245,9 +257,11 @@ const MAP_FRAGMENT = /* glsl */`
 	// Soot, then marks. Marks go last because a hazard band that has been sooted
 	// over is a hazard band nobody can see.
 	diffuseColor.rgb = mix( diffuseColor.rgb, nadirSootColor, nadirMacroTexel.b * nadirMacro.z );
-	vec2 nadirMk = nadirMark( nadirMacroTexel.a );
-	diffuseColor.rgb = mix( diffuseColor.rgb,
-		mix( nadirInkColor, nadirHazardColor, nadirMk.y ), nadirMk.x * nadirMacro.w );
+	vec3 nadirMk = nadirMark( nadirMacroTexel.a );
+	// ink -> sensor -> hazard, in that order, so the strongest family wins the pixel.
+	vec3 nadirMarkColor = mix( mix( nadirInkColor, nadirSensorColor, nadirMk.y ),
+		nadirHazardColor, nadirMk.z );
+	diffuseColor.rgb = mix( diffuseColor.rgb, nadirMarkColor, nadirMk.x * nadirMacro.w );
 `;
 
 const ROUGHNESSMAP_FRAGMENT = /* glsl */`
@@ -399,8 +413,9 @@ export function applyHullMacro(material, p = {}) {
         o.slopeClamp,
       ),
     },
-    nadirInkColor: { value: new THREE.Color().setHex(o.inkColor ?? 0xc9ccd0, THREE.SRGBColorSpace) },
-    nadirHazardColor: { value: new THREE.Color().setHex(o.hazardColor ?? 0xbfa53a, THREE.SRGBColorSpace) },
+    nadirInkColor: { value: new THREE.Color().setHex(o.inkColor ?? 0xd0cabd, THREE.SRGBColorSpace) },
+    nadirHazardColor: { value: new THREE.Color().setHex(o.hazardColor ?? 0xbe6a22, THREE.SRGBColorSpace) },
+    nadirSensorColor: { value: new THREE.Color().setHex(o.sensorColor ?? 0xe9e3d6, THREE.SRGBColorSpace) },
     nadirSootColor: { value: new THREE.Color().setHex(o.sootColor ?? 0x151517, THREE.SRGBColorSpace) },
   };
 

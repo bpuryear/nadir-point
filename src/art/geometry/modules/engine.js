@@ -89,8 +89,16 @@ function buildThrusterUpgrade(ctx) {
     { x: -298, y: -188, r: 34, len: 58 },
   ];
   for (const p of pods) {
-    b.add('hull', G.panelledSlab({ width: p.r * 2.1, height: p.r * 1.8, depth: 66, detail: D }),
-      { pos: [p.x, p.y, -150] });
+    // THE BRACKET REACHES THE SPAR, whatever depth the bell is slung at. It used to
+    // be a fixed p.r * 1.8 tall box centred on the bell, which works for the two
+    // inboard pods and leaves the outboard one - the smallest bell at the deepest
+    // hang - floating 26 m below the beam it is bolted to. `tools/silhouette.mjs`
+    // found it as a 73 m detached block in the fitted carrier build's bow view.
+    // Derived from the spar's own underside so it cannot drift again.
+    const top = -128;                                   // 3 m inside the spar
+    const h = Math.max(p.r * 1.8, top - (p.y - p.r * 0.9));
+    b.add('hull', G.panelledSlab({ width: p.r * 2.1, height: h, depth: 66, detail: D }),
+      { pos: [p.x, top - h * 0.5, -150] });
     b.add('greeble', G.thrusterBell({
       throat: p.r * 0.62, mouth: p.r, length: p.len, sides: 6, collar: false, inner: false, detail: D,
     }), { pos: [p.x, p.y, -182] });

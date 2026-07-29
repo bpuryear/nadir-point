@@ -223,7 +223,60 @@ const SHIP = {
   mounts: { dorsalZ: 270, bowZ: 470, engineZ: -624 },
   ribsZ: -400,           // port flank, skin missing
   patchZ: -180,          // port flank, captured armour plate at 7 degrees
+  /**
+   * SENSOR STATIONS — where the WHITE family goes, and only there.
+   * `bridgeZ` is the superstructure (the same station STRUCTURE region 0 already
+   * calls "the superstructure footing"); `arrayZ` is the foredeck array; `mastX` is
+   * how far outboard the flank apertures sit on the superstructure.
+   */
+  sensor: { bridgeZ: -130, arrayZ: 380, mastY: 96, apertureY: 40 },
 };
+
+/**
+ * ---------------------------------------------------------------------------
+ * THE MARK SET IS DRAWN AT THREE HULL SCALES, BECAUSE ONE ATLAS SERVES A FLEET
+ * ---------------------------------------------------------------------------
+ * Recorded as a stated limitation by the previous pass and raised again by review:
+ * "one atlas serving a whole faction currently anchors its marks to the PLAYER
+ * CRUISER's feature stations, so a 480 m destroyer picks up bay-rail stripes where
+ * its own structure is something else."
+ *
+ * The mechanism behind that is not fixable by moving marks around. A region maps
+ * ±800 m of OBJECT SPACE to 0..1, `macroM` is a per-MATERIAL uniform, and
+ * `ships/common.js#SURFACES` gives a whole faction ONE hull material - so every hull
+ * of that faction, from a 95 m interceptor to a 900 m carrier, samples the same atlas
+ * at the same metres-per-texel. Giving each class its own scale means giving each
+ * class its own material, which is a draw call per class per surface against a budget
+ * that is already 499 against a committed 320.
+ *
+ * What CAN be done, and is done here: make the mark set SELF-SIMILAR. The same small
+ * structural vocabulary - a chine edge stripe, an access hazard, a sensor aperture -
+ * is drawn three times at three scales of the same anchor table, so the annulus a
+ * 480 m hull actually reaches carries marks sized and placed for a 480 m hull, and
+ * the annulus a 200 m corvette reaches carries marks sized for a corvette.
+ *
+ *   scale 1.00   reaches ±700 m   the player cruiser and the 900 m carrier
+ *   scale 0.34   reaches ±240 m   destroyers and frigates (the 480 m class)
+ *   scale 0.14   reaches ±100 m   corvettes and escorts (the ~200 m class)
+ *
+ * The scale factor multiplies BOTH region axes, so a chine that sits at y = 68 m on
+ * the cruiser sits at y = 23 m on the destroyer set - which is roughly where a 480 m
+ * hull's deck chine actually is. That is the whole reason a uniform scale is the
+ * right transform here rather than a squeeze.
+ *
+ * The smaller sets are deliberately MINIMAL - one stripe, one hazard, one aperture -
+ * both because §3 wants less detail rather than more and because those marks are
+ * additionally visible on the big hull, near midships, where they read as extra
+ * marking density on the superstructure rather than as a second ship's worth of
+ * stencilling.
+ *
+ * STATED LIMITATION, in full: this does not make the marks CORRECT for a given class,
+ * it makes them PLAUSIBLE at that class's size. A destroyer whose real chine is at
+ * y = 18 m still gets a stripe at y = 23 m. Getting it right needs a per-class anchor
+ * table and a per-class atlas, which needs either the draw budget to pay for it or a
+ * texture array; both are named in the stream report.
+ */
+const MARK_SCALES = [1.0, 0.34, 0.14];
 
 /**
  * EVERY MARK BELOW IS SIZED IN METRES, and this is the only reason the sizes are
@@ -297,6 +350,7 @@ function sootWash(ctx, size, cx, cy, r, strength) {
  * hazard markings have, and it is cheaper than a second texture fetch.
  */
 const INK_V = 0.42;
+const SENSOR_V = 0.72;
 const HAZ_V = 1.0;
 
 /**
@@ -524,13 +578,20 @@ function regionStructure(ctx, size, rng, { region }) {
  *
  * @param {CanvasRenderingContext2D} ctx  draws in mark VALUE, greyscale
  */
-function regionMarks(ctx, size, rng, { region, faction }) {
-  /** Ship metres on the region's first axis -> canvas x. See AXIS_FLIP. */
+function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
+  /**
+   * Ship metres on the region's first axis -> canvas x. See AXIS_FLIP.
+   * `scale` shrinks the whole anchor table onto a smaller hull class - see
+   * MARK_SCALES. At scale 1 these are identical to what they always were.
+   */
   const flip = AXIS_FLIP[region];
-  const X = (a) => (0.5 + (flip * a) / MACRO_DEFAULT_M) * size;
+  const X = (a) => (0.5 + (flip * a * scale) / MACRO_DEFAULT_M) * size;
   /** Ship metres on the second axis -> canvas y. three flips the texture. */
-  const Y = (b) => (1 - (0.5 + b / MACRO_DEFAULT_M)) * size;
+  const Y = (b) => (1 - (0.5 + (b * scale) / MACRO_DEFAULT_M)) * size;
   const V = (v) => `rgb(${Math.round(v * 255)},${Math.round(v * 255)},${Math.round(v * 255)})`;
+  /** Every size in metres shrinks with the anchor table, or a corvette wears a
+   *  cruiser's 8 m stripe on a 30 m flank. */
+  const ms = (metres) => m(metres * scale);
 
   /**
    * §4(a): a stripe running ALONG a real geometric edge, 2-4 m wide, 40-260 m long,
@@ -556,14 +617,79 @@ function regionMarks(ctx, size, rng, { region, faction }) {
   const edgeStripe = (a0, a1, b, widthM = 7.5) => {
     const x0 = X(Math.min(a0, a1)), x1 = X(Math.max(a0, a1));
     ctx.fillStyle = V(HAZ_V);
-    ctx.fillRect(x0, Y(b) - m(widthM) * 0.5, x1 - x0, Math.max(1, m(widthM)));
+    ctx.fillRect(x0, Y(b) - ms(widthM) * 0.5, x1 - x0, Math.max(1, ms(widthM)));
   };
 
   /** The same, running along the OTHER axis (a vertical edge in this projection). */
   const edgeStripeV = (a, b0, b1, widthM = 3.2) => {
     const y0 = Y(Math.max(b0, b1)), y1 = Y(Math.min(b0, b1));
     ctx.fillStyle = V(HAZ_V);
-    ctx.fillRect(X(a) - m(widthM) * 0.5, y0, Math.max(1, m(widthM)), y1 - y0);
+    ctx.fillRect(X(a) - ms(widthM) * 0.5, y0, Math.max(1, ms(widthM)), y1 - y0);
+  };
+
+  /**
+   * §4(b) AN ACCESS HATCH — the orange family's most common member and the reason
+   * the semantic rule pays for itself.
+   *
+   * Drawn as an OUTLINE with a hinge bar and two dogs, never a fill: a filled orange
+   * rectangle mid-face is the model-kit signature §4 exists to prevent, and a hatch
+   * is a rim and a mechanism, not a painted panel. At 14 x 10 m it is a personnel
+   * access big enough for a suited crew and a toolbox, and it is 4.7 x 3.3 px at the
+   * default 3200 m camera - a mark, not a smear.
+   */
+  const accessHatch = (a, b, wM = 14, hM = 10) => {
+    const w = ms(wM), h = ms(hM);
+    const x = X(a) - w * 0.5, y = Y(b) - h * 0.5;
+    ctx.save();
+    ctx.strokeStyle = V(HAZ_V);
+    ctx.lineWidth = Math.max(1, ms(2.4));
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = V(HAZ_V);
+    // Hinge down one short edge, two dogs down the other. This is the shape that
+    // says "this opens" at a glance, and it is what the colour is promising.
+    ctx.fillRect(x, y, Math.max(1, ms(2.0)), h);
+    for (const t of [0.3, 0.7]) {
+      ctx.fillRect(x + w - ms(3.0), y + h * t - ms(1.2), ms(3.0), Math.max(1, ms(2.4)));
+    }
+    ctx.restore();
+  };
+
+  /**
+   * §4 SENSORS ARE WHITE. An aperture ring with a cross-hair, in the bone family, so
+   * a sensor face is recognisable as a sensor face before any label is read. Kept to
+   * an OUTLINE for the same reason the hatch is: a filled white disc on a bone hull
+   * is a blown highlight, and an aperture is a hole with a rim.
+   */
+  const sensorAperture = (a, b, rM = 11) => {
+    const r = ms(rM);
+    ctx.save();
+    ctx.strokeStyle = V(SENSOR_V);
+    ctx.lineWidth = Math.max(1, ms(2.2));
+    ctx.beginPath();
+    ctx.arc(X(a), Y(b), Math.max(1.2, r), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(X(a) - r * 1.35, Y(b));
+    ctx.lineTo(X(a) + r * 1.35, Y(b));
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  /** §4 SENSORS ARE WHITE — a flat phased array, drawn as its own outline plus the
+   *  element rows inside it. The other half of the sensor vocabulary. */
+  const sensorArray = (a, b, wM = 34, hM = 16) => {
+    const w = ms(wM), h = ms(hM);
+    const x = X(a) - w * 0.5, y = Y(b) - h * 0.5;
+    ctx.save();
+    ctx.strokeStyle = V(SENSOR_V);
+    ctx.lineWidth = Math.max(1, ms(2.2));
+    ctx.strokeRect(x, y, w, h);
+    ctx.fillStyle = V(SENSOR_V);
+    const rows = 3;
+    for (let i = 0; i < rows; i++) {
+      ctx.fillRect(x + w * 0.10, y + h * (i + 0.7) / (rows + 0.6), w * 0.80, Math.max(1, ms(1.6)));
+    }
+    ctx.restore();
   };
 
   /**
@@ -573,8 +699,8 @@ function regionMarks(ctx, size, rng, { region, faction }) {
    * trade is a coarser bar that resolves over a finer one that does not.
    */
   const hazardAt = (a, b, wM, hM, pitchM = 16) => {
-    hazardStripes(ctx, X(a) - m(wM) * 0.5, Y(b) - m(hM) * 0.5, m(wM), m(hM), {
-      a: 0xffffff, b: 0x000000, period: Math.max(2, m(pitchM)), angle: Math.PI / 4,
+    hazardStripes(ctx, X(a) - ms(wM) * 0.5, Y(b) - ms(hM) * 0.5, ms(wM), ms(hM), {
+      a: 0xffffff, b: 0x000000, period: Math.max(2, ms(pitchM)), angle: Math.PI / 4,
     });
   };
 
@@ -597,7 +723,7 @@ function regionMarks(ctx, size, rng, { region, faction }) {
    */
   const codeAt = (a, b, heightM, text = null) => {
     const s = text ?? hullCode(rng, faction);
-    const cell = Math.max(1, m(heightM) / 7);
+    const cell = Math.max(1, ms(heightM) / 7);
     ctx.save();
     ctx.imageSmoothingEnabled = false;
     ctx.fillStyle = V(INK_V);
@@ -616,15 +742,15 @@ function regionMarks(ctx, size, rng, { region, faction }) {
     ctx.translate(X(a), Y(b));
     ctx.rotate(deg * Math.PI / 180);
     ctx.strokeStyle = V(INK_V);
-    ctx.lineWidth = Math.max(1, m(2.2));
-    ctx.strokeRect(-m(wM) * 0.5, -m(hM) * 0.5, m(wM), m(hM));
+    ctx.lineWidth = Math.max(1, ms(2.2));
+    ctx.strokeRect(-ms(wM) * 0.5, -ms(hM) * 0.5, ms(wM), ms(hM));
     // Fasteners along the two long edges: this is what "wired on" looks like.
     ctx.fillStyle = V(INK_V);
-    const step = m(9);
-    for (let x = -m(wM) * 0.5 + step * 0.5; x < m(wM) * 0.5; x += step) {
-      for (const y of [-m(hM) * 0.5, m(hM) * 0.5]) {
+    const step = ms(9);
+    for (let x = -ms(wM) * 0.5 + step * 0.5; x < ms(wM) * 0.5; x += step) {
+      for (const y of [-ms(hM) * 0.5, ms(hM) * 0.5]) {
         ctx.beginPath();
-        ctx.arc(x, y, Math.max(0.8, m(1.6)), 0, Math.PI * 2);
+        ctx.arc(x, y, Math.max(0.8, ms(1.6)), 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -636,9 +762,41 @@ function regionMarks(ctx, size, rng, { region, faction }) {
     ctx.fillStyle = V(INK_V);
     for (let i = 0; i < count; i++) {
       const a = aCentre + (i - (count - 1) * 0.5) * pitchM;
-      ctx.fillRect(X(a) - m(2.4), Y(Math.max(b0, b1)), m(4.8), Math.abs(Y(b1) - Y(b0)));
+      ctx.fillRect(X(a) - ms(2.4), Y(Math.max(b0, b1)), ms(4.8), Math.abs(Y(b1) - Y(b0)));
     }
   };
+
+  /**
+   * THE SMALLER HULL CLASSES GET A MINIMAL SET, NOT A COPY OF THE CRUISER'S.
+   *
+   * At scale < 1 this is everything that is drawn: one chine edge stripe, one access
+   * hatch and one sensor aperture per flank, and one hazard on the deck and belly.
+   * Three marks per face is the density §3 wants on a 480 m hull and it is all a
+   * self-similar set can honestly claim to place - the cruiser's bay rails, drive
+   * well and rib section are features a destroyer does not have and must not wear.
+   */
+  if (scale < 1) {
+    switch (region) {
+      case 0:
+        edgeStripe(-40, 260, SHIP.deckChine - 9, 8.0);
+        accessHatch(120, SHIP.deckChine - 40);
+        sensorAperture(SHIP.sensor.bridgeZ, SHIP.sensor.apertureY, 11);
+        break;
+      case 1:
+        edgeStripe(-330, -60, SHIP.keel + 10, 7.0);
+        accessHatch(-210, SHIP.keel + 40);
+        break;
+      case 2:
+        hazardAt(0, SHIP.mounts.dorsalZ, 40, 26, 13);
+        sensorArray(0, SHIP.sensor.bridgeZ, 34, 16);
+        break;
+      case 3:
+        accessHatch(0, -60, 20, 14);
+        break;
+      default: break;
+    }
+    return;
+  }
 
   switch (region) {
     // ---- 0: +X starboard flank, projection (z, y) --------------------------
@@ -661,6 +819,16 @@ function regionMarks(ctx, size, rng, { region, faction }) {
       // §4(b) the starboard grapple pivots — arms move. Note these are at DIFFERENT
       // z from the port ones (§5), so the two flanks are never mirror-matched.
       hazardAt(SHIP.grappleStbd[1], -58, 34, 20, 12);
+      /**
+       * ORANGE = ACCESS. Two hatches on the starboard flank, at the two places a
+       * hull has them: the superstructure footing and the machinery band aft. Both
+       * sit inside a STRUCTURE band declared above, so the mark is on the recess it
+       * describes rather than in the middle of an armour belt.
+       */
+      accessHatch(-140, 32);
+      accessHatch(-430, 4);
+      // WHITE = SENSORS. The bridge's flank aperture, on the superstructure.
+      sensorAperture(SHIP.sensor.bridgeZ + 46, SHIP.sensor.apertureY, 10);
       break;
 
     // ---- 1: -X port flank, projection (z, y) -------------------------------
@@ -675,6 +843,11 @@ function regionMarks(ctx, size, rng, { region, faction }) {
       patchOutline(SHIP.patchZ, 4, 86, 44, 7);
       // §5 identity: the ship is not finished and never will be.
       ribs(SHIP.ribsZ, -30, 40, 4, 22);
+      // ORANGE = ACCESS. The port radiator-root band is the hottest, most serviced
+      // part of this flank (STRUCTURE region 1 cuts a recess there), so it gets the
+      // pair; the second is at the bay rail, offset well clear of starboard's.
+      accessHatch(-534, 30);
+      accessHatch(10, -38);
       break;
 
     // ---- 2: +Y deck, projection (x, z) -------------------------------------
@@ -694,7 +867,22 @@ function regionMarks(ctx, size, rng, { region, faction }) {
        * which is INK_V. Setting ctx.fillStyle before the call does nothing - the
        * function overrides it.
        */
-      factionSigil(ctx, faction, X(0), Y(430), m(16), 0x6b6b6b);
+      factionSigil(ctx, faction, X(0), Y(430), ms(16), 0x6b6b6b);
+      /**
+       * WHITE = SENSORS, and the deck is where they live. The bridge-roof array and
+       * the foredeck array, plus one aperture between them. These are the only three
+       * white marks on the upper half of the ship, which is the point: a single
+       * consistent colour applied to a single consistent function is legible at a
+       * glance in a way that a mixed palette of decoration never is.
+       *
+       * `arrayZ` is 380 m, i.e. 320 m short of the stem, so §3's "no detail in the
+       * forward 200 m" is respected with 120 m to spare.
+       */
+      sensorArray(0, SHIP.sensor.bridgeZ, 40, 18);
+      sensorArray(34, SHIP.sensor.arrayZ, 30, 14);
+      sensorAperture(-30, SHIP.sensor.arrayZ - 90, 9);
+      // ORANGE = ACCESS. The engine-mount pad's service hatch, off the centreline.
+      accessHatch(48, SHIP.mounts.engineZ + 70, 16, 11);
       break;
 
     // ---- 3: -Y belly, projection (x, z) ------------------------------------
@@ -708,6 +896,10 @@ function regionMarks(ctx, size, rng, { region, faction }) {
       edgeStripe(-B.x, B.x, B.z1, 7.5);
       hazardAt(B.x - 26, B.z1 - 24, 34, 22, 12);
       hazardAt(-B.x + 26, B.z0 + 24, 34, 22, 12);
+      // ORANGE = ACCESS. Two keel hatches outboard of the bay, at different z so the
+      // belly is not mirror-matched either (§3).
+      accessHatch(-B.x - 40, -120, 16, 12);
+      accessHatch(B.x + 40, 40, 16, 12);
       break;
     }
 
@@ -871,7 +1063,14 @@ export function macroField(opts = {}) {
     inkCtx.clearRect(0, 0, R, R);
     inkCtx.fillStyle = '#000000';
     inkCtx.fillRect(0, 0, R, R);
-    if (o.marks) regionMarks(inkCtx, R, rr.fork('marks'), { region, faction: o.faction });
+    if (o.marks) {
+      // Largest first, so a smaller class's marks are drawn OVER the big set where
+      // the two annuli overlap near the region centre. The small set is the one that
+      // has to survive intact - it is the only marking a 480 m hull will ever see.
+      for (const scale of MARK_SCALES) {
+        regionMarks(inkCtx, R, rr.fork(`marks:${scale}`), { region, faction: o.faction, scale });
+      }
+    }
     const ink = canvasToField(inkCanvas, R);
 
     // --- pack ---------------------------------------------------------------

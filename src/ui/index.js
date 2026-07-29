@@ -686,7 +686,9 @@ export class UILayer {
     r.push({ id: 'stores', x: P.w - 214, y: 34, w: 206, h: 96 });
     r.push({ id: 'ship', x: 14, y: P.h - shipH - 14, w: shipW, h: shipH, hard: true });
     r.push({ id: 'power', x: P.w * 0.5 - 190, y: P.h - this.power.height - 30, w: 380, h: this.power.height + 26 });
-    r.push({ id: 'target', x: P.w - tgtW - 14, y: P.h - 372, w: tgtW, h: 360, hard: true });
+    const locked = !!(this.world.player?.target && !this.world.player.target.dead);
+    const tgtH = locked ? 360 : 48;
+    r.push({ id: 'target', x: P.w - tgtW - 14, y: P.h - tgtH - 12, w: tgtW, h: tgtH, hard: true });
     // The arc dial's column, above the player-state block. Reserved even when the
     // dial is collapsed: the collapsed form is a line of type and it needs a ground.
     r.push({ id: 'arc', x: 24, y: P.h - shipH - 118, w: 130, h: 106 });

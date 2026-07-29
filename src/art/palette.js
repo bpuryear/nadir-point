@@ -82,6 +82,84 @@
  * the belt colour raw is what turns a neutral gunmetal hull's shadow side into
  * saturated primary blue. `fill.color` stays the location's identity colour, which
  * is what the celestial shader and the ramp derive from; `broad` is only the light.
+ *
+ * ===========================================================================
+ * PASS 10: THE COLOUR IDENTITY IS WARM AMBER / BONE / NEAR-BLACK
+ * ===========================================================================
+ * look-target.md §1 gives Beta Decay the SURFACE AND IDENTITY half of the hybrid,
+ * and reference-ui-language.md §1 states it as severely as it can be stated: "the
+ * whole screen is black, amber, and bone. Our locked palette already has the right
+ * idea, but our frames carry neutral-grey hull, blue planet, warm-brown asteroids
+ * and cobalt accents - four temperatures. This reference carries one."
+ *
+ * Measured on the hull mask of `docs/review/surf-before/close.png`, the shipped
+ * frame's mean hull colour was RGB(0.556, 0.537, 0.498) - i.e. the hull was already
+ * being dragged warm by the cream key, while every ALBEDO in this file was authored
+ * COOL (player base 0x666d75 is hue 212 degrees, B > G > R). The hull's own material
+ * was fighting the location it lives in, and the two cancelled to grey.
+ *
+ * THE ROTATION IS LUMINANCE-PRESERVING, AND THAT IS THE WHOLE REASON IT IS SAFE.
+ *
+ * Every key intensity in the POI table below was solved against a specific LINEAR
+ * LUMINANCE - "albedo 0x666d75 is 0.133 linear, so a Lambertian face returns
+ * 0.133/PI * I" - and re-hueing an albedo without holding that number would silently
+ * invalidate six solved keys and hand the lighting stream a regression it did not
+ * cause. Each colour below was therefore rotated onto a warm chromaticity at CONSTANT
+ * linear luminance (0.2126 R + 0.7152 G + 0.0722 B, computed in linear space, held to
+ * within 1%):
+ *
+ *   player.base      0x666d75 -> 0x716c63   Y 0.1505 -> 0.1514
+ *   player.plating   0x565d66 -> 0x605c54   Y 0.1077 -> 0.1078
+ *   player.greeble   0xa4aab0 -> 0xada9a2   Y 0.3978 -> 0.3987
+ *   coalition.base   0x707c66 -> 0x7d786e   Y 0.1882 -> 0.1892
+ *
+ * So the frame's VALUE structure - which is what the key solve, the three-value read
+ * and the surface measurements are all about - is unchanged to within a fifth of a
+ * percent, and only its temperature moves. This is the identity half of the hybrid
+ * and it is deliberately NOT the grade half: the grade is the deferred lighting pass.
+ *
+ * THE THIRD VALUE IS NEAR-BLACK, AND IT WAS NOT NEAR ANYTHING.
+ *
+ * "Warm amber / bone / near-black" is three values, and `baseDark` - the recessed
+ * structure every faction hangs off `hullDark` - was authored at 0x3a3f47 (player),
+ * 0x495561 (concord), 0x373b31 (coalition): Y = 0.049, 0.088, 0.042. Those are MIDS.
+ * Carried through the rig they land near 0.42 sRGB, which is why blind review kept
+ * finding that "hulls read at a single value" - the palette had a light value and a
+ * slightly-less-light value and called the second one dark. Every `baseDark` is now
+ * a genuine near-black (Y 0.015-0.025) in the faction's own temperature. That gives
+ * the ALBEDO a three-value read that survives any lighting pass, rather than asking
+ * the key-to-fill ratio to supply one.
+ *
+ * SATURATED FILLS ARE GONE FROM THE FILL COLOURS AND MOVED INTO THE MARKS.
+ *
+ * ship-language.md §4 and the Falling Frontier note in closest-comparables.md both
+ * say the same thing: accent follows STRUCTURE - edges, hazard zones, functional
+ * markings, recesses - never an arbitrary whole face. Two colours in this file were
+ * being used as whole-face fills by the fleet surface tables (ships/common.js maps
+ * `trim` and `dark` straight onto merged meshes):
+ *
+ *   concord.trim     0x2f7fa8  saturated cobalt, ~1.9 stops of chroma
+ *   concord.baseDark 0x495561  saturated navy
+ *
+ * Both are now near-neutral slate. The accent they used to carry moves into
+ * `marking.hazardA`, which the macro layer draws only at edges, hatches and hazard
+ * zones and which `hullMaps.js#variantSpec('trim')` now draws only as a marked EDGE
+ * BAND on the trim surface rather than as its fill.
+ *
+ * ONE SEMANTIC RULE, ADOPTED FROM FALLING FRONTIER (closest-comparables.md):
+ *
+ *   marking.hazardA  ORANGE  = ACCESS AND MAINTENANCE. Hatches, bays, tubes, mount
+ *                             pads, drive wells, anything that opens, moves or is
+ *                             serviced. Applied identically on every faction,
+ *                             because it is a FUNCTION and not an identity.
+ *   marking.sensor   WHITE   = SENSORS. Arrays, masts, apertures, the bridge band.
+ *                             Bone rather than pure white, per §1 of the reference.
+ *   marking.ink      NEUTRAL = registry lettering, sigils, repair-patch outlines.
+ *
+ * Faction identity survives in hull VALUE, in `emissive`, and in `trim` - which is
+ * where look-target.md §1 puts it ("faction hue survives as the one identity
+ * exception"). Concord is still the palest faction in the game and still cool; what
+ * it no longer has is a cobalt panel.
  */
 
 import * as THREE from 'three';
@@ -107,14 +185,26 @@ export const FACTION_PALETTES = {
     blurb: 'Heavy industrial. Built to be repaired in the field by someone angry.',
 
     // --- albedo ---
-    base: 0x707c66,        // warm grey-green steel
-    baseAlt: 0x5d6a51,     // second plate tone, for panel-to-panel variance
-    baseDark: 0x373b31,    // recessed structure
-    plating: 0x828d74,     // secondary armour, slightly brighter
-    greeble: 0x9aa094,     // small mechanical detail - METAL, so a bright F0
+    /**
+     * Rotated off grey-green onto the warm axis at constant linear luminance (see
+     * the pass-10 note at the top of the file). Coalition is the faction the
+     * identity is easiest on: it was already the warm one, it just carried a GREEN
+     * cast (G > R) that put it a third temperature away from both the amber
+     * emissives it wears and the bone the rest of the game is moving to.
+     */
+    base: 0x7d786e,        // warm industrial steel
+    baseAlt: 0x6a655d,     // second plate tone, for panel-to-panel variance
+    /**
+     * NEAR-BLACK, and it used to be a mid. 0x373b31 is Y = 0.0416 linear, which the
+     * rig lands near 0.40 sRGB - i.e. the "dark" value was three quarters as bright
+     * as the hull and the ship read at one value. 0x2b2620 is Y = 0.0243.
+     */
+    baseDark: 0x2b2620,    // recessed structure - the near-black of the three
+    plating: 0x8f887e,     // secondary armour, slightly brighter
+    greeble: 0xa19c92,     // small mechanical detail - METAL, so a bright F0
     trim: 0xc4671b,        // the identity carrier: safety orange
     glass: 0x0a0e11,
-    burn: 0x171512,        // carbon scoring
+    burn: 0x120f0a,        // carbon scoring
     bare: 0xc6c0af,        // bare metal revealed by edge wear
 
     // --- emissive ---
@@ -174,7 +264,19 @@ export const FACTION_PALETTES = {
     wear: { edge: 0.80, streak: 0.86, grime: 0.58, pit: 0.18, oxide: 0x353120 },
 
     // --- markings ---
-    marking: { ink: 0xd9d3c3, inkDark: 0x161513, hazardA: 0xd6981c, hazardB: 0x191712 },
+    /**
+     * `hazardA` IS ACCESS ORANGE ON EVERY FACTION. It was 0xd6981c, a mustard that
+     * split the difference between a warning and a paint colour and matched nothing
+     * else in the frame. It now sits on the faction's own trim orange, so an access
+     * hatch on a Coalition hull and an access hatch on a Concord hull are the same
+     * colour - which is the whole point of a semantic rule.
+     * `sensor` is the second family: bone-white, for arrays and apertures.
+     */
+    marking: {
+      ink: 0xd9d3c3, inkDark: 0x161513,
+      hazardA: 0xc4671b, hazardB: 0x191712,
+      sensor: 0xe9e3d6,
+    },
   },
 
   concord: {
@@ -204,12 +306,37 @@ export const FACTION_PALETTES = {
      * metal's F0 makes it a black hole. That distinction is the whole first note in
      * this file.
      */
+    /**
+     * CONCORD IS THE FACTION-HUE EXCEPTION AND KEEPS ITS COOL PALE CERAMIC.
+     * look-target.md §1: "faction hue survives as the one identity exception".
+     * `base`, `baseAlt` and `plating` are unchanged - they are near-neutral pale
+     * already (chroma under 0.05) and they are the thing that separates this faction
+     * from Coalition at 5 km.
+     *
+     * WHAT CHANGED ARE THE TWO SATURATED FULL-FACE FILLS.
+     *
+     * `ships/common.js#SURFACES` maps the logical surfaces `dark` and `trim` onto
+     * `hullDark` and `trim` and applies them to whole merged meshes. So every square
+     * metre of Concord structure that geometry called "dark" was painted 0x495561 -
+     * a saturated navy - and every square metre it called "trim" was painted
+     * 0x2f7fa8, a saturated cobalt. That is EXACTLY the finding: "saturated
+     * navy/cobalt is applied as full-face fills on whole panels, which reads as a
+     * plastic model kit", and it is a palette bug, not a lighting one - D24 already
+     * cleared the fill light of it.
+     *
+     * Both are now near-neutral cool slate. Measured chroma ((max-min)/max in sRGB):
+     * trim 0.720 -> 0.098, baseDark 0.247 -> 0.182 - and baseDark's remaining chroma
+     * is carried at Y = 0.021 instead of Y = 0.088, i.e. it is a near-black with a
+     * cool cast rather than a mid navy, which is a different object entirely.
+     * Concord's identity moves to hull VALUE (still the palest faction in the game)
+     * and to its cyan emissives; its accent moves into the marks, where §4 puts it.
+     */
     base: 0x868c91,
     baseAlt: 0x7b8185,
-    baseDark: 0x495561,
+    baseDark: 0x24282c,
     plating: 0x8f969b,
     greeble: 0xbcc5cd,
-    trim: 0x2f7fa8,
+    trim: 0x6f767b,
     glass: 0x080d14,
     burn: 0x14161a,
     bare: 0xc2ccd4,
@@ -248,7 +375,24 @@ export const FACTION_PALETTES = {
 
     wear: { edge: 0.30, streak: 0.26, grime: 0.20, pit: 0.05, oxide: 0x2b3038 },
 
-    marking: { ink: 0x223442, inkDark: 0x0d1319, hazardA: 0x39a0c8, hazardB: 0x101820 },
+    /**
+     * ACCESS ORANGE, ON THE COOLEST FACTION IN THE GAME, ON PURPOSE.
+     *
+     * `hazardA` was 0x39a0c8 - Concord's own cyan - which meant a hatch on a Concord
+     * hull and a hatch on a Coalition hull were different colours and neither could
+     * be recognised as "a hatch" without reading the shape. The Falling Frontier rule
+     * in closest-comparables.md is that the mark colour encodes the FUNCTION, and a
+     * function does not change nationality: orange is access and maintenance
+     * everywhere. Concord keeps its identity in hull value, emissive and trim.
+     *
+     * Slightly cooler and lighter than Coalition's, because it is sprayed over pale
+     * ceramic rather than over industrial steel and a yard mixes to what it covers.
+     */
+    marking: {
+      ink: 0x223442, inkDark: 0x0d1319,
+      hazardA: 0xc4761f, hazardB: 0x101820,
+      sensor: 0xeef2f5,
+    },
   },
 
   derelict: {
@@ -258,7 +402,9 @@ export const FACTION_PALETTES = {
 
     base: 0x836b3c,
     baseAlt: 0x6b5730,
-    baseDark: 0x332c1e,
+    // Near-black, same correction as the other three: 0x332c1e was Y = 0.0294 and
+    // read as a mid brown against a 0.18 hull. 0x221c11 is Y = 0.0128.
+    baseDark: 0x221c11,
     plating: 0x917943,
     greeble: 0x9a8a5e,
     trim: 0x8f9a35,
@@ -303,7 +449,17 @@ export const FACTION_PALETTES = {
 
     wear: { edge: 0.62, streak: 0.58, grime: 0.86, pit: 0.85, oxide: 0x2f2a12 },
 
-    marking: { ink: 0x8a8f63, inkDark: 0x100e08, hazardA: 0x7f8a2c, hazardB: 0x14140c },
+    /**
+     * The derelict is the one faction the ACCESS rule does not apply to, and that is
+     * the point: whatever the marks on an ancient hull mean, they do not mean "a
+     * person opens this here". Its `hazardA` stays the sickly gold it always was, so
+     * finding a derelict still reads as finding something that was not built for you.
+     */
+    marking: {
+      ink: 0x8a8f63, inkDark: 0x100e08,
+      hazardA: 0x7f8a2c, hazardB: 0x14140c,
+      sensor: 0xc8cfa0,
+    },
   },
 
   player: {
@@ -334,19 +490,51 @@ export const FACTION_PALETTES = {
      * difference that dies with the first mip. Measured through the rig's ACES at
      * key 11.5 a fully lit face reads: hull 0.71, plating 0.63, hullDark 0.42.
      */
-    base: 0x666d75,
-    baseAlt: 0x585f67,
-    baseDark: 0x3a3f47,
-    plating: 0x565d66,
-    greeble: 0xa4aab0,
-    trim: 0xa8a294,        // bone, not a hue. Reads as "unfactioned".
+    /**
+     * WARM BONE, NOT COOL GUNMETAL, AND THE VALUES ARE THE SAME VALUES.
+     *
+     * Every hex below is the old hex rotated onto the warm axis at constant linear
+     * luminance - the figures are in the pass-10 note at the top of the file. The
+     * three-value relationship this block's own comment describes is preserved
+     * exactly: `plating` still sits a genuine half-stop BELOW `hull` so the belt /
+     * spine split is a value split that survives to LOD2.
+     *
+     * The reason it had to move: look-target.md gives Beta Decay the identity half of
+     * the hybrid and reference-ui-language.md §1 measures that identity as "black,
+     * amber and bone, with essentially no third hue anywhere in frame". A hull
+     * authored at hue 212 degrees under a cream key (0xfff0d8) is two temperatures
+     * fighting, and they cancelled: the shipped frame measured a hull mask at
+     * RGB(0.556, 0.537, 0.498) - dead neutral - on a ship the palette described as
+     * gunmetal and the target describes as bone. Now the albedo and the key agree and
+     * the frame has ONE temperature, which is the single most transferable thing the
+     * reference has.
+     *
+     * `baseDark` is the near-black of "amber / bone / near-black" and it was not near
+     * black: 0x3a3f47 is Y = 0.0491, three quarters of the hull's own 0.0666 once you
+     * account for the ACES toe. 0x2b2722 is Y = 0.0217 - a genuine third value that
+     * exists in the ALBEDO and therefore survives whatever the deferred lighting pass
+     * decides to do.
+     */
+    base: 0x716c63,
+    baseAlt: 0x625e56,
+    baseDark: 0x2b2722,
+    plating: 0x605c54,
+    greeble: 0xada9a2,
+    trim: 0xa8a08f,        // bone, not a hue. Reads as "unfactioned".
     glass: 0x090c10,
-    burn: 0x151517,
-    bare: 0xc3c9ce,
+    burn: 0x14110d,
+    bare: 0xcdc7bf,
 
-    emissive: 0xd9e6ee,    // cool neutral white
-    emissiveHot: 0xf4fbff,
-    engine: 0xa9d4ee,
+    /**
+     * The running lights and the drive were the last two cool things on the player
+     * ship, and running lights are the game's ruler - the one element that repeats
+     * every 40 m in every frame. A cool-white ruler on a bone hull under a cream key
+     * is the fourth temperature the reference says must not exist. Bone-white lamps
+     * and a warm drive; the HOT core stays near-white because a hot thing is white.
+     */
+    emissive: 0xe6ded0,    // bone-white
+    emissiveHot: 0xfdf8ee,
+    engine: 0xf0c898,
     warn: 0xff4a2a,
 
     // Half-stripped gunmetal: more bare metal showing than either faction, because
@@ -403,7 +591,17 @@ export const FACTION_PALETTES = {
 
     wear: { edge: 0.55, streak: 0.62, grime: 0.40, pit: 0.12, oxide: 0x2b2a24 },
 
-    marking: { ink: 0xc9ccd0, inkDark: 0x131417, hazardA: 0xbfa53a, hazardB: 0x16171a },
+    /**
+     * `hazardA` was 0xbfa53a - a mustard yellow that is neither the amber the
+     * identity asks for nor a colour any yard has ever mixed. ACCESS ORANGE, same as
+     * every other faction, because the mark encodes the function. `ink` goes bone so
+     * a stencilled registry number is paint on this ship rather than a cool decal.
+     */
+    marking: {
+      ink: 0xd0cabd, inkDark: 0x131417,
+      hazardA: 0xbe6a22, hazardB: 0x16171a,
+      sensor: 0xe9e3d6,
+    },
   },
 };
 
@@ -767,7 +965,7 @@ export const NEUTRAL = {
 const COLOR_KEYS = new Set([
   'base', 'baseAlt', 'baseDark', 'plating', 'greeble', 'trim', 'glass', 'burn', 'bare',
   'emissive', 'emissiveHot', 'engine', 'warn', 'oxide',
-  'ink', 'inkDark', 'hazardA', 'hazardB',
+  'ink', 'inkDark', 'hazardA', 'hazardB', 'sensor',
   'color', 'shadow', 'accent',
   'zenith', 'horizon', 'ground', 'sun',
   'lift', 'gain',

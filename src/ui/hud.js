@@ -518,21 +518,29 @@ export class HUD {
 
     const w = this.targetPanelW;
     const px = P.w - w - 14;
-    const py = P.h - 372;
     const x = px + 12;
     const iw = w - 24;
 
+    // With no lock the block is a two-line prompt, not a 360 px empty plate. A large
+    // black rectangle with one word in it reads as a panel that has failed to load,
+    // and it was leaving a full-width rule drawn across empty space with nothing
+    // attached to it.
+    if (!target) {
+      const py0 = P.h - 62;
+      P.plate(px, py0, w, 48, { border: C.rule });
+      P.label('TARGET', x, py0 + 16, { color: C.inkFaint });
+      P.hline(x, py0 + 20, iw, C.rule);
+      P.struck('NO LOCK', x, py0 + 36, { font: F.small, color: C.inkFaint });
+      P.text('RIGHT-CLICK A CONTACT TO ENGAGE', x + 90, py0 + 36,
+        { font: F.micro, color: C.inkDim, track: TRACK.label });
+      return;
+    }
+
+    const py = P.h - 372;
     P.plate(px, py, w, 360, { border: C.rule });
     let y = py + 16;
     P.label('TARGET', x, y, { color: C.inkFaint });
     P.hline(x, y + 4, iw, C.rule);
-
-    if (!target) {
-      P.struck('NO LOCK', x, y + 22, { font: F.small, color: C.inkFaint });
-      P.text('RIGHT-CLICK A CONTACT TO ENGAGE', x, y + 38,
-        { font: F.micro, color: C.inkDim, track: TRACK.label });
-      return;
-    }
 
     const fi = factionInk(target.faction);
     y += 22;

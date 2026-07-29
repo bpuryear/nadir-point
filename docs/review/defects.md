@@ -788,6 +788,74 @@ shrugged at. Proposed change, three characters: `startServer({ port })` becomes
 
 ---
 
+## Pass 10 — silhouette coherence
+
+### D49 · Six modules had parts that touched nothing — `tools/silhouette.mjs` · FIXED
+Found by rasterising the outline a reviewer actually judges and counting 4-connected
+components, which is a thing no audit in this tree did. The list, with the world-space
+extent of each detached piece as the tool prints it:
+
+| module | view | detached | what it was |
+|---|---|---|---|
+| `ventral_hangar_deck` | side | 215 m | the landing platform, hung at y −432 with a 46 m section, so its top edge was −409 against a hangar block whose bottom is −368 |
+| `port_flak_cluster` | top | 167 m + two 40 m | the hub, all six barrels and both hoppers |
+| `ventral_drone_bay` | side | 45 m | a coolant conduit struck from above the neck and outboard of the collar |
+| `bow_breaching_prow` | top | two 34 m | the two outboard teeth, set at the ram's 40 m-wide tip at x −38 and +40 |
+| `engine_thruster_upgrade` | bow | 73 m | the outboard drive pod, 26 m below the spar it hangs from |
+| `ventral_repair_bay` | bow | 274 m | the entire 940 m dock cage |
+
+**The flak cluster is the instructive one.** Its trunnion arms *splayed* outboard at
+dz = ±0.28 per unit of reach from roots at z ±44, so they finished at z ±78 while the hub
+they carry ends at z ±30 — 48 m of clear sky at the joint — the barrels were struck from
+x −168 against a hub whose outboard face is −158, and each hopper stalk was a hand-typed
+74 m aimed at a box 129–154 m away. Four separate pieces of one module, all floating.
+
+**Why nothing caught it.** `modules/audit.mjs` and `ships/audit.mjs` bin the outline
+along z and record a top/bottom envelope per bin; a detached part lands in the same bin
+as the hull and *widens* that bin's range, so it scores as MORE silhouette, not as a
+defect. `probes/cruiser.js#floatingParts` runs a union-find over part bounding boxes, and
+every one of these pieces is merged into a per-surface mesh whose box spans the whole
+module. Both tools were measuring something real and neither could see this.
+
+Fixed structurally, not by nudging: the arms converge instead of splaying, the barrels
+are struck inside the hub, both stalk lengths are **computed** from the distance to the
+box they carry, the repair bay grew three centreline king posts and legs that run spine
+→ beam → rail rather than stopping at the beam, and the engine bracket's height is
+derived from the spar's underside. Two figures are still typed by hand where the shape
+demanded it; everything else follows its neighbour.
+
+Draw calls unchanged — every added part went into a surface bucket its module already
+had, so the per-material merge count is identical. `ventral_repair_bay` went 366 → 402
+tris and was brought back to 386 by uncapping two arm struts that are buried at both
+ends; the library's worst is 398/400 as before.
+
+### D50 · The bow-on view is degenerate for anything axial — ACCEPTED, with the reason
+`tools/silhouette.mjs` still reports two fragments in the bow view that it deliberately
+does not fail on: a 24 m sliver at each cargo pod and a 31 m one at the starboard cannon
+bank. `pipeRun` builds its flanges as `capFront: false, capBack: false` walls — correct,
+because a flange is normally seen against the tube it rings — so viewed at *exactly* zero
+degrees off its own axis a flange projects to a hexagonal outline floating 30 m clear of
+the pod body, and the component counter is right to call that two pieces. One degree off
+axis it is one piece, and no camera in the game sits at exactly zero.
+
+Side and top gate the exit code; the bow figures stay printed and are read by a person,
+because a large one still means something — it is how the carrier build's outboard engine
+pod was found. Recorded rather than suppressed so the next person does not rediscover it.
+
+### D51 · LOD coherence was never measured — now it is, and it passes
+D9 closed "the cruiser read as three different ship classes across its three LODs" by
+authoring every level inward from LOD0 and writing that down as a rule in the file
+header. A rule in a header is not a measurement. `tools/silhouette.mjs` now takes the IoU
+of each level's side mask against LOD0's, rasterised in **LOD0's own window** so a level
+that shrinks is penalised rather than rescaled into agreement.
+
+Fourteen subjects, floor 0.72. Worst LOD1 is `concord_escort` at 0.900; worst LOD2 is the
+bare cruiser at **0.764**, which is the tightest margin in the set and the number to watch
+— it is the 150-triangle proxy at the one distance where silhouette is the only
+information available. Everything else sits at 0.795–0.982.
+
+---
+
 ## Deferred / accepted
 
 ### A1 · Frame rate is unverified — ACCEPTED (environmental)

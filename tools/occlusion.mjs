@@ -35,6 +35,13 @@ const shotsPath = path.join(ROOT, 'tools/shots.json');
 const all = JSON.parse(await fs.readFile(shotsPath, 'utf8'));
 const want = String(arg('shots', 'three-quarter,close,engagement')).split(',').map((s) => s.trim());
 const maxHull = Number(arg('max', 25));
+/**
+ * The centre gate is the one that matters most and it is the one the review
+ * measured: "strictly-thresholded HUD coverage is 15.5 % of the frame but 36.3 % of
+ * the central half - the chrome is concentrated exactly where the subject is".
+ * A HUD can be large and still be good if it stays out of the middle.
+ */
+const maxCentre = Number(arg('maxCentre', 20));
 const width = Number(arg('width', 1280));
 const height = Number(arg('height', 720));
 
@@ -130,13 +137,16 @@ try {
       };
     });
 
-    const bad = res.hullCovered > maxHull;
+    const overHull = res.hullCovered > maxHull;
+    const overCentre = res.centreCovered > maxCentre;
+    const bad = overHull || overCentre;
     if (bad) failed = true;
     console.log(
       `${shot.id.padEnd(16)} hull ${res.hullCovered.toFixed(1).padStart(5)}%`
       + `  frame ${res.frameCovered.toFixed(1).padStart(5)}%`
       + `  centre ${res.centreCovered.toFixed(1).padStart(5)}%`
-      + `  (${res.shipPx} ship px, scene luma ${res.meanLuma.toFixed(3)})${bad ? `   !! over ${maxHull}%` : ''}`,
+      + `  (${res.shipPx} ship px, scene luma ${res.meanLuma.toFixed(3)})`
+      + `${overHull ? `   !! hull over ${maxHull}%` : ''}${overCentre ? `   !! centre over ${maxCentre}%` : ''}`,
     );
     await page.close();
   }

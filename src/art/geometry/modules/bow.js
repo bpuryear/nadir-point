@@ -156,13 +156,26 @@ function buildBreachingProw(ctx) {
     length: 210, width0: 96, height0: 46, width1: 30, height1: 16, shear: -8, chamfer: 8, detail: D,
   }), { pos: [16, -74, 30], rot: [0.66, 0, 0] });
 
-  // Teeth along the leading edge. Three, uneven — a cutter that has been re-welded.
+  // Teeth down the leading edge. Three, uneven — a cutter that has been re-welded.
+  //
+  // THEY ARE SPREAD IN Z, NOT ACROSS THE TIP. All three used to sit at the ram's
+  // forwardmost station (z = 288) at x = -38, +6 and +40, and the ram at that
+  // station is 40 m across: the two outboard teeth stood clear of the wedge they
+  // were welded to and read in plan as a pair of 34 m splinters floating ahead of
+  // the bow (`tools/silhouette.mjs`, top view).
+  //
+  // The wedge's half-beam falls from 74 m at its root to 20 m at the tip, so each
+  // tooth is now placed at a station where the wedge is still wider than the tooth
+  // is, and its y follows the 0.58 rad droop. A saw edge running back up the ram is
+  // also the better read: teeth clustered at a point are a drill, teeth down an edge
+  // are a cutter, and this ship cuts.
   if (full) {
-    const teeth = [[-38, 10], [6, 0], [40, 16]];
-    for (const [x, dz] of teeth) {
+    const teeth = [[-34, 150], [14, 218], [-8, 286]];
+    for (const [x, z] of teeth) {
+      const t = (z - 10) / 275.6;                    // fraction along the ram
       b.add('greeble', G.taperedWedge({
         length: 62, width0: 26, height0: 26, width1: 5, height1: 6, detail: D,
-      }), { pos: [x, -196 + dz * 0.4, 288 + dz], rot: [0.58, 0, 0] });
+      }), { pos: [x, -26 - t * 180.4 - 22, z], rot: [0.58, 0, 0] });
     }
   }
 

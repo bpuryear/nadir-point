@@ -20,6 +20,22 @@
  * The probe also prints a numeric divergence between the three silhouette
  * signatures (hardpoints.js#getSilhouetteSignature). The picture is the judgement;
  * the number is what stops a later change quietly flattening one of them.
+ *
+ * THE NUMBER IS THE SAME ON EVERY SHEET, AND THAT IS WORTH KNOWING BEFORE YOU READ
+ * ONE. The signature is three channels of SHIP-SPACE outline per z-bin - half-beam,
+ * top and bottom - taken in the hull's own frame by `getSilhouetteSignature` and by
+ * `fittedSignatures` below. It does not depend on `view`, which only moves the
+ * camera and the row spread. So `loadouts.png` and `loadouts-top.png` carry
+ * identical divergence captions and differ only in the PICTURE, and the top sheet is
+ * a plan-view eyeball check rather than a second measurement.
+ *
+ * This cost a pass. `loadouts-top.png` sat in the tree printing "WORST PAIR: MEAN
+ * 26.4 (TARGET >= 45) FAIL" long after the side sheet printed PASS, and it was read
+ * as "the criterion passes in profile and fails in plan" - a plausible, specific and
+ * completely wrong diagnosis that sends someone off to widen modules in x. The two
+ * sheets were simply rendered from different code states, months of edits apart. If
+ * the two sheets in front of you disagree, ONE OF THEM IS STALE; re-render both
+ * before believing either.
  */
 
 import * as THREE from 'three';
