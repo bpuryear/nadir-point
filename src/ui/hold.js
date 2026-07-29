@@ -31,11 +31,33 @@ import { MATERIAL_DEFS, MATERIAL_VOLUME, SCRAP_GRADES, REFINED_POOLS } from '../
 import { moduleVolume } from '../sim/meta/cargo.js';
 import { CONDITION, conditionLabel } from '../sim/condition.js';
 import { C, F, TRACK, factionInk, fmtPct, fmtMass } from './theme.js';
+import { moduleName, itemName } from './names.js';
 import { Panel, PAD, TITLE_H, tableHead, rowBack, fmtClock } from './panels.js';
+
+/** Widest status chip the MATERIALS table can emit. See perks.js for the argument. */
+const CLAIM_CHIPS = ['AFFORDABLE', 'SHORT 999 ELEC · 99 EXOT', 'LOCKED'];
+function claimLane(P) {
+  let w = 0;
+  for (const s of CLAIM_CHIPS) w = Math.max(w, P.measure(s, F.microBold, TRACK.label) + 12);
+  return w;
+}
 
 const ROW_H = 15;
 
 /** m3, printed the way the reference prints it: one decimal, always with the unit. */
+/** `-18%` / `+4%`, or a dash when the ratio is effectively one. */
+function fmtSignedPct(ratio) {
+  const d = Math.round((ratio - 1) * 100);
+  return d === 0 ? '--' : `${d > 0 ? '+' : '−'}${Math.abs(d)}%`;
+}
+
+/** Total mass of everything aboard, from the cargo snapshot. */
+function massOf(d) {
+  let t = 0;
+  for (const m of d.modules ?? []) t += m.massT ?? 0;
+  return t;
+}
+
 const fmtM3 = (v) => `${(Math.round(v * 10) / 10).toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} m3`;
 
 // ===========================================================================
@@ -48,9 +70,9 @@ export class HoldPanel extends Panel {
       id: 'hold',
       title: 'HOLD',
       hint: 'G',
-      w: 470,
-      h: 318,
-      place: (P) => ({ x: P.w - 470 - 30, y: 118 }),
+      w: 578,
+      h: 340,
+      maxH: 520,
     });
     this.ui = ui;
     this.world = ui.world;
@@ -69,6 +91,10 @@ export class HoldPanel extends Panel {
     if (this._snap && !this._dirty && now - this._at < 0.5) return this._snap;
     this._at = now;
     this._dirty = false;
+    // The codex grows and the hold changes, so the "largest part on record" figure is
+    // invalidated with the snapshot rather than memoised forever - a cached answer to
+    // "will the next thing fit" that never updates is worse than no answer.
+    this._biggest = undefined;
     this._snap = cargo.describe();
     return this._snap;
   }
@@ -76,7 +102,7 @@ export class HoldPanel extends Panel {
   drawBody(P, x, y, w, h, hit, clip) {
     const d = this._data(this.ui.time);
     if (!d) {
-      P.text('NO HOLD', x, y + 14, { font: F.small, color: C.inkGhost, track: TRACK.label });
+      P.text('NO HOLD', x, y + 14, { font: F.small, color: C.inkFaint, track: TRACK.label });
       return;
     }
 
@@ -94,7 +120,7 @@ export class HoldPanel extends Panel {
     const cap = Math.max(1, d.capacityM3);
     const bx = x;
     const bw = w;
-    P.fill(bx, y + 14, bw, 11, C.inkGhost);
+    P.fill(bx, y + 14, bw, 11, C.track);
     let seg = 0;
     const stack = [
       ['MODULES', d.breakdown.modulesM3, C.ink],
@@ -119,54 +145,111 @@ export class HoldPanel extends Panel {
       font: F.bodyBold, color: full ? C.warn : C.inkDim, align: 'right',
     });
 
+    /**
+     * WHAT THE WEIGHT COSTS, IN THE HEADER.
+     *
+     * This panel printed `4.2 KT` of cargo mass and connected it to nothing — no
+     * speed penalty, no turn penalty, no signature — so the answer to "what does your
+     * cargo cost you" was "space in a box". The honest coupling is the one the sim
+     * actually has: `refit.js` divides acceleration by `massLoad` and turn rate by
+     * its square root, and `stores.js` multiplies propellant burn by it. So the panel
+     * states the penalty the FITTED mass is already imposing, and says plainly that
+     * anything in the hold joins it the moment it goes on a mount. Inventing a top
+     * speed that falls would have been a readout that lies.
+     */
+    const player = this.world.player;
+    if (player?.classDef) {
+      const load = player.massLoad ?? 1;
+      const accelPct = player.classDef.accel ? player.body.accel / player.classDef.accel : 1;
+      const turnPct = player.classDef.turnRate ? player.body.turnRate / player.classDef.turnRate : 1;
+      const holdTxt = `HOLD ${fmtMass(massOf(d))} — JOINS IT WHEN FITTED`;
+      const holdW = P.measure(holdTxt, F.micro, TRACK.label) + 14;
+      const costTxt = `ACCEL ${fmtSignedPct(accelPct)} · TURN ${fmtSignedPct(turnPct)} · BURN ×${load.toFixed(2)} PROPELLANT`;
+      const fmW = P.measure('FITTED MASS', F.micro, TRACK.label) + 12;
+      P.label('FITTED MASS', x, y + 52, { color: C.inkFaint });
+      P.text(`×${load.toFixed(2)}`, x + fmW + 40, y + 52, {
+        font: F.small, color: load > 1.25 ? C.warn : C.inkDim, align: 'right',
+      });
+      P.text(costTxt, x + fmW + 50, y + 52,
+        { font: F.micro, color: C.inkFaint, track: TRACK.label, maxW: w - holdW - fmW - 54 });
+      P.text(holdTxt, x + w, y + 52,
+        { font: F.micro, color: C.inkFaint, align: 'right', track: TRACK.label });
+    }
+
     // --- the table ----------------------------------------------------------
     // Real column headers, the way every table in the reference has them.
-    let cy = tableHead(P, x, y + 54, w, [
-      ['NAME', 0], ['ORIGIN', 150], ['MOUNT', 216], ['COND', 268],
-      ['MASS', 350, 'right'], ['VOLUME', w, 'right'],
-    ]) + 12;
+    // Column origins. Every one of these is a fixed offset because the alternative -
+    // laying a variable-width name out and letting the next column start where it
+    // finished - is what produced `NOMINAKT` and `WORN40 T` in the first plate of
+    // this panel: two columns writing into the same forty pixels.
+    // Column origins laid out from the RIGHT for everything numeric, so the name
+    // column takes what is left and is clipped to it. Fixed offsets are what produced
+    // `NOMINAKT` and `WORN40 T` here: two columns writing into the same forty pixels.
+    const volW = P.measure('9,999.9 m3', F.small, TRACK.value) + 12;
+    const massW = P.measure('999.9 KT', F.micro, TRACK.value) + 12;
+    const condW = 96;
+    const mountW = P.measure('STARBOARD', F.micro, TRACK.label) + 14;
+    const originW = P.measure('COALITION', F.micro, TRACK.label) + 14;
+    const COL = {};
+    COL.vol = w;
+    COL.mass = w - volW;
+    COL.cond = COL.mass - massW - condW;
+    COL.condWord = COL.cond + 42;
+    COL.mount = COL.cond - mountW;
+    COL.origin = COL.mount - originW;
+    COL.nameW = COL.origin - 12;
+    let cy = tableHead(P, x, y + 70, w, [
+      ['NAME', 0], ['ORIGIN', COL.origin], ['MOUNT', COL.mount], ['CONDITION', COL.cond],
+      ['MASS', COL.mass, 'right'], ['VOLUME', COL.vol, 'right'],
+    ]) + 13;
 
     const rows = [];
     for (const m of d.modules) rows.push({ t: 'module', m });
     for (const it of d.items) rows.push({ t: 'item', it });
 
     if (!rows.length) {
-      P.text('HOLD EMPTY', x, cy + 4, { font: F.small, color: C.inkGhost, track: TRACK.label });
+      P.text('HOLD EMPTY', x, cy + 4, { font: F.small, color: C.inkFaint, track: TRACK.label });
       P.text('CUT SECTIONS OFF A HULK TO FILL IT', x, cy + 18,
-        { font: F.micro, color: C.inkGhost, track: TRACK.label });
+        { font: F.micro, color: C.inkFaint, track: TRACK.label });
     }
 
     for (const row of rows) {
-      if (cy > clip.clipBottom + ROW_H || cy < clip.clipTop - ROW_H) { cy += ROW_H; continue; }
+      if (cy + 6 > clip.clipBottom) { this.hidden++; cy += ROW_H; continue; }
+      if (cy < clip.clipTop - ROW_H) { cy += ROW_H; continue; }
       if (row.t === 'module') {
         const m = row.m;
         const fi = factionInk(getModule(m.moduleId)?.faction ?? 'player');
         const sel = this.selected === m.uid;
         rowBack(P, x, cy - 10, w, ROW_H - 1, { selected: sel });
         P.fill(x, cy - 9, 2, ROW_H - 3, fi.stripe);
-        P.text(P.clip(m.name.toUpperCase(), F.small, 142), x + 6, cy, { font: F.small, color: C.ink });
-        P.text(fi.name.toUpperCase(), x + 150, cy, { font: F.micro, color: fi.dim, track: TRACK.label });
-        P.label(m.hardpoint, x + 216, cy, { color: C.inkFaint });
+        // The faction is already the very next column AND the stripe on the left, so
+        // spending the name column re-printing `CONCORD` is what forced
+        // `CONCORD GAUSS OUTRI…`. `moduleName` drops it.
+        P.text(moduleName(m.moduleId), x + 6, cy,
+          { font: F.small, color: C.ink, maxW: COL.nameW });
+        P.text(fi.name.toUpperCase(), x + COL.origin, cy, { font: F.micro, color: fi.dim, track: TRACK.label });
+        P.label(m.hardpoint, x + COL.mount, cy, { color: C.inkFaint });
         const cond = m.condition ?? 1;
-        P.bar(x + 268, cy - 7, 34, 5, cond, {
-          color: cond < CONDITION.worn ? C.warn : C.inkDim, track: C.inkGhost,
+        P.bar(x + COL.cond, cy - 7, 36, 5, cond, {
+          color: cond < CONDITION.worn ? C.warn : C.inkDim, track: C.track,
         });
-        P.text(conditionLabel(cond), x + 306, cy, { font: F.micro, color: cond < CONDITION.worn ? C.warn : C.inkFaint });
-        P.text(fmtMass(m.massT), x + 350, cy, { font: F.micro, color: C.inkFaint, align: 'right' });
-        P.text(fmtM3(m.volumeM3), x + w, cy, { font: F.small, color: C.ink, align: 'right' });
+        P.text(conditionLabel(cond), x + COL.condWord, cy,
+          { font: F.micro, color: cond < CONDITION.worn ? C.warn : C.inkFaint });
+        P.text(fmtMass(m.massT), x + COL.mass, cy, { font: F.micro, color: C.inkFaint, align: 'right' });
+        P.text(fmtM3(m.volumeM3), x + COL.vol, cy, { font: F.small, color: C.ink, align: 'right' });
         if (hit) hit.push({ kind: 'hold:module', panel: this.id, uid: m.uid, x, y: cy - 10, w, h: ROW_H - 1 });
       } else {
         const it = row.it;
         const each = it.count > 0 ? it.volumeM3 / it.count : it.volumeM3;
         rowBack(P, x, cy - 10, w, ROW_H - 1, { selected: this.selected === it.itemId });
         P.fill(x, cy - 9, 2, ROW_H - 3, C.salvageDim);
-        P.text(P.clip(`${it.name.toUpperCase()} ×${it.count}`, F.small, 142), x + 6, cy,
-          { font: F.small, color: C.inkDim });
-        P.label('DEVICE', x + 150, cy, { color: C.salvageDim });
-        P.label('--', x + 216, cy, { color: C.inkGhost });
-        P.text(`${each} m3 EACH`, x + 268, cy, { font: F.micro, color: C.inkGhost });
-        P.text('--', x + 350, cy, { font: F.micro, color: C.inkGhost, align: 'right' });
-        P.text(fmtM3(it.volumeM3), x + w, cy, { font: F.small, color: C.inkDim, align: 'right' });
+        P.text(`${itemName(it.itemId)} ×${it.count}`, x + 6, cy,
+          { font: F.small, color: C.inkDim, maxW: COL.nameW });
+        P.label('DEVICE', x + COL.origin, cy, { color: C.salvageDim });
+        P.label('--', x + COL.mount, cy, { color: C.inkFaint });
+        P.text(`${each} m3 EACH`, x + COL.cond, cy, { font: F.micro, color: C.inkFaint });
+        P.text('--', x + COL.mass, cy, { font: F.micro, color: C.inkFaint, align: 'right' });
+        P.text(fmtM3(it.volumeM3), x + COL.vol, cy, { font: F.small, color: C.inkDim, align: 'right' });
         if (hit) hit.push({ kind: 'hold:item', panel: this.id, itemId: it.itemId, x, y: cy - 10, w, h: ROW_H - 1 });
       }
       cy += ROW_H;
@@ -182,8 +265,8 @@ export class HoldPanel extends Panel {
       for (const g of SCRAP_GRADES) scrapUnits += econ.scrap[g];
       P.fill(x, cy - 9, 2, ROW_H - 3, C.inkDim);
       P.text(`MATERIAL STOCK — ${Math.round(scrapUnits)} SCRAP`, x + 6, cy, { font: F.small, color: C.inkDim });
-      P.label('K FOR DETAIL', x + 150, cy, { color: C.inkGhost });
-      P.text(fmtM3(d.breakdown.materialsM3), x + w, cy, { font: F.small, color: C.inkDim, align: 'right' });
+      P.label('PRESS K FOR THE CHAIN', x + COL.mount, cy, { color: C.inkFaint });
+      P.text(fmtM3(d.breakdown.materialsM3), x + COL.vol, cy, { font: F.small, color: C.inkDim, align: 'right' });
       cy += ROW_H;
     }
 
@@ -195,11 +278,14 @@ export class HoldPanel extends Panel {
     const biggest = this._largestKnownModule();
     if (biggest) {
       const fits = biggest.volumeM3 <= d.freeM3;
-      P.label('LARGEST PART ON RECORD', x, cy, { color: C.inkGhost });
-      P.text(`${biggest.name.toUpperCase()} · ${fmtM3(biggest.volumeM3)}`, x + 160, cy,
-        { font: F.micro, color: C.inkFaint });
-      P.chip(fits ? 'WOULD FIT' : 'WOULD NOT FIT', x + w, cy - 9, {
-        fill: fits ? C.inkGhost : C.warn, color: fits ? C.inkDim : C.void, align: 'right', h: 12,
+      const chipW = P.measure('WOULD NOT FIT', F.microBold, TRACK.label) + 20;
+      // The value starts past where the label actually FINISHED, not past a second
+      // measurement of it or a hard-coded 160. See Painter.label.
+      const hx = P.label('LARGEST PART ON RECORD', x, cy, { color: C.inkFaint }) + 12;
+      P.text(`${biggest.name.toUpperCase()} · ${fmtM3(biggest.volumeM3)}`, hx, cy,
+        { font: F.micro, color: C.inkDim, maxW: x + w - chipW - hx - 10 });
+      P.chip(fits ? 'WOULD FIT' : 'WOULD NOT FIT', x + w, cy - 10, {
+        fill: fits ? C.track : C.warn, color: fits ? C.inkDim : C.void, align: 'right', h: 13,
       });
     }
 
@@ -262,12 +348,9 @@ export class MaterialsPanel extends Panel {
       id: 'materials',
       title: 'MATERIALS',
       hint: 'K',
-      w: 486,
-      h: 430,
-      // Left of frame. HOLD opens on the right and the two are read together — what is
-      // aboard, and what it can be turned into — so they must not default to the same
-      // rectangle and hide one another.
-      place: (P) => ({ x: 30, y: Math.max(40, Math.min(118, P.h - 470)) }),
+      w: 540,
+      h: 452,
+      maxH: 620,
     });
     this.ui = ui;
     this.world = ui.world;
@@ -345,14 +428,14 @@ export class MaterialsPanel extends Panel {
   drawBody(P, x, y, w, h, hit, clip) {
     const d = this._data(this.ui.time);
     if (!d) {
-      P.text('NO REFINERY', x, y + 14, { font: F.small, color: C.inkGhost, track: TRACK.label });
+      P.text('NO REFINERY', x, y + 14, { font: F.small, color: C.inkFaint, track: TRACK.label });
       return;
     }
 
     // --- tier 0 -------------------------------------------------------------
     let cy = y + 8;
     P.label('TIER 0 · SCRAP', x, cy, { color: C.inkFaint });
-    P.label('BULKY, USELESS UNTIL REFINED', x + w, cy, { color: C.inkGhost, align: 'right' });
+    P.label('BULKY, USELESS UNTIL REFINED', x + w, cy, { color: C.inkFaint, align: 'right' });
     P.hline(x, cy + 4, w, C.rule);
     cy += 16;
 
@@ -360,17 +443,17 @@ export class MaterialsPanel extends Panel {
       const def = MATERIAL_DEFS.find((m) => m.id === g);
       const units = d.scrap[g] ?? 0;
       const m3 = units * MATERIAL_VOLUME[g];
-      P.fill(x, cy - 8, 2, 11, units > 0 ? C.inkDim : C.inkGhost);
+      P.fill(x, cy - 8, 2, 11, units > 0 ? C.inkDim : C.track);
       P.text((def?.name ?? g).toUpperCase(), x + 6, cy, {
         font: F.small, color: units > 0 ? C.ink : C.inkFaint,
       });
       P.text(String(Math.round(units)), x + 152, cy, {
-        font: F.bodyBold, color: units > 0 ? C.ink : C.inkGhost, align: 'right',
+        font: F.bodyBold, color: units > 0 ? C.ink : C.inkFaint, align: 'right',
       });
-      P.text(fmtM3(m3), x + 214, cy, { font: F.micro, color: C.inkGhost, align: 'right' });
+      P.text(fmtM3(m3), x + 214, cy, { font: F.micro, color: C.inkFaint, align: 'right' });
       // What it is FOR. For scrap that is what it refines into, at what rate.
-      P.text(P.clip(refineText(def), F.micro, w - 224), x + 224, cy,
-        { font: F.micro, color: C.inkFaint, track: TRACK.value });
+      P.text(refineText(def), x + 224, cy,
+        { font: F.micro, color: C.inkFaint, track: TRACK.value, maxW: w - 224 });
       if (hit) hit.push({ kind: 'materials:enqueue', panel: this.id, grade: g, x, y: cy - 10, w, h: 14 });
       cy += 15;
     }
@@ -391,22 +474,22 @@ export class MaterialsPanel extends Panel {
           { font: F.micro, color: C.inkFaint, track: TRACK.label });
       }
     } else {
-      P.text('IDLE', x, cy, { font: F.small, color: C.inkGhost, track: TRACK.label });
+      P.text('IDLE', x, cy, { font: F.small, color: C.inkFaint, track: TRACK.label });
       P.text('CLICK A SCRAP ROW TO QUEUE IT · REFINING IS LOSSY AND COMPRESSES ~6:1 BY VOLUME',
-        x + 44, cy, { font: F.micro, color: C.inkGhost, track: TRACK.label });
+        x + 44, cy, { font: F.micro, color: C.inkFaint, track: TRACK.label });
     }
     cy += 18;
 
     // --- tier 1 -------------------------------------------------------------
     P.label('TIER 1 · REFINED', x, cy, { color: C.inkFaint });
-    P.label('WHAT EVERYTHING IS PAID FOR IN', x + w, cy, { color: C.inkGhost, align: 'right' });
+    P.label('WHAT EVERYTHING IS PAID FOR IN', x + w, cy, { color: C.inkFaint, align: 'right' });
     P.hline(x, cy + 4, w, C.rule);
     cy += 16;
 
     for (const p of REFINED_POOLS) {
       const def = MATERIAL_DEFS.find((m) => m.id === p);
       const units = d.refined[p] ?? 0;
-      P.fill(x, cy - 8, 2, 11, units > 0 ? C.ink : C.inkGhost);
+      P.fill(x, cy - 8, 2, 11, units > 0 ? C.ink : C.track);
       P.text((def?.name ?? p).toUpperCase(), x + 6, cy, {
         font: F.small, color: units > 0 ? C.ink : C.inkFaint,
       });
@@ -414,9 +497,9 @@ export class MaterialsPanel extends Panel {
         font: F.bodyBold, color: units > 0 ? C.inkStrong : C.warn, align: 'right',
       });
       P.text(fmtM3(units * MATERIAL_VOLUME[p]), x + 214, cy,
-        { font: F.micro, color: C.inkGhost, align: 'right' });
-      P.text(P.clip((def?.consumedBy ?? '--').toUpperCase(), F.micro, w - 224), x + 224, cy,
-        { font: F.micro, color: C.inkFaint, track: TRACK.value });
+        { font: F.micro, color: C.inkFaint, align: 'right' });
+      P.text((def?.consumedBy ?? '--').toUpperCase(), x + 224, cy,
+        { font: F.micro, color: C.inkFaint, track: TRACK.value, maxW: w - 224 });
       cy += 15;
     }
 
@@ -428,35 +511,42 @@ export class MaterialsPanel extends Panel {
     // The tally, up here, because the list is sorted affordable-first and is longer
     // than the window: without it a player who does not scroll concludes they can
     // afford everything, which is the opposite of what this panel is for.
-    P.chip(`${affordable} AFFORDABLE`, x + w - 108, cy - 9, {
-      fill: C.inkGhost, color: C.inkDim, h: 12,
-    });
-    P.chip(`${this._demands.length - affordable} SHORT`, x + w, cy - 9, {
-      fill: C.warn, color: C.void, h: 12, align: 'right',
+    // Right-aligned in sequence, measuring the first before placing the second: two
+    // chips laid out from fixed offsets is two chips that eventually overlap.
+    const shortTxt = `${this._demands.length - affordable} SHORT`;
+    const shortW = P.measure(shortTxt, F.microBold, TRACK.label) + 8;
+    P.chip(shortTxt, x + w, cy - 9, { fill: C.warn, color: C.void, h: 12, align: 'right' });
+    P.chip(`${affordable} AFFORDABLE`, x + w - shortW - 5, cy - 9, {
+      fill: C.track, color: C.inkDim, h: 12, align: 'right',
     });
     P.hline(x, cy + 4, w, C.rule);
     cy += 15;
-    cy = tableHead(P, x, cy, w, [['', 0], ['ITEM', 62], ['COST', 250], ['', w, 'right']]) + 12;
+    const lane = claimLane(P);
+    const colCost = Math.max(200, w - lane - 190);
+    cy = tableHead(P, x, cy, w, [['GROUP', 0], ['ITEM', 66], ['COST', colCost]]) + 13;
 
     for (const dm of this._demands) {
-      if (cy > clip.clipBottom + ROW_H) { cy += ROW_H + 11; continue; }
-      if (cy < clip.clipTop - ROW_H) { cy += ROW_H + 11; continue; }
-      const col = dm.ok ? C.ink : C.inkFaint;
-      P.label(dm.group, x, cy, { color: dm.ok ? C.inkDim : C.inkGhost });
-      P.text(P.clip(dm.name.toUpperCase(), F.small, 180), x + 62, cy, { font: F.small, color: col });
-      P.text(costText(dm.cost), x + 250, cy, { font: F.micro, color: dm.ok ? C.inkDim : C.inkFaint });
+      if (cy + ROW_H + 12 > clip.clipBottom) { this.hidden++; cy += ROW_H + 12; continue; }
+      if (cy < clip.clipTop - ROW_H) { cy += ROW_H + 12; continue; }
+      const col = dm.ok ? C.ink : C.inkDim;
+      P.label(dm.group, x, cy, { color: C.inkFaint });
+      P.text(dm.name.toUpperCase(), x + 66, cy, { font: F.small, color: col, maxW: colCost - 72 });
+      // Inside the lane boundary. `BOARDING CHARGE 22 ALLO 10 COMP 8 ELE[C]` used to
+      // lose its last glyph to an AFFORDABLE chip drawn straight over it.
+      P.text(costText(dm.cost), x + colCost, cy,
+        { font: F.micro, color: dm.ok ? C.inkDim : C.inkFaint, maxW: w - lane - colCost - 8 });
       if (dm.ok) {
-        P.chipOutline('AFFORDABLE', x + w, cy - 9, { color: C.inkDim, align: 'right', h: 12 });
+        P.chipOutline('AFFORDABLE', x + w, cy - 10, { color: C.inkDim, align: 'right', h: 13 });
       } else if (dm.shortfall && Object.keys(dm.shortfall).length) {
-        P.chip(`SHORT ${costText(dm.shortfall)}`, x + w, cy - 9, {
-          fill: C.warn, color: C.void, align: 'right', h: 12,
+        P.chip(P.clip(`SHORT ${costText(dm.shortfall)}`, F.microBold, lane - 10), x + w, cy - 10, {
+          fill: C.warn, color: C.void, align: 'right', h: 13,
         });
       } else {
-        P.chipOutline('LOCKED', x + w, cy - 9, { color: C.warnDim, align: 'right', h: 12 });
+        P.chipOutline('LOCKED', x + w, cy - 10, { color: C.warnDim, align: 'right', h: 13 });
       }
-      P.text(P.clip((dm.note ?? '').toUpperCase(), F.micro, w - 68), x + 62, cy + 10,
-        { font: F.micro, color: C.inkGhost, track: TRACK.label });
-      cy += ROW_H + 11;
+      P.text((dm.note ?? '').toUpperCase(), x + 66, cy + 11,
+        { font: F.micro, color: C.inkFaint, track: TRACK.label, maxW: w - 72 });
+      cy += ROW_H + 12;
     }
 
     this.scrollMax = Math.max(0, (cy + 8) - y - (this.bodyH - PAD * 2));

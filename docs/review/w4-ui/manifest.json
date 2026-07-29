@@ -1,0 +1,92 @@
+[
+  {
+    "id": "close",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.1415,
+      "contrast": 0.2482,
+      "clippedPct": 0,
+      "nearBlackPct": 73.59
+    },
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/w4-ui/close.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 17.39999999999418,
+      "stepMs": 0.6999999992549419,
+      "renderMs": 5.599999999627471,
+      "steps": 6,
+      "calls": 131,
+      "triangles": 72627,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 71,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "three-quarter",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.065,
+      "contrast": 0.1373,
+      "clippedPct": 0,
+      "nearBlackPct": 71.33
+    },
+    "description": "Mid tactical range, raking key. The everyday playing view. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/w4-ui/three-quarter.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 19.59999999924912,
+      "stepMs": 0.7000000011175871,
+      "renderMs": 5.399999998509884,
+      "steps": 6,
+      "calls": 134,
+      "triangles": 95171,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 71,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "engagement",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0315,
+      "contrast": 0.0825,
+      "clippedPct": 0,
+      "nearBlackPct": 85.24
+    },
+    "description": "Cruiser under way with hostiles on the plane. Tests scale cues and the fight read.",
+    "hud": true,
+    "file": "docs/review/w4-ui/engagement.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 13.399999999252032,
+      "stepMs": 1,
+      "renderMs": 9.099999999627471,
+      "steps": 6,
+      "calls": 117,
+      "triangles": 93071,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 61,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

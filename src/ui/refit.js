@@ -576,11 +576,11 @@ export class RefitScreen {
           { font: F.small, color: C.ink });
       } else {
         P.text(breached ? 'BREACHED' : 'EMPTY', px + 9, py + 27,
-          { font: F.small, color: breached ? C.warn : C.inkGhost, track: TRACK.label });
+          { font: F.small, color: breached ? C.warn : C.inkFaint, track: TRACK.label });
       }
       P.bar(px + 9, py + 33, plateW - 18, 4, breached ? 0 : frac, {
         color: breached ? C.warnGhost : frac <= 0.35 ? C.warn : C.inkDim,
-        track: C.inkGhost, threshold: 0.35, thresholdColor: C.warnDim,
+        track: C.track, threshold: 0.35, thresholdColor: C.warnDim,
       });
 
       hit?.push({ kind: 'mount', id, x: px, y: py, w: plateW, h: 44 });
@@ -609,10 +609,10 @@ export class RefitScreen {
 
     let cy = y + 40;
     if (def) {
-      P.label('ARC', x, cy, { color: C.inkGhost });
+      P.label('ARC', x, cy, { color: C.inkFaint });
       P.text(`${Math.round((def.yawWidth * 180) / Math.PI)}° ABOUT ${Math.round((def.yawCentre * 180) / Math.PI)}°`,
         x + 44, cy, { font: F.micro, color: C.inkFaint });
-      P.label('STRUCTURE', x + 190, cy, { color: C.inkGhost });
+      P.label('STRUCTURE', x + 190, cy, { color: C.inkFaint });
       P.text(String(def.structureHP), x + w, cy, { font: F.micro, color: C.inkFaint, align: 'right' });
       cy += 14;
     }
@@ -632,7 +632,7 @@ export class RefitScreen {
       cy += 14;
     } else {
       P.text(hp?.breached ? 'MOUNT BREACHED — REPAIR BEFORE FITTING' : 'NOTHING FITTED',
-        x, cy, { font: F.small, color: hp?.breached ? C.warn : C.inkGhost, track: TRACK.label });
+        x, cy, { font: F.small, color: hp?.breached ? C.warn : C.inkFaint, track: TRACK.label });
       cy += 18;
     }
 
@@ -683,8 +683,8 @@ export class RefitScreen {
     const col1 = x + 104;
     const col2 = x + 236;
     const col3 = x + w;
-    P.label('CURRENT', col2, cy, { color: C.inkGhost, align: 'right' });
-    P.label('AFTER', col3, cy, { color: after ? C.select : C.inkGhost, align: 'right' });
+    P.label('CURRENT', col2, cy, { color: C.inkFaint, align: 'right' });
+    P.label('AFTER', col3, cy, { color: after ? C.select : C.inkFaint, align: 'right' });
     cy += 13;
 
     const rows = [
@@ -703,11 +703,11 @@ export class RefitScreen {
 
     for (const [label, a, b] of rows) {
       const changed = b !== null && b !== a;
-      P.label(label, col1, cy, { color: changed ? C.select : C.inkGhost });
+      P.label(label, col1, cy, { color: changed ? C.select : C.inkFaint });
       P.text(a, col2, cy, { font: F.small, color: changed ? C.inkDim : C.inkFaint, align: 'right' });
       P.text(b ?? '—', col3, cy, {
         font: changed ? F.bodyBold : F.small,
-        color: changed ? C.select : C.inkGhost, align: 'right',
+        color: changed ? C.select : C.inkFaint, align: 'right',
       });
       cy += 13;
     }
@@ -763,7 +763,7 @@ export class RefitScreen {
     const delta = added.length - removed.length;
     const tag = !after ? 'ARCS' : delta > 0 ? `ARCS +${delta}` : delta < 0 ? `ARCS ${delta}` : 'ARCS ±0';
     P.label(tag, cx, cy + R + 14, {
-      color: delta > 0 ? C.select : delta < 0 ? C.warn : C.inkGhost, align: 'center',
+      color: delta > 0 ? C.select : delta < 0 ? C.warn : C.inkFaint, align: 'center',
     });
   }
 
@@ -774,7 +774,7 @@ export class RefitScreen {
     P.label('SILHOUETTE', x, y, { color: C.inkDim });
     P.hline(x, y + 5, w, C.rule);
     if (!prof) {
-      P.text('NO HULL GEOMETRY', x, y + 22, { font: F.small, color: C.inkGhost, track: TRACK.label });
+      P.text('NO HULL GEOMETRY', x, y + 22, { font: F.small, color: C.inkFaint, track: TRACK.label });
       return y + 30;
     }
 
@@ -787,12 +787,12 @@ export class RefitScreen {
     const topY = sideY + h + gap + 12;
 
     this._profileGraph(P, x, sideY, w, h, prof, 'side', ghostA);
-    P.label('SIDE', x, sideY + h + 9, { color: C.inkGhost });
+    P.label('SIDE', x, sideY + h + 9, { color: C.inkFaint });
     P.text(`${Math.round(prof.length)} × ${Math.round(prof.height)} M`, x + w, sideY + h + 9,
       { font: F.micro, color: C.inkFaint, align: 'right' });
 
     this._profileGraph(P, x, topY, w, h, prof, 'top', ghostA);
-    P.label('PLAN', x, topY + h + 9, { color: C.inkGhost });
+    P.label('PLAN', x, topY + h + 9, { color: C.inkFaint });
     P.text(`${Math.round(prof.length)} × ${Math.round(prof.beam)} M`, x + w, topY + h + 9,
       { font: F.micro, color: C.inkFaint, align: 'right' });
 
@@ -879,10 +879,10 @@ export class RefitScreen {
         P.frame(bx, by, bw, 22, C.ruleDim);
       }
       P.text(b.label, bx + 10, by + 15, {
-        font: F.microBold, color: b.on ? C.ink : C.inkGhost, track: TRACK.label,
+        font: F.microBold, color: b.on ? C.ink : C.inkFaint, track: TRACK.label,
       });
       P.text(b.key, bx + bw - 8, by + 15, {
-        font: F.micro, color: b.on ? C.inkFaint : C.inkGhost, align: 'right',
+        font: F.micro, color: b.on ? C.inkFaint : C.inkFaint, align: 'right',
       });
       if (b.on) hit?.push({ kind: 'action', action: b.action, x: bx, y: by, w: bw, h: 22 });
     }
@@ -902,24 +902,24 @@ export class RefitScreen {
     ];
     let x = 420;
     for (const [k, v, col] of cells) {
-      P.label(k, x, y, { color: C.inkGhost });
+      P.label(k, x, y, { color: C.inkFaint });
       P.text(v, x, y + 18, { font: F.midBold, color: col });
       x += 110;
     }
 
     if (player) {
       const hullFrac = player.maxHullHP > 0 ? player.hullHP / player.maxHullHP : 1;
-      P.label('HULL', x, y, { color: C.inkGhost });
+      P.label('HULL', x, y, { color: C.inkFaint });
       P.text(fmtPct(hullFrac), x, y + 18, {
         font: F.midBold, color: hullFrac < 0.4 ? C.warn : C.ink,
       });
-      P.bar(x, y + 24, 150, 4, hullFrac, { color: hullFrac < 0.4 ? C.warn : C.inkDim, track: C.inkGhost, segments: 10 });
+      P.bar(x, y + 24, 150, 4, hullFrac, { color: hullFrac < 0.4 ? C.warn : C.inkDim, track: C.track, segments: 10 });
       x += 190;
     }
 
     // The acceptance criterion, measured and printed.
     const li = this.lastInstall;
-    P.label('LAST INSTALL', x, y, { color: C.inkGhost });
+    P.label('LAST INSTALL', x, y, { color: C.inkFaint });
     if (li) {
       // Only the install cost is judged here. The following frame's wall time is
       // reported but never coloured: the review environment rasterises in software
@@ -929,14 +929,14 @@ export class RefitScreen {
       P.text(`OUTLINE +${li.outlineMs.toFixed(1)} MS DEFERRED`, x + 82, y + 12,
         { font: F.micro, color: C.inkFaint, track: TRACK.label });
       P.text(`NEXT FRAME ${li.worstFrameMs.toFixed(0)} MS`, x + 82, y + 23,
-        { font: F.micro, color: C.inkGhost, track: TRACK.label });
+        { font: F.micro, color: C.inkFaint, track: TRACK.label });
     } else {
-      P.text('—', x, y + 18, { font: F.midBold, color: C.inkGhost });
+      P.text('—', x, y + 18, { font: F.midBold, color: C.inkFaint });
     }
 
     const warm = this._warm.size;
     const pending = this._warmQueue.length;
-    P.label('GEOMETRY CACHE', P.w - 28, y, { color: C.inkGhost, align: 'right' });
+    P.label('GEOMETRY CACHE', P.w - 28, y, { color: C.inkFaint, align: 'right' });
     P.text(pending ? `PREWARMING ${warm}/${warm + pending}` : `${warm} PARTS WARM`,
       P.w - 28, y + 18, {
         font: F.small, color: pending ? C.select : C.inkFaint, align: 'right', track: TRACK.label,

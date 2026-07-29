@@ -47,9 +47,9 @@ export class CodexPanel extends Panel {
       id: 'codex',
       title: 'CODEX',
       hint: 'C',
-      w: 726,
-      h: 452,
-      place: (P) => ({ x: Math.round(P.w * 0.5 - 363), y: Math.max(30, Math.round(P.h * 0.5 - 260)) }),
+      w: 780,
+      h: 470,
+      maxH: 470,
     });
     this.ui = ui;
     this.world = ui.world;
@@ -92,7 +92,7 @@ export class CodexPanel extends Panel {
   drawBody(P, x, y, w, h, hit, clip) {
     const codex = this.codex;
     if (!codex) {
-      P.text('NO CODEX', x, y + 14, { font: F.small, color: C.inkGhost, track: TRACK.label });
+      P.text('NO CODEX', x, y + 14, { font: F.small, color: C.inkFaint, track: TRACK.label });
       return;
     }
     this._refresh();
@@ -123,7 +123,7 @@ export class CodexPanel extends Panel {
     P.label('KNOWLEDGE', x, y + 8, { color: C.inkFaint });
     P.text(String(pr?.knowledge ?? 0), x + 78, y + 8, { font: F.midBold, color: C.inkStrong });
     P.label('PERKS READ THIS NUMBER — WHAT YOU KNOW IS WHAT YOU CAN BUY', x + 116, y + 8,
-      { color: C.inkGhost });
+      { color: C.inkFaint });
 
     // Category tabs, each carrying its own completion. A tab with a count on it is a
     // to-do list; a tab without one is furniture.
@@ -143,11 +143,11 @@ export class CodexPanel extends Panel {
     }
 
     // The discovery ladder, explained once, here, rather than in five tooltips.
-    P.label('DISCOVERY', x + w - 248, y + 27, { color: C.inkGhost });
+    P.label('DISCOVERY', x + w - 262, y + 27, { color: C.inkFaint });
     let lx = x + w - 175;
     for (let i = 0; i < DISCOVERY_STATES.length; i++) {
-      P.fill(lx, y + 20, 7, 7, i === 0 ? C.inkGhost : C.inkFaint);
-      P.label(DISCOVERY_STATES[i].slice(0, 3), lx + 3.5, y + 36, { color: C.inkGhost, align: 'center' });
+      P.fill(lx, y + 20, 7, 7, i === 0 ? C.track : C.inkFaint);
+      P.label(DISCOVERY_STATES[i].slice(0, 3), lx + 3.5, y + 36, { color: C.inkFaint, align: 'center' });
       lx += 35;
     }
 
@@ -159,20 +159,20 @@ export class CodexPanel extends Panel {
     let cy = y + 10;
     const top = cy;
     for (const e of this._list) {
-      if (cy > clip.clipBottom + ROW_H || cy < clip.clipTop - ROW_H) { cy += ROW_H; continue; }
+      if (cy + 6 > clip.clipBottom) { this.hidden++; cy += ROW_H; continue; }
+      if (cy < clip.clipTop - ROW_H) { cy += ROW_H; continue; }
       const sel = this.selected && this.selected.id === e.id && this.selected.category === e.category;
       const unknown = e.state === 'unknown';
       rowBack(P, x, cy - 11, LIST_W - 12, ROW_H - 2, { selected: sel });
 
       if (e.faction) P.fill(x, cy - 10, 2, ROW_H - 4, factionInk(e.faction).stripe);
 
-      P.text(P.clip(String(e.name).toUpperCase(), sel ? F.bodyBold : F.small, LIST_W - 92), x + 7, cy, {
+      P.text(String(e.name).toUpperCase(), x + 7, cy, {
         font: sel ? F.bodyBold : F.small,
-        color: unknown ? C.inkGhost : sel ? C.inkStrong : C.ink,
-      });
+        color: unknown ? C.inkFaint : sel ? C.inkStrong : C.ink, maxW: LIST_W - 92 });
       this._ladder(P, x + LIST_W - 82, cy - 8, e.state);
       P.label(e.state.slice(0, 3), x + LIST_W - 14, cy, {
-        color: unknown ? C.inkGhost : C.inkFaint, align: 'right',
+        color: unknown ? C.inkFaint : C.inkFaint, align: 'right',
       });
 
       if (hit) {
@@ -184,7 +184,7 @@ export class CodexPanel extends Panel {
       cy += ROW_H;
     }
     if (!this._list.length) {
-      P.text('NOTHING REGISTERED', x, cy, { font: F.small, color: C.inkGhost, track: TRACK.label });
+      P.text('NOTHING REGISTERED', x, cy, { font: F.small, color: C.inkFaint, track: TRACK.label });
     }
     return cy - top + 10;
   }
@@ -193,7 +193,7 @@ export class CodexPanel extends Panel {
   _ladder(P, x, y, state) {
     const r = RANK[state] ?? 0;
     for (let i = 0; i < DISCOVERY_STATES.length; i++) {
-      P.fill(x + i * 8, y, 6, 7, i <= r && r > 0 ? (i === r ? C.ink : C.inkFaint) : C.inkGhost);
+      P.fill(x + i * 8, y, 6, 7, i <= r && r > 0 ? (i === r ? C.ink : C.inkFaint) : C.track);
     }
   }
 
@@ -205,7 +205,7 @@ export class CodexPanel extends Panel {
     const sel = this.selected;
     const entry = sel ? this.codex.entry(sel.category, sel.id) : null;
     if (!entry) {
-      P.text('SELECT AN ENTRY', x, y + 20, { font: F.small, color: C.inkGhost, track: TRACK.label });
+      P.text('SELECT AN ENTRY', x, y + 20, { font: F.small, color: C.inkFaint, track: TRACK.label });
       return;
     }
 
@@ -222,12 +222,12 @@ export class CodexPanel extends Panel {
       P.text(fi.name.toUpperCase(), x + 8, y + 27, { font: F.micro, color: fi.hue, track: TRACK.label });
     }
     this._ladder(P, x + w - 44, y + 4, entry.state);
-    P.label(entry.state, x + w, y + 27, { color: unknown ? C.inkGhost : C.inkFaint, align: 'right' });
+    P.label(entry.state, x + w, y + 27, { color: unknown ? C.inkFaint : C.inkFaint, align: 'right' });
 
     // The one-sentence functional description. Not flavour: what it does.
     let cy = y + 44;
     for (const line of wrap(P, entry.description || '--', F.small, w)) {
-      P.text(line, x, cy, { font: F.small, color: unknown ? C.inkGhost : C.inkDim });
+      P.text(line, x, cy, { font: F.small, color: unknown ? C.inkFaint : C.inkDim });
       cy += 13;
     }
 
@@ -237,15 +237,14 @@ export class CodexPanel extends Panel {
     // Fixed frame, variable slots. Every row is drawn whether or not it has a value;
     // a masked row prints `--` and stays in place.
     for (const f of entry.fields) {
-      if (cy > clip.clipBottom - 6) break;
+      if (cy + 6 > clip.clipBottom) break;
       const masked = f.value === '--' || f.value === undefined || f.value === null;
-      P.label(f.label, x, cy, { color: C.inkGhost });
+      P.label(f.label, x, cy, { color: C.inkFaint });
       // A masked row prints `--` at a legible value, not at ghost: the point of keeping
       // the row is that the player can SEE which slot they have not earned yet, and a
       // dash they cannot read is the hidden row this discipline exists to avoid.
-      P.text(P.clip(String(masked ? '--' : f.value).toUpperCase(), F.small, w - 112), x + 108, cy, {
-        font: F.small, color: masked ? C.inkFaint : C.ink, track: TRACK.value,
-      });
+      P.text(String(masked ? '--' : f.value).toUpperCase(), x + 108, cy, {
+        font: F.small, color: masked ? C.inkFaint : C.ink, track: TRACK.value, maxW: w - 112 });
       P.hline(x, cy + 3, w, C.ruleDim);
       cy += 14;
     }
@@ -258,11 +257,11 @@ export class CodexPanel extends Panel {
       for (const l of entry.links) {
         if (cy > clip.clipBottom - 6) break;
         const name = P.clip(String(l.name).toUpperCase(), F.small, w - 112);
-        P.label(l.relation, x, cy, { color: C.inkGhost });
+        P.label(l.relation, x, cy, { color: C.inkFaint });
         P.text(name, x + 108, cy, { font: F.small, color: C.inkDim });
         // Underline: this is a thing you can follow, and the interface has no other
         // affordance for that (no hover cursor over a canvas with pointer-events off).
-        P.rule(x + 108, cy + 2, P.measure(name, F.small, TRACK.value), P.hair, C.inkGhost);
+        P.rule(x + 108, cy + 2, P.measure(name, F.small, TRACK.value), P.hair, C.track);
         if (hit) {
           hit.push({
             kind: 'codex:link', panel: this.id, entryId: l.id, entryCat: l.category,

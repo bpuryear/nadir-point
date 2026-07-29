@@ -30,20 +30,21 @@
  */
 
 import * as THREE from 'three';
-import { HARDPOINTS, getItem, allItems } from '../core/contracts.js';
+import { HARDPOINTS, allItems } from '../core/contracts.js';
 import { THERMAL, thermalReport } from '../sim/heat.js';
 import { storesReport, AMMO_SPEC } from '../sim/stores.js';
 import { CONDITION } from '../sim/condition.js';
 import { C, F, TRACK, factionInk, fmtPct } from './theme.js';
 import { Panel, PAD, TITLE_H } from './panels.js';
+import { moduleName, itemName, MOUNT_EMPTY } from './names.js';
 
-const CELL_W = 84;
-const CELL_H = 116;
-const THERM_W = 130;
-const HOTBAR_H = 32;
-const BODY_H = CELL_H + 16 + 12 + HOTBAR_H + 6;
+const CELL_W = 98;
+const CELL_H = 130;
+const THERM_W = 152;
+const HOTBAR_H = 36;
+const BODY_H = CELL_H + 18 + 14 + HOTBAR_H + 8;
 
-/** Abbreviated to fit an 80 px cell beside the weapon archetype. */
+/** Abbreviated to fit the cell header beside the weapon archetype. */
 const MOUNT_LABEL = {
   bow: 'BOW', dorsal: 'DORSAL', ventral: 'VENT',
   port: 'PORT', starboard: 'STBD', engine: 'ENG',
@@ -65,19 +66,41 @@ const HOTBAR_CODES = ['digit4', 'digit5', 'digit6', 'digit7', 'digit8'];
  * third hue anywhere in here — see the header.
  */
 const STATE = {
-  BREACHED: { tone: 'alarm', note: 'MOUNT LOST' },
-  DETACHED: { tone: 'alarm', note: 'PAD GONE' },
-  INERT: { tone: 'alarm', note: 'WILL NOT FIRE' },
-  COOKED: { tone: 'alarm', note: 'THERMAL TRIP' },
-  DRY: { tone: 'alarm', note: 'MAGAZINE EMPTY' },
-  JAM: { tone: 'warn', note: 'MISFEED' },
-  'NO CHG': { tone: 'warn', note: 'BUFFER EMPTY' },
-  RELOAD: { tone: 'warn', note: 'FEEDING' },
-  HOT: { tone: 'warn', note: 'OVER SOFT CAP' },
-  OFFLINE: { tone: 'warn', note: 'SUBSYSTEM DOWN' },
+  // STRUCTURAL LOSS. The only states in this panel that get hostile red, and the
+  // only ones the player cannot undo by waiting or by pressing something.
+  BREACHED: { tone: 'lost', note: 'MOUNT LOST' },
+  DETACHED: { tone: 'lost', note: 'PAD GONE' },
+
+  // HEAT. Amber, escalating by VALUE — HOT is the low amber, COOKED is the full
+  // one. The panel used to carry the same saturated red for thermal state, empty
+  // magazines, structural failure, disabled subsystems AND an alert count at the
+  // same value, so the eye had nowhere to look first.
+  COOKED: { tone: 'heat', note: 'THERMAL TRIP' },
+  HOT: { tone: 'heatLow', note: 'OVER SOFT CAP' },
+
+  // ABSENCES. Out of rounds, out of charge, feeding, jammed, unpowered, worn past
+  // use: none of these is on fire and none of them is red. Neutral ink and a struck
+  // bar say "there is nothing here" without competing with the emergency.
+  DRY: { tone: 'starved', note: 'MAGAZINE EMPTY' },
+  'NO CHG': { tone: 'starved', note: 'BUFFER EMPTY' },
+  JAM: { tone: 'starved', note: 'MISFEED' },
+  RELOAD: { tone: 'starved', note: 'FEEDING' },
+  OFFLINE: { tone: 'starved', note: 'SUBSYSTEM DOWN' },
+  INERT: { tone: 'starved', note: 'WILL NOT FIRE' },
+
   READY: { tone: 'ok', note: '' },
   PASSIVE: { tone: 'idle', note: 'NO WEAPON' },
   EMPTY: { tone: 'idle', note: 'NOTHING FITTED' },
+};
+
+/** tone -> the ink it is allowed. See SEMANTIC in theme.js. */
+const TONE_INK = {
+  lost: C.hostile,
+  heat: C.warn,
+  heatLow: C.warnLow,
+  starved: C.inkFaint,
+  ok: C.inkDim,
+  idle: C.inkFaint,
 };
 
 export class ArmamentPanel extends Panel {
@@ -87,17 +110,10 @@ export class ArmamentPanel extends Panel {
       title: 'ARMAMENT · THERMAL · DEVICES',
       hint: 'X',
       w: PAD * 2 + THERM_W + 6 + HARDPOINTS.length * CELL_W,
-      h: TITLE_H + PAD * 2 + BODY_H,
-      // Directly above the reactor routing block, which is the other place the player
-      // spends attention mid-fight. Keeping the two adjacent is the point: routing
-      // power to weapons raises rate of fire AND heat, and the interlock only reads if
-      // both readouts are in the same glance.
-      place: (P) => ({ x: Math.round(P.w * 0.5 - (PAD * 2 + THERM_W + 6 + HARDPOINTS.length * CELL_W) * 0.5),
-        y: P.h - 240 - (TITLE_H + PAD * 2 + BODY_H) }),
+      h: TITLE_H + PAD * 2 + BODY_H + 15,
     });
     this.ui = ui;
     this.world = ui.world;
-    this.open = true;
 
     /** Preallocated cell rows: one per hardpoint, reused every frame. */
     this._cells = HARDPOINTS.map((id) => ({ id, hp: null, mount: null, module: null }));
@@ -111,7 +127,7 @@ export class ArmamentPanel extends Panel {
   drawBody(P, x, y, w, h, hit) {
     const player = this.world.player;
     if (!player) {
-      P.text('NO HULL', x, y + 14, { font: F.small, color: C.inkGhost, track: TRACK.label });
+      P.text('NO HULL', x, y + 14, { font: F.small, color: C.inkFaint, track: TRACK.label });
       return;
     }
 
@@ -130,11 +146,11 @@ export class ArmamentPanel extends Panel {
 
     // The sub-part legend. Five letters carrying five different failure modes is a
     // vocabulary, and an unexplained vocabulary is just noise.
-    P.label(PART_LEGEND, x + THERM_W + 6, y + CELL_H + 12, { color: C.inkGhost });
-    P.label('SUB-PARTS', x, y + CELL_H + 12, { color: C.inkFaint });
+    P.label('SUB-PARTS', x, y + CELL_H + 14, { color: C.inkDim });
+    P.label(PART_LEGEND, x + THERM_W + 6, y + CELL_H + 14, { color: C.inkFaint });
 
-    P.hline(x, y + CELL_H + 18, w, C.ruleDim);
-    this._drawHotbar(P, x, y + CELL_H + 32, w, HOTBAR_H, hit);
+    P.hline(x, y + CELL_H + 20, w, C.rule);
+    this._drawHotbar(P, x, y + CELL_H + 34, w, HOTBAR_H, hit);
     void h;
   }
 
@@ -145,13 +161,16 @@ export class ArmamentPanel extends Panel {
   _drawThermal(P, x, y, w, h, therm, stores) {
     if (!therm) {
       P.label('THERMAL', x, y + 7, { color: C.inkFaint });
-      P.text('NO DATA', x, y + 22, { font: F.small, color: C.inkGhost, track: TRACK.label });
+      P.text('NO DATA', x, y + 22, { font: F.small, color: C.inkFaint, track: TRACK.label });
       return;
     }
 
     const over = therm.state === 'OVERHEATED';
     const elevated = therm.state === 'ELEVATED';
-    const stateCol = over ? C.warn : elevated ? C.ink : C.inkDim;
+    // Escalation by VALUE, not hue: nominal is neutral, elevated is the low amber,
+    // overheated is the full one on a filled plate. One colour, three brightnesses.
+    const stateCol = over ? C.warn : elevated ? C.warn : C.inkDim;
+    const barCol = over ? C.warn : elevated ? C.warnLow : C.inkDim;
 
     // The large vertical bar sits on the LEFT edge of the column, hard against the
     // panel border, with everything else set beside it. That is the reference's own
@@ -159,39 +178,39 @@ export class ArmamentPanel extends Panel {
     // right margin leaves every value fighting it for the last thirty pixels.
     const barY = y + 4;
     const barH = h - 20;
-    P.vbar(x, barY, 18, barH, therm.peak, {
-      color: over ? C.warn : elevated ? C.ink : C.inkDim,
-      track: C.inkGhost,
+    P.vbar(x, barY, 20, barH, therm.peak, {
+      color: barCol,
+      track: C.track,
       segments: 8,
       threshold: THERMAL.softCap,
       thresholdColor: C.warnDim,
     });
-    P.frame(x, barY, 18, barH, C.ruleDim);
-    P.label('PEAK', x + 9, y + h - 6, { color: C.inkGhost, align: 'center' });
+    P.frame(x, barY, 20, barH, C.ruleBright);
+    P.label('PEAK', x + 10, y + h - 5, { color: C.inkDim, align: 'center' });
 
-    const tx = x + 26;
-    const vx = x + 62;
+    const tx = x + 30;
+    const vx = x + 72;
     const right = x + w;
     P.label('THERMAL', tx, y + 7, { color: C.inkFaint });
 
     // STATUS <WORD>, on its own line at full column width. The word is the readout;
     // the bar only says how far along it is.
-    P.label('STATUS', tx, y + 20, { color: C.inkGhost });
+    P.label('STATUS', tx, y + 20, { color: C.inkFaint });
     if (over) {
       // A trip is the one state in this panel allowed to pulse. It costs the player a
       // mount and structural HP on the hardpoint, and it is recoverable — which makes
       // it exactly the case a static readout under-sells.
       const pulse = 0.75 + 0.25 * Math.sin(P.t * 6.0);
       P.ctx.globalAlpha = pulse;
-      P.chip(therm.state, tx, y + 24, { fill: C.warn, color: C.void, h: 14, minW: right - tx });
+      P.chip(therm.state, tx, y + 24, { fill: C.warn, color: C.void, h: 15, minW: right - tx });
       P.ctx.globalAlpha = 1;
     } else {
-      P.text(therm.state, tx, y + 35, { font: F.bodyBold, color: stateCol, track: TRACK.label });
+      P.text(therm.state, tx, y + 36, { font: F.bodyBold, color: stateCol, track: TRACK.label });
     }
 
     // EXT, over its ceiling. The reference prints both halves and so do we: a figure
     // with no ceiling beside it is not a measurement.
-    P.label('EXT', tx, y + 50, { color: C.inkGhost });
+    P.label('EXT', tx, y + 50, { color: C.inkFaint });
     P.text(`${therm.ext.toFixed(1)} / ${therm.extMax.toFixed(1)}`, vx, y + 50, {
       font: F.small, color: over ? C.warn : C.ink,
     });
@@ -200,7 +219,7 @@ export class ArmamentPanel extends Panel {
     // second, which is the number that says whether you are winning the race.
     const rate = therm.rate * 100;
     const rising = rate > 0.05;
-    P.label('RATE', tx, y + 62, { color: C.inkGhost });
+    P.label('RATE', tx, y + 62, { color: C.inkFaint });
     P.text(`${rising ? '+' : rate < -0.05 ? '−' : ' '}${Math.abs(rate).toFixed(1)}%/s`, vx, y + 62, {
       font: F.small, color: rising ? C.warn : C.inkDim,
     });
@@ -208,22 +227,22 @@ export class ArmamentPanel extends Panel {
     // Load is what the reactor is dumping into the hull; radiate is what is left over
     // to shed it. The two bars ARE the power interlock — route to weapons and the top
     // bar grows while the bottom one shrinks.
-    P.label('LOAD', tx, y + 74, { color: C.inkGhost });
-    P.bar(vx, y + 68, right - vx, 5, therm.load, { color: C.inkDim, track: C.inkGhost, segments: 4 });
-    P.label('RAD', tx, y + 86, { color: C.inkGhost });
-    P.bar(vx, y + 80, right - vx, 5, therm.radiate, { color: C.inkDim, track: C.inkGhost, segments: 4 });
+    P.label('LOAD', tx, y + 74, { color: C.inkFaint });
+    P.bar(vx, y + 68, right - vx, 5, therm.load, { color: C.inkDim, track: C.track, segments: 4 });
+    P.label('RAD', tx, y + 86, { color: C.inkFaint });
+    P.bar(vx, y + 80, right - vx, 5, therm.radiate, { color: C.inkDim, track: C.track, segments: 4 });
 
     // Coolant purges. Small, finite, and the thing you press when the bar is climbing.
     const coolant = stores ? stores.coolant : therm.coolant;
     const coolantMax = Math.max(1, stores ? stores.coolantMax : therm.coolantMax);
-    P.label('PURGE', tx, y + 100, { color: C.inkGhost });
+    P.label('PURGE', tx, y + 100, { color: C.inkFaint });
     P.pips(vx, y + 94, coolantMax, coolant, {
-      size: 7, gap: 3, color: coolant > 0 ? C.ink : C.inkGhost, empty: C.inkGhost,
+      size: 8, gap: 3, color: coolant > 0 ? C.ink : C.inkFaint, empty: C.track,
     });
     if (therm.tripped > 0) {
       // Its own line. Right-aligning it against the purge pips put a five-word figure
       // through a three-pip row, which is how a warning becomes unreadable.
-      P.text(`${therm.tripped} MOUNT${therm.tripped > 1 ? 'S' : ''} TRIPPED`, tx, y + 112, {
+      P.text(`${therm.tripped} MOUNT${therm.tripped > 1 ? 'S' : ''} TRIPPED`, tx, y + 114, {
         font: F.microBold, color: C.warn, track: TRACK.label,
       });
     }
@@ -275,52 +294,70 @@ export class ArmamentPanel extends Panel {
     const { hp, mount, module } = cell;
     const state = this._stateOf(cell, player);
     const spec = STATE[state] ?? STATE.READY;
+    const ink = TONE_INK[spec.tone] ?? C.inkDim;
 
-    P.frame(x, y, w, h, C.ruleDim);
+    P.frame(x, y, w, h, C.rule);
 
     // Header: which mount, and what archetype sits on it.
-    P.label(MOUNT_LABEL[cell.id] ?? cell.id, x + 3, y + 9, { color: C.inkFaint });
+    P.label(MOUNT_LABEL[cell.id] ?? cell.id, x + 4, y + 10, { color: C.inkDim });
     if (mount) {
-      P.label(mount.def.type, x + w - 3, y + 9, { color: C.inkGhost, align: 'right' });
+      P.label(mount.def.type, x + w - 4, y + 10, { color: C.inkFaint, align: 'right' });
     }
 
     // Faction identity stripe. The one chromatic mark in this panel, spent on the one
     // thing the game is about: where the part came from.
     if (module) {
       const fi = factionInk(module.faction);
-      P.fill(x + 3, y + 13, 2, 9, hp?.breached ? C.warnDim : fi.stripe);
-      P.text(P.clip((module.name ?? '').toUpperCase(), F.micro, w - 12), x + 8, y + 21,
-        { font: F.micro, color: hp?.breached ? C.warnDim : C.inkDim, track: TRACK.value });
+      P.fill(x + 4, y + 14, 2, 10, hp?.breached ? C.hostileDim : fi.stripe);
+      // The AUTHORED short name. This cell used to print `CONCORD SIE…` and
+      // `COALITION R…`, so the player could not tell which lance or which battery
+      // they were looking at — in a game about which parts you bolted on.
+      P.text(moduleName(module), x + 10, y + 23,
+        { font: F.micro, color: hp?.breached ? C.hostileDim : C.ink, track: TRACK.value, maxW: w - 14 });
     } else {
-      P.text('— NO MODULE —', x + 3, y + 21, { font: F.micro, color: C.inkGhost, track: TRACK.label });
+      // Full ink, leading dash, and the NAME OF THE SOCKET rather than a fading
+      // `— NO MODULE —` at 1.38:1. An empty mount is information. Clipped to the
+      // cell: `STBD SPONSON` used to run out of its own box and into the next one.
+      P.struck(P.clip(MOUNT_EMPTY[cell.id] ?? 'EMPTY', F.micro, w - 22), x + 4, y + 23,
+        { font: F.micro, color: C.inkFaint });
     }
 
     // --- the state chip ----------------------------------------------------
-    const chipY = y + 26;
-    if (spec.tone === 'alarm') {
+    const chipY = y + 28;
+    if (spec.tone === 'lost' || spec.tone === 'heat') {
+      // A filled plate with dark text. Reserved for the two categories that are
+      // actually costing the player something this second.
       let label = state;
       if (state === 'COOKED' && mount?.thermal?.tripRemaining > 0) {
         label = `COOKED ${mount.thermal.tripRemaining.toFixed(1)}`;
       }
-      P.chip(label, x + 3, chipY, { fill: C.warn, color: C.void, h: 14, minW: w - 6 });
-    } else if (spec.tone === 'warn') {
-      P.frame(x + 3, chipY, w - 6, 14, C.warnDim);
-      if (state === 'RELOAD' && mount) {
-        // The reload clock drawn as a fill INSIDE the chip: the chip is the progress
-        // bar, so a feeding mount reads as a thing that is coming back.
-        const total = mount.def.reload ?? AMMO_SPEC[mount.ammoClass]?.reload ?? 6;
-        const k = 1 - THREE.MathUtils.clamp(mount.reloading / Math.max(0.001, total), 0, 1);
-        P.fill(x + 4, chipY + 1, (w - 8) * k, 12, C.warnGhost);
-      }
+      const pulse = spec.tone === 'lost' ? 1 : 0.82 + 0.18 * Math.sin(P.t * 6);
+      P.ctx.globalAlpha = pulse;
+      P.chip(label, x + 4, chipY, { fill: ink, color: C.void, h: 15, minW: w - 8 });
+      P.ctx.globalAlpha = 1;
+    } else if (spec.tone === 'heatLow') {
+      P.fill(x + 4, chipY, w - 8, 15, C.panel);
+      P.frame(x + 4, chipY, w - 8, 15, ink);
       P.text(state, x + w * 0.5, chipY + 11, {
         font: F.microBold, color: C.warn, align: 'center', track: TRACK.label,
+      });
+    } else if (spec.tone === 'starved') {
+      // An outline and a strike, in neutral ink. RELOAD fills the outline as it
+      // feeds, so a mount that is coming back reads as a thing that is coming back.
+      P.frame(x + 4, chipY, w - 8, 15, C.ruleBright);
+      if (state === 'RELOAD' && mount) {
+        const total = mount.def.reload ?? AMMO_SPEC[mount.ammoClass]?.reload ?? 6;
+        const k = 1 - THREE.MathUtils.clamp(mount.reloading / Math.max(0.001, total), 0, 1);
+        P.fill(x + 5, chipY + 1, (w - 10) * k, 13, C.track);
+      }
+      P.text(state, x + w * 0.5, chipY + 11, {
+        font: F.microBold, color: C.inkDim, align: 'center', track: TRACK.label,
       });
     } else if (spec.tone === 'ok') {
       P.text('READY', x + w * 0.5, chipY + 11, {
         font: F.microBold, color: C.inkDim, align: 'center', track: TRACK.label,
       });
     } else {
-      P.hatch(x + 3, chipY, w - 6, 14, C.inkGhost, { spacing: 5, weight: 1 });
       P.text(state, x + w * 0.5, chipY + 11, {
         font: F.micro, color: C.inkFaint, align: 'center', track: TRACK.label,
       });
@@ -331,69 +368,74 @@ export class ArmamentPanel extends Panel {
       // grants — `condition.grantMul` scales power output, shields, thrust and cargo.
       if (module && hp) {
         const cond = hp.module?.condition ?? 1;
-        P.label('C', x + 3, y + 57, { color: C.inkGhost });
-        P.bar(x + 14, y + 51, w - 20, 6, cond, {
-          color: cond < CONDITION.worn ? C.warn : C.inkDim, track: C.inkGhost,
+        P.label('COND', x + 4, y + 60, { color: C.inkFaint });
+        P.bar(x + 4, y + 64, w - 8, 7, cond, {
+          color: cond < CONDITION.worn ? C.warn : C.inkDim, track: C.track,
         });
-        P.text(fmtPct(cond), x + w - 3, y + 72, { font: F.micro, color: C.inkFaint, align: 'right' });
-        P.label('GRANTS ONLY', x + 3, y + 72, { color: C.inkGhost });
+        P.text(fmtPct(cond), x + w - 4, y + 84, { font: F.micro, color: C.inkDim, align: 'right' });
+        P.label('GRANTS', x + 4, y + 84, { color: C.inkFaint });
       }
+      if (hit) hit.push({ kind: 'armament:mount', panel: this.id, mount: cell.id, x, y, w, h });
       return;
     }
 
     // --- heat and condition -------------------------------------------------
+    // Two labelled bars on their own rows. `H` and `C` beside a bar was a private
+    // code; the words fit and they cost nothing.
     const th = mount.thermal;
-    const barX = x + 14;
-    const barW = w - 20;
     const heat = th ? th.heat : 0;
-    P.label('H', x + 3, y + 51, { color: C.inkGhost });
-    P.bar(barX, y + 45, barW, 7, heat, {
-      color: heat > THERMAL.softCap ? C.warn : C.inkDim,
-      track: C.inkGhost,
+    const barX = x + 32;
+    const barW = w - 36;
+    P.label('HEAT', x + 4, y + 54, { color: C.inkFaint });
+    P.bar(barX, y + 48, barW, 7, heat, {
+      color: heat > THERMAL.softCap ? C.warn : C.warnLow,
+      track: C.track,
       threshold: THERMAL.softCap,
       thresholdColor: C.warnDim,
     });
 
     const cond = mount.condition ?? 1;
-    P.label('C', x + 3, y + 62, { color: C.inkGhost });
-    P.bar(barX, y + 56, barW, 6, cond, {
-      color: cond < CONDITION.worn ? C.warn : C.inkDim, track: C.inkGhost,
+    P.label('COND', x + 4, y + 66, { color: C.inkFaint });
+    P.bar(barX, y + 60, barW, 7, cond, {
+      color: cond < CONDITION.worn ? C.warn : C.inkDim, track: C.track,
     });
 
     // --- stores -------------------------------------------------------------
     // Kinetic mounts print `ready/readyMax` and the magazine behind them; energy
-    // mounts print the shared charge buffer. Two currencies, said in two ways.
+    // mounts print the shared charge buffer. Two currencies, said in two ways, and
+    // an empty one is neutral ink and a struck bar rather than an alarm.
     const cls = mount.ammoClass;
     if (cls) {
       const mag = player.stores ? player.stores.rounds(cls) : 0;
       const dry = mag <= 0 && mount.ready <= 0;
-      P.text(`${mount.ready}/${mount.readyMax}`, x + 3, y + 76, {
-        font: F.micro, color: dry ? C.warn : C.inkDim,
+      P.text(`${mount.ready}/${mount.readyMax}`, x + 4, y + 82, {
+        font: F.micro, color: dry ? C.inkFaint : C.inkDim,
       });
-      P.text(`MAG ${mag}`, x + w - 3, y + 76, {
-        font: F.micro, color: dry ? C.warn : C.inkGhost, align: 'right',
+      P.text(`MAG ${mag}`, x + w - 4, y + 82, {
+        font: F.micro, color: dry ? C.inkFaint : C.inkDim, align: 'right',
       });
+      if (dry) P.rule(x + 4, y + 79, w - 8, P.hair, C.inkFaint);
     } else {
       const chg = stores ? stores.charge / Math.max(1, stores.chargeMax) : 0;
-      P.label('CHG', x + 3, y + 76, { color: C.inkGhost });
-      P.bar(x + 28, y + 70, w - 34, 6, chg, {
-        color: chg < 0.15 ? C.warn : C.inkDim, track: C.inkGhost,
+      P.label('CHG', x + 4, y + 82, { color: C.inkFaint });
+      P.bar(x + 32, y + 76, w - 36, 7, chg, {
+        color: C.inkDim, track: C.track, struck: chg < 0.02,
       });
     }
 
     // --- persistent structural states ---------------------------------------
     // These survive underneath whatever the loud chip says. A frozen traverse ring is
-    // permanent until it is repaired, and it changes how the ship must be flown, so it
+    // permanent until it is repaired and it changes how the ship must be flown, so it
     // may not be hidden by a transient RELOAD.
-    let sx = x + 3;
+    let sx = x + 4;
     if (mount.parts?.traverseFrozen) {
-      sx = P.chipOutline('FROZEN', sx, y + 81, { color: C.warn, h: 12, padX: 3 }) + 2;
+      sx = P.chipOutline('FROZEN', sx, y + 88, { color: C.inkDim, border: C.ruleBright, h: 13, padX: 3 }) + 2;
     }
     if (cond < CONDITION.worn && cond >= CONDITION.inert) {
-      sx = P.chipOutline('WORN', sx, y + 81, { color: C.inkFaint, h: 12, padX: 3 }) + 2;
+      sx = P.chipOutline('WORN', sx, y + 88, { color: C.inkDim, border: C.ruleBright, h: 13, padX: 3 }) + 2;
     }
-    if (th && th.trips > 0 && sx < x + w - 18) {
-      P.chipOutline(`×${th.trips}`, sx, y + 81, { color: C.warnDim, h: 12, padX: 3 });
+    if (th && th.trips > 0 && sx < x + w - 20) {
+      P.chipOutline(`×${th.trips}`, sx, y + 88, { color: C.warn, border: C.warnDim, h: 13, padX: 3 });
     }
 
     // --- sub-parts ----------------------------------------------------------
@@ -403,34 +445,35 @@ export class ArmamentPanel extends Panel {
     const parts = mount.parts?.list ?? [];
     const n = parts.length;
     if (n > 0) {
-      const sq = Math.min(15, Math.floor((w - 6) / n) - 2);
-      let px = x + 3;
+      const sq = Math.min(16, Math.floor((w - 8) / n) - 2);
+      let px2 = x + 4;
       for (const part of parts) {
-        const py = y + h - sq - 4;
+        const py2 = y + h - sq - 5;
         // The square fills from the bottom with the part's remaining health, so a
         // half-shot feed reads as half a square. A healthy part is a SOLID block —
-        // the previous near-black fill made every live part look like an empty slot.
-        P.fill(px, py, sq, sq, C.inkGhost);
+        // a near-black fill made every live part look like an empty slot.
+        P.fill(px2, py2, sq, sq, C.track);
         if (!part.destroyed && part.health > 0) {
-          P.fill(px, py + sq * (1 - part.health), sq, sq * part.health,
+          P.fill(px2, py2 + sq * (1 - part.health), sq, sq * part.health,
             part.health < 0.5 ? C.warn : C.inkDim);
         }
-        P.frame(px, py, sq, sq, part.destroyed ? C.warn : C.ruleDim);
-        P.text(PART_LETTER[part.kind] ?? '?', px + sq * 0.5, py + sq - 3.5, {
-          font: F.microBold,
-          color: part.destroyed ? C.warn : part.health > 0.35 ? C.void : C.ink,
-          align: 'center', track: TRACK.none,
-        });
+        P.frame(px2, py2, sq, sq, part.destroyed ? C.hostile : C.ruleBright);
         if (part.destroyed) {
-          P.hatch(px + 1, py + 1, sq - 2, sq - 2, C.warn, { spacing: 4, weight: 1 });
+          // Hatch first, glyph second: the letter is never crossed by the pattern.
+          P.hatch(px2 + 1, py2 + 1, sq - 2, sq - 2, C.hostileDim, { spacing: 4, weight: 1 });
         }
+        P.text(PART_LETTER[part.kind] ?? '?', px2 + sq * 0.5, py2 + sq - 4, {
+          font: F.microBold,
+          color: part.destroyed ? C.hostile : part.health > 0.4 ? C.void : C.ink,
+          align: 'center', track: TRACK.none, onFill: !part.destroyed && part.health > 0.4,
+        });
         if (hit) {
           hit.push({
             kind: 'armament:part', panel: this.id, mount: cell.id, partId: part.id,
-            x: px, y: py, w: sq, h: sq,
+            x: px2, y: py2, w: sq, h: sq,
           });
         }
-        px += sq + 2;
+        px2 += sq + 2;
       }
     }
 
@@ -475,54 +518,58 @@ export class ArmamentPanel extends Panel {
   }
 
   _drawHotbar(P, x, y, w, h, hit) {
-    P.label('DEVICES', x, y + 8, { color: C.inkFaint });
-    P.label('PRESS 4-8', x, y + 22, { color: C.inkGhost });
+    P.label('DEVICES', x, y + 9, { color: C.inkDim });
+    P.label('PRESS 4-8', x, y + 23, { color: C.inkFaint });
     const rows = this._devicesFor(this.ui.time);
     if (!rows.length) {
-      P.text('NONE REGISTERED', x + 62, y + 8, { font: F.micro, color: C.inkGhost, track: TRACK.label });
+      P.struck('NONE REGISTERED', x + 70, y + 9, { font: F.micro, color: C.inkFaint });
       return;
     }
-    const slotW = Math.floor((w - 62) / rows.length);
-    let sx = x + 62;
+    const slotW = Math.floor((w - 70) / rows.length);
+    let sx = x + 70;
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
       const usable = r.ready;
       const sy = y;
       const sh = h - 4;
 
+      // The plate first, then the hatch, then the type. The hatch used to be drawn
+      // OVER the finished slot, so `NONE CARRIED` — the one line telling the player
+      // why the device will not fire — was struck through by it.
+      P.fill(sx, sy, slotW - 4, sh, C.panel);
+      if (!usable && !r.active) P.hatch(sx, sy, slotW - 4, sh, C.track, { spacing: 6, weight: 1 });
       if (r.active) {
-        P.fill(sx, sy, slotW - 3, sh, C.warnGhost);
-        P.frame(sx, sy, slotW - 3, sh, C.warn);
+        P.fill(sx, sy, slotW - 4, sh, C.warnGhost);
+        P.frame(sx, sy, slotW - 4, sh, C.warn);
       } else {
-        P.frame(sx, sy, slotW - 3, sh, usable ? C.rule : C.ruleDim);
+        P.frame(sx, sy, slotW - 4, sh, usable ? C.ruleBright : C.rule);
       }
 
       // The key cap, drawn as a chip so it reads as a thing you press. The reference
       // does exactly this: `E Open Cargo`, keycap first.
-      P.chip(HOTBAR_KEYS[i], sx + 2, sy + 2, {
-        fill: usable ? C.ink : C.inkGhost, color: C.void, h: 10, padX: 3, font: F.micro,
+      P.chip(HOTBAR_KEYS[i], sx + 3, sy + 3, {
+        fill: usable ? C.ink : C.inkFaint, color: C.void, h: 11, padX: 4, font: F.micro,
       });
 
-      // Short name. Devices have long names and a narrow slot; the codex carries the
-      // full one and the line below carries the reason it cannot fire.
-      P.text(P.clip(shortName(r.name), F.micro, slotW - 52), sx + 18, sy + 10, {
-        font: F.micro, color: usable ? C.ink : C.inkFaint, track: TRACK.label,
+      // The AUTHORED short name — `COOLANT`, `BOARD CHG` — not `COOLANT PU…`.
+      P.text(itemName(r.id), sx + 22, sy + 12, {
+        font: F.micro, color: usable ? C.ink : C.inkDim, track: TRACK.label,
       });
 
-      P.text(`×${r.count}`, sx + slotW - 9, sy + 10, {
-        font: F.microBold, color: r.count > 0 ? C.ink : C.warn, align: 'right',
+      P.text(`×${r.count}`, sx + slotW - 10, sy + 12, {
+        font: F.microBold, color: r.count > 0 ? C.ink : C.inkFaint, align: 'right',
       });
 
       const sub = r.active ? `RUNNING ${r.remaining.toFixed(1)}s`
         : usable ? `${r.volume} m3 EACH` : (r.reason ?? '').toUpperCase();
-      P.text(P.clip(sub, F.micro, slotW - 10), sx + 4, sy + sh - 3, {
-        font: F.micro, color: r.active ? C.warn : usable ? C.inkGhost : C.warnDim, track: TRACK.label,
-      });
-
-      if (!usable && !r.active) P.hatch(sx, sy, slotW - 3, sh, C.inkGhost, { spacing: 6, weight: 1 });
+      // On a strip of plate of its own so the hatch behind the slot cannot cross it.
+      const subW = P.measure(sub, F.micro, TRACK.label);
+      if (!usable && !r.active) P.fill(sx + 3, sy + sh - 13, Math.min(slotW - 8, subW + 4), 12, C.panel);
+      P.text(sub, sx + 5, sy + sh - 4, {
+        font: F.micro, color: r.active ? C.warn : usable ? C.inkFaint : C.inkDim, track: TRACK.label, maxW: slotW - 12 });
 
       if (hit) {
-        hit.push({ kind: 'armament:device', panel: this.id, itemId: r.id, x: sx, y: sy, w: slotW - 3, h: sh });
+        hit.push({ kind: 'armament:device', panel: this.id, itemId: r.id, x: sx, y: sy, w: slotW - 4, h: sh });
       }
       sx += slotW;
     }
@@ -569,16 +616,3 @@ export class ArmamentPanel extends Panel {
   }
 }
 
-/** `Emergency Coolant Purge` → `COOLANT PURGE`. Drops the adjective, keeps the noun. */
-const SHORT = {
-  coolant_purge: 'COOLANT PURGE',
-  decoy: 'DECOY',
-  boarding_charge: 'BOARDING CHG',
-  scan_pulse: 'SURVEY PULSE',
-  jury_rig: 'JURY-RIG',
-};
-function shortName(name) {
-  const s = String(name ?? '').toUpperCase();
-  for (const k in SHORT) if (getItem(k)?.name?.toUpperCase() === s) return SHORT[k];
-  return s;
-}

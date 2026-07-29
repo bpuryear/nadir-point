@@ -156,7 +156,7 @@ export class TacticalOverlay {
       const ox = a.origin.x;
       const oz = a.origin.z;
       const bearing = a.bearing && a.online;
-      const stroke = !a.online ? C.inkGhost : bearing ? C.hostile : C.inkFaint;
+      const stroke = !a.online ? C.track : bearing ? C.hostile : C.inkFaint;
 
       // A 2*PI "arc" is a utility mount - the salvage cradle is declared full-circle
       // by hardpoints.js - not a firing arc. It gets a bare range circle.
@@ -205,7 +205,7 @@ export class TacticalOverlay {
           proj.point(ox + Math.sin(ang) * range, 0, oz + Math.cos(ang) * range, this._arc[i]);
         }
         P.polyline(this._arc, n + 1, {
-          stroke: bearing ? C.hostileDim : C.inkGhost, weight: 1, close: false, dash: this._dash,
+          stroke: bearing ? C.hostileDim : C.track, weight: 1, close: false, dash: this._dash,
         });
       }
 
@@ -214,9 +214,12 @@ export class TacticalOverlay {
       const mid = a.centre;
       if (proj.point(ox + Math.sin(mid) * near * 0.84, 0, oz + Math.cos(mid) * near * 0.84, this._pt)
         && this._pt.x > 130 && this._pt.x < P.w - 130 && this._pt.y > 40 && this._pt.y < P.h - 40) {
-        P.textIfClear(`${a.type.toUpperCase()} ${fmtRange(a.range)}`, this._pt.x, this._pt.y, {
-          font: F.micro, color: bearing ? C.hostile : C.inkFaint,
-          align: 'center', track: TRACK.label,
+        // A filled chip, not light ink on nothing. `reference-ui-language.md` §4:
+        // world-anchored strings get a solid ground with dark text, which is the only
+        // thing that survives an arbitrary backdrop — these used to measure 1.6:1
+        // against a gas giant's limb.
+        P.worldLabel(`${a.type.toUpperCase()} ${fmtRange(a.range)}`, this._pt.x, this._pt.y - 6, {
+          fill: bearing ? C.hostile : C.inkFaint, color: C.void, h: 12,
         });
       }
     }
@@ -250,7 +253,7 @@ export class TacticalOverlay {
     for (let k = 0; k < shown.length; k++) {
       const ring = shown[k];
       this._planeRing(P, player.position.x, player.position.z, ring.r,
-        ring.salvage ? C.salvageGhost : C.inkGhost, 1, this._dash);
+        ring.salvage ? C.salvageGhost : C.track, 1, this._dash);
       // Only the outermost weapon envelope and the tractor get a caption. The rest
       // are already named by their arc wedge, and five captions round five ellipses
       // is how a tactical display becomes wallpaper.
@@ -261,9 +264,8 @@ export class TacticalOverlay {
         const i = (start + (step % 2 ? -1 : 1) * Math.ceil(step / 2) + RING_SEGS * 2) % RING_SEGS;
         const p = this._ring[i];
         if (!p.ok || p.x < 150 || p.x > P.w - 150 || p.y < 40 || p.y > P.h - 130) continue;
-        if (!P.textIfClear(`${ring.label} ${fmtRange(ring.r)}`, p.x, p.y - 4, {
-          font: F.micro, color: ring.salvage ? C.salvageDim : C.inkGhost,
-          align: 'center', track: TRACK.label,
+        if (!P.worldLabel(`${ring.label} ${fmtRange(ring.r)}`, p.x, p.y - 10, {
+          fill: ring.salvage ? C.salvage : C.inkFaint, color: C.void, h: 12,
         })) continue;
         break;
       }
@@ -300,8 +302,9 @@ export class TacticalOverlay {
       P.rule(this._pt.x - r, this._pt.y - r, r * 2, P.hair, col);
       P.rule(this._pt.x - r, this._pt.y + r, r * 2, P.hair, col);
       if (r > 12) {
-        P.textIfClear(s.classDef.name.toUpperCase(), this._pt.x, this._pt.y + r + 12,
-          { font: F.micro, color: col, align: 'center', track: TRACK.label });
+        P.worldLabel(s.classDef.name.toUpperCase(), this._pt.x, this._pt.y + r + 4, {
+          fill: hostile ? C.hostileDim : C.friendlyDim, color: C.void, h: 12,
+        });
       }
     }
 
@@ -358,14 +361,19 @@ export class TacticalOverlay {
     // and a thin leader line down to the hull. Observed first-hand off the reference
     // frame and adopted wholesale: it is far more legible than a wireframe box, it
     // scales to any object size, and it puts the range where the eye already is.
-    const chipY = cy - ringR - 42;
+    // Clamped clear of the top strip: at close range the ring is larger than the
+    // viewport and an unclamped bracket climbs off the top of the frame, through the
+    // time controls on its way out. When the clamp bites, the leader is dropped -
+    // a leader line drawn from inside the ring to the ring is noise.
+    const wantY = cy - ringR - 42;
+    const chipY = Math.max(150, Math.min(P.h - 90, wantY));
     const label = `${target.classDef.name.toUpperCase()} [${String(target.classDef.role ?? 'CONTACT').toUpperCase()}]`;
     P.chip(label, cx, chipY, { fill: C.hostile, color: C.void, h: 14, align: 'center', font: F.microBold });
     const dist = player.position.distanceTo(target.position);
     P.chipOutline(fmtRange(dist), cx, chipY + 16, {
       color: C.hostile, border: C.hostileDim, h: 12, align: 'center',
     });
-    P.leader(cx, chipY + 29, cx, cy - ringR - 4, C.hostileDim, 1);
+    if (chipY === wantY) P.leader(cx, chipY + 29, cx, cy - ringR - 4, C.hostileDim, 1);
 
     // Ring track.
     const c = P.ctx;
@@ -418,8 +426,8 @@ export class TacticalOverlay {
 
       // GREY = no installed weapon can bear from this relative bearing. This is the
       // teaching mechanism; it is deliberately the loudest state change on the ring.
-      const col = dead ? C.inkGhost : e.bears ? C.hostile : C.inkFaint;
-      const track = dead ? C.inkGhost : e.bears ? C.hostileGhost : C.inkGhost;
+      const col = dead ? C.track : e.bears ? C.hostile : C.inkFaint;
+      const track = dead ? C.track : e.bears ? C.hostileGhost : C.track;
 
       const a0 = e.angle - halfSpan;
       const a1 = e.angle + halfSpan;
@@ -453,7 +461,7 @@ export class TacticalOverlay {
         c.lineWidth = 3;
         c.beginPath();
         c.arc(cx, cy, ringR + 8, a0, a1);
-        c.strokeStyle = SALVAGE_INK[e.salvageState] ?? C.inkGhost;
+        c.strokeStyle = SALVAGE_INK[e.salvageState] ?? C.track;
         c.stroke();
         if (e.salvageState === 'SCRAP') {
           // A section that has fallen past scrap is struck out: it is not coming back,
@@ -471,7 +479,7 @@ export class TacticalOverlay {
       // Leader from the segment to the part it is describing.
       const lx = cx + Math.cos(e.angle) * (ringR - 8);
       const ly = cy + Math.sin(e.angle) * (ringR - 8);
-      if (e.ok) P.leader(lx, ly, e.x, e.y, dead ? C.inkGhost : e.bears ? C.hostileDim : C.inkGhost, 1);
+      if (e.ok) P.leader(lx, ly, e.x, e.y, dead ? C.track : e.bears ? C.hostileDim : C.track, 1);
 
       // A cross on the part itself. Hollow when it is gone.
       if (e.ok) {
@@ -518,12 +526,12 @@ export class TacticalOverlay {
         const anchorX = cx + Math.cos(e.angle) * (ringR + 3);
         const anchorY = cy + Math.sin(e.angle) * (ringR + 3);
         P.leader(anchorX, anchorY, tx - side * 4, it.ly - 3,
-          dead ? C.inkGhost : e.bears ? C.hostileGhost : C.inkGhost, 1);
+          dead ? C.track : e.bears ? C.hostileGhost : C.track, 1);
 
         const name = (s.def.label ?? s.def.id).toUpperCase();
         P.text(dead ? `${name} ✕` : name, tx, it.ly, {
           font: isAim ? F.microBold : F.micro,
-          color: dead ? C.inkGhost : e.bears ? C.ink : C.inkFaint,
+          color: dead ? C.inkFaint : e.bears ? C.ink : C.inkFaint,
           align, track: TRACK.label,
         });
         // Two figures per entry, and they say opposite things: what is left to shoot,
@@ -532,8 +540,8 @@ export class TacticalOverlay {
         const hpText = dead ? 'DESTROYED' : fmtPct(frac);
         P.text(e.salvageState ? `${hpText}  ${e.salvageState}` : hpText, tx, it.ly + 10, {
           font: F.micro,
-          color: e.salvageState ? (SALVAGE_INK[e.salvageState] ?? C.inkGhost)
-            : dead ? C.inkGhost : e.bears ? C.hostileDim : C.inkGhost,
+          color: e.salvageState ? (SALVAGE_INK[e.salvageState] ?? C.inkFaint)
+            : dead ? C.track : e.bears ? C.hostileDim : C.track,
           align,
         });
       }
@@ -596,7 +604,15 @@ export class TacticalOverlay {
       let plateY = y - 13;
       if (!P.claim(cx - plateW * 0.5, plateY, plateW, plateH, 2)) {
         const above = cy - ringR - 58 - plateH;
-        if (P.claim(cx - plateW * 0.5, above, plateW, plateH, 2)) plateY = above;
+        if (!P.claim(cx - plateW * 0.5, above, plateW, plateH, 2)) {
+          // Nowhere free. DROP IT. It used to be drawn anyway on the theory that
+          // being partly covered beats being missing, and the frames showed what
+          // actually happens: the opaque panel drawn afterwards erases it and the
+          // player is left with a rectangle of half a sentence. The target panel
+          // carries all four of these figures.
+          return;
+        }
+        plateY = above;
       }
       y = plateY + 13;
 
@@ -697,12 +713,12 @@ export class TacticalOverlay {
       const a0 = -Math.PI * 0.5 + i * span + 0.06;
       const a1 = -Math.PI * 0.5 + (i + 1) * span - 0.06;
       const isAim = aimedPart === part.id;
-      const col = part.destroyed ? C.inkGhost : e.bears ? C.hostile : C.inkFaint;
+      const col = part.destroyed ? C.track : e.bears ? C.hostile : C.inkFaint;
 
       c.lineWidth = isAim ? 7 : 5;
       c.beginPath();
       c.arc(cx, cy, R, a0, a1);
-      c.strokeStyle = part.destroyed ? C.inkGhost : e.bears ? C.hostileGhost : C.inkGhost;
+      c.strokeStyle = part.destroyed ? C.track : e.bears ? C.hostileGhost : C.track;
       c.stroke();
       if (!part.destroyed && part.health > 0) {
         c.beginPath();
@@ -727,12 +743,12 @@ export class TacticalOverlay {
       const align = Math.cos(mid) < 0 ? 'right' : 'left';
       P.text(part.destroyed ? `${part.label} ✕` : part.label, lx, ly, {
         font: isAim ? F.microBold : F.micro,
-        color: part.destroyed ? C.inkGhost : e.bears ? C.ink : C.inkFaint,
+        color: part.destroyed ? C.inkFaint : e.bears ? C.ink : C.inkFaint,
         align, track: TRACK.label,
       });
       P.text(part.destroyed ? 'GONE' : `${fmtPct(part.health)} · ${PART_CONSEQUENCE[part.kind] ?? ''}`, lx, ly + 10, {
         font: F.micro,
-        color: part.destroyed ? C.inkGhost : e.bears ? C.hostileDim : C.inkGhost,
+        color: part.destroyed ? C.inkFaint : e.bears ? C.hostileDim : C.inkFaint,
         align, track: TRACK.label,
       });
 
@@ -740,7 +756,7 @@ export class TacticalOverlay {
       // it describes are unambiguously the same thing.
       if (e.ok) {
         P.leader(cx + Math.cos(mid) * (R - 4), cy + Math.sin(mid) * (R - 4), e.x, e.y,
-          part.destroyed ? C.inkGhost : e.bears ? C.hostileDim : C.inkGhost, 1);
+          part.destroyed ? C.track : e.bears ? C.hostileDim : C.track, 1);
         const k = part.destroyed ? 3 : 4;
         P.rule(e.x - k, e.y, k * 2, P.hair, col);
         P.rule(e.x, e.y - k, P.hair, k * 2, col);
@@ -760,30 +776,58 @@ export class TacticalOverlay {
   // =========================================================================
 
   _drawCoverageRose(P, player, combat) {
+    const mounts = player.weapons ?? [];
+    this._cov.length = 0;
+    let drawable = 0;
+    for (const m of mounts) {
+      if (!m.online || m.def.type === 'pd') continue;
+      const w = Math.min(m.yawWidth, Math.PI * 2);
+      // Utility mounts are declared full-circle and would report 100 % coverage on a
+      // hull with a hole in it. They are not weapons; they do not count.
+      if (w < Math.PI * 1.98) { this._cov.push({ centre: m.yawCentre, width: w }); drawable++; }
+    }
+    const pct = drawable ? arcUnion(this._cov) / (Math.PI * 2) : 0;
+
+    // The dial lives above the player-state block, in the one column of the frame
+    // that no welded readout and no window is allowed into.
+    const cx = 76;
+    const baseY = P.h - this.ui.hud.shipPanelH - 30;
+
+    /**
+     * COLLAPSED UNTIL IT HAS AN ARC TO DRAW.
+     *
+     * On a bare hull this spent about 90x90 px drawing an empty circle and the words
+     * `0% OF CIRCLE` — the largest single element in the lower-left quadrant, carrying
+     * no information at all until a weapon was fitted. A readout with nothing to say
+     * says it in one line.
+     */
+    if (!drawable) {
+      const txt = 'ARC 0% — NO MOUNTS BEAR';
+      const w = P.measure(txt, F.micro, TRACK.label) + 20;
+      P.plate(cx - 10, baseY - 14, w, 18, { border: C.ruleDim });
+      P.text(txt, cx, baseY - 2, { font: F.micro, color: C.inkFaint, track: TRACK.label });
+      return;
+    }
+
     const R = 36;
-    const cx = 404;
-    const cy = P.h - 76;
+    const cy = baseY - R - 16;
     const c = P.ctx;
 
-    P.label('ARC COVERAGE', cx - R, cy - R - 14, { color: C.inkFaint });
+    P.plate(cx - R - 12, cy - R - 24, R * 2 + 24, R * 2 + 54, { border: C.ruleDim });
+    P.label('ARC COVERAGE', cx - R - 2, cy - R - 10, { color: C.inkDim });
 
     // Ship-relative: bow at the top. This is the one place in the interface that is
     // NOT world-oriented, because the question it answers is "where do my guns
     // point relative to my nose".
     c.beginPath();
     c.arc(cx, cy, R, 0, Math.PI * 2);
-    c.strokeStyle = C.ruleDim;
+    c.strokeStyle = C.rule;
     c.lineWidth = 1;
     c.stroke();
 
-    const mounts = player.weapons ?? [];
-    this._cov.length = 0;
     for (const m of mounts) {
       if (!m.online || m.def.type === 'pd') continue;
       const w = Math.min(m.yawWidth, Math.PI * 2);
-      // Utility mounts are declared full-circle and would report 100 % coverage on a
-      // hull with a hole in it. They are not weapons; they do not count.
-      if (w < Math.PI * 1.98) this._cov.push({ centre: m.yawCentre, width: w });
       // Screen angle: bow (+Z, yaw 0) is up, and yaw increases clockwise on screen
       // so the rose matches the arcs drawn on the plane under a top-down camera.
       const a0 = -Math.PI * 0.5 + m.yawCentre - w * 0.5;
@@ -792,7 +836,7 @@ export class TacticalOverlay {
       c.moveTo(cx, cy);
       c.arc(cx, cy, R - 3, a0, a1);
       c.closePath();
-      c.fillStyle = C.inkGhost;
+      c.fillStyle = C.track;
       c.fill();
       c.beginPath();
       c.arc(cx, cy, R - 3, a0, a1);
@@ -819,9 +863,8 @@ export class TacticalOverlay {
         { fill: bears ? C.friendly : C.warn });
     }
 
-    const pct = arcUnion(this._cov) / (Math.PI * 2);
-    P.text(`${Math.round(pct * 100)}% OF CIRCLE`, cx, cy + R + 15, {
-      font: F.micro, color: pct > 0.92 ? C.inkFaint : C.warnDim, align: 'center', track: TRACK.label,
+    P.text(`${Math.round(pct * 100)}% OF CIRCLE`, cx, cy + R + 18, {
+      font: F.micro, color: pct > 0.92 ? C.inkDim : C.warn, align: 'center', track: TRACK.label,
     });
   }
 }

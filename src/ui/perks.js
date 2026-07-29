@@ -25,7 +25,24 @@
 
 import { MEV } from '../sim/meta/events.js';
 import { C, F, TRACK, factionInk } from './theme.js';
+import { moduleName } from './names.js';
 import { Panel, PAD, tableHead, rowBack } from './panels.js';
+
+/**
+ * THE STATUS LANE.
+ *
+ * Every row in this panel ends in a chip — BUY, SHORT, AT MAXIMUM, a gate fraction —
+ * and the chip used to be drawn from the right edge ON TOP of whatever the row had
+ * already written there. `BOARDING CHARGE 22 ALLO 10 COMP 8 ELE[C]` lost its last
+ * glyph to an AFFORDABLE chip that way. The lane is measured once from the widest
+ * chip the panel can emit and every other column is laid out inside what is left.
+ */
+const CHIP_SAMPLES = ['AT MAXIMUM', 'SHORT 999 ELEC', 'BUY · 160 ALLO · 55 COMP', 'BUILD'];
+function statusLane(P) {
+  let w = 0;
+  for (const s of CHIP_SAMPLES) w = Math.max(w, P.measure(s, F.microBold, TRACK.label) + 10);
+  return w;
+}
 
 export class PerksPanel extends Panel {
   constructor(ui) {
@@ -33,11 +50,9 @@ export class PerksPanel extends Panel {
       id: 'perks',
       title: 'HULL · PERKS AND PATTERNS',
       hint: 'P',
-      w: 500,
-      h: 400,
-      // Right of frame: OBJECTIVES opens on the left and these two are the pair the
-      // player reads together — what the world is asking, and what the hull can buy.
-      place: (P) => ({ x: P.w - 530, y: Math.max(40, Math.min(118, P.h - 440)) }),
+      w: 556,
+      h: 470,
+      maxH: 640,
     });
     this.ui = ui;
     this.world = ui.world;
@@ -67,7 +82,7 @@ export class PerksPanel extends Panel {
 
   drawBody(P, x, y, w, h, hit, clip) {
     if (!this.world.systems?.perks) {
-      P.text('NO PROGRESSION LAYER', x, y + 14, { font: F.small, color: C.inkGhost, track: TRACK.label });
+      P.text('NO PROGRESSION LAYER', x, y + 14, { font: F.small, color: C.inkFaint, track: TRACK.label });
       return;
     }
     this._refresh(this.ui.time);
@@ -75,49 +90,58 @@ export class PerksPanel extends Panel {
     let cy = y + 8;
     P.label('PERMANENT WORK ON THIS HULL', x, cy, { color: C.inkFaint });
     P.label('PAID FOR OUT OF THE SAME POOLS AS REPAIRS', x + w, cy,
-      { color: C.inkGhost, align: 'right' });
+      { color: C.inkFaint, align: 'right' });
     P.hline(x, cy + 5, w, C.rule);
     cy += 16;
 
     for (const p of this._perks) {
-      const rowH = 40;
-      if (cy > clip.clipBottom + rowH || cy + rowH < clip.clipTop) { cy += rowH; continue; }
+      const rowH = 48;
+      if (cy + rowH > clip.clipBottom) { this.hidden++; cy += rowH; continue; }
+      if (cy + rowH < clip.clipTop) { cy += rowH; continue; }
       cy = this._drawPerk(P, x, cy, w, p, hit);
     }
 
     // --- patterns -----------------------------------------------------------
     cy += 10;
     P.label('PATTERNS HELD', x, cy, { color: C.inkFaint });
-    P.label('A REBUILD COMES OUT AT 85% CONDITION — FINDING THE REAL THING IS STILL BETTER',
-      x + w, cy, { color: C.inkGhost, align: 'right' });
+    P.label('REBUILDS COME OUT AT 85% — FINDING ONE IS STILL BETTER',
+      x + w, cy, { color: C.inkFaint, align: 'right' });
     P.hline(x, cy + 5, w, C.rule);
     cy += 15;
-    cy = tableHead(P, x, cy, w, [['MODULE', 0], ['MOUNT', 168], ['COST', 226], ['', w, 'right']]) + 13;
+    const lane = statusLane(P);
+    const colMount = Math.max(150, w - lane - 190);
+    const colCost = colMount + 52;
+    cy = tableHead(P, x, cy, w, [['MODULE', 0], ['MOUNT', colMount], ['COST', colCost]]) + 14;
 
     if (!this._patterns.length) {
-      P.text('NONE RECOVERED', x, cy, { font: F.small, color: C.inkGhost, track: TRACK.label });
+      P.text('NONE RECOVERED', x, cy, { font: F.small, color: C.inkFaint, track: TRACK.label });
       P.text('CUTTING AN INTACT SECTION SOMETIMES TEACHES ITS PATTERN', x, cy + 13,
-        { font: F.micro, color: C.inkGhost, track: TRACK.label });
+        { font: F.micro, color: C.inkFaint, track: TRACK.label });
       cy += 28;
     }
 
     for (const r of this._patterns) {
-      if (cy > clip.clipBottom + 16 || cy + 16 < clip.clipTop) { cy += 16; continue; }
+      if (cy + 8 > clip.clipBottom) { this.hidden++; cy += 17; continue; }
+      if (cy + 17 < clip.clipTop) { cy += 17; continue; }
       const fi = factionInk(r.faction);
-      rowBack(P, x, cy - 11, w, 15, { selected: this.selected === r.moduleId });
-      P.fill(x, cy - 10, 2, 13, fi.stripe);
-      P.text(P.clip(String(r.name).toUpperCase(), F.small, 158), x + 6, cy,
-        { font: F.small, color: r.buildable ? C.ink : C.inkFaint });
-      P.label(r.hardpoint, x + 168, cy, { color: C.inkGhost });
-      P.text(costText(r.cost), x + 226, cy, { font: F.micro, color: r.affordable ? C.inkDim : C.inkFaint });
+      rowBack(P, x, cy - 11, w, 16, { selected: this.selected === r.moduleId });
+      P.fill(x, cy - 10, 2, 14, fi.stripe);
+      // The AUTHORED short name. `DERELICT BARRIER PYL…` told the player nothing.
+      P.text(moduleName(r.moduleId), x + 6, cy,
+        { font: F.small, color: r.buildable ? C.ink : C.inkDim, maxW: colMount - 12 });
+      P.label(r.hardpoint, x + colMount, cy, { color: C.inkFaint });
+      P.text(costText(r.cost), x + colCost, cy,
+        { font: F.micro, color: r.affordable ? C.inkDim : C.inkFaint, maxW: w - lane - colCost - 10 });
       if (r.buildable) {
-        P.chip('BUILD', x + w, cy - 10, { fill: C.ink, color: C.void, h: 13, align: 'right' });
+        P.chip('BUILD', x + w, cy - 11, { fill: C.ink, color: C.void, h: 14, align: 'right' });
       } else {
-        P.chipOutline(P.clip(String(r.reason ?? 'BLOCKED').toUpperCase(), F.microBold, 130),
-          x + w, cy - 10, { color: C.warnDim, h: 13, align: 'right' });
+        // Inside the reserved lane, so a rejection reason can never be drawn through
+        // the price it is refusing.
+        P.chipOutline(P.clip(String(r.reason ?? 'BLOCKED').toUpperCase(), F.microBold, lane - 10),
+          x + w, cy - 11, { color: C.warnDim, h: 14, align: 'right' });
       }
-      if (hit) hit.push({ kind: 'perk:pattern', panel: this.id, moduleId: r.moduleId, x, y: cy - 11, w, h: 15 });
-      cy += 16;
+      if (hit) hit.push({ kind: 'perk:pattern', panel: this.id, moduleId: r.moduleId, x, y: cy - 11, w, h: 16 });
+      cy += 17;
     }
 
     this.scrollMax = Math.max(0, (cy + 10) - y - (this.bodyH - PAD * 2));
@@ -127,46 +151,50 @@ export class PerksPanel extends Panel {
   _drawPerk(P, x, y, w, p, hit) {
     const maxed = p.rank >= p.maxRank;
     const locked = !!(p.gate && !p.gate.met);
-    const col = maxed ? C.inkDim : p.buyable ? C.inkStrong : locked ? C.inkFaint : C.ink;
+    const col = maxed ? C.inkDim : p.buyable ? C.inkStrong : locked ? C.inkDim : C.ink;
+    const lane = statusLane(P);
+    const textW = w - lane - 20;
 
-    rowBack(P, x, y, w, 38, { selected: this.selected === p.id });
+    rowBack(P, x, y, w, 46, { selected: this.selected === p.id });
 
     // Rank pips first: this hull has had this work done to it N times.
-    P.pips(x, y + 6, p.maxRank, p.rank, {
-      size: 6, gap: 3, color: maxed ? C.ink : C.inkDim, empty: C.inkGhost,
+    P.pips(x, y + 7, p.maxRank, p.rank, {
+      size: 6, gap: 3, color: maxed ? C.ink : C.inkDim, empty: C.track,
     });
-    P.text(P.clip(String(p.name).toUpperCase(), F.bodyBold, 200), x + p.maxRank * 9 + 8, y + 12, {
-      font: F.bodyBold, color: col, track: TRACK.label,
-    });
-    P.text(P.clip(String(p.effect).toUpperCase(), F.micro, w - 210), x + p.maxRank * 9 + 8, y + 24, {
-      font: F.micro, color: C.inkGhost, track: TRACK.label,
-    });
+    const nx = x + p.maxRank * 9 + 10;
+    P.text(String(p.name).toUpperCase(), nx, y + 14, {
+      font: F.bodyBold, color: col, track: TRACK.label, maxW: textW - (nx - x) });
+    P.text(String(p.effect).toUpperCase(), nx, y + 27, {
+      font: F.micro, color: C.inkFaint, track: TRACK.label, maxW: textW - (nx - x) });
 
+    const rx = x + w;
     if (maxed) {
-      P.chipOutline('AT MAXIMUM', x + w, y + 4, { color: C.inkDim, h: 13, align: 'right' });
+      P.chipOutline('AT MAXIMUM', rx, y + 5, { color: C.inkDim, h: 14, align: 'right' });
     } else if (locked) {
-      // The gate as a progress bar. `3/5 MODULE INSTALLED` with a bar is a goal.
+      // The gate as a progress bar. `3/5 MODULES INSTALLED` with a bar is a goal, not
+      // a padlock — but the bar and its caption live INSIDE the lane, under the chip,
+      // so neither can be drawn through the perk's own effect line.
       const g = p.gate;
-      P.chipOutline(`${g.have}/${g.need}`, x + w, y + 4, { color: C.warnDim, h: 13, align: 'right' });
-      P.bar(x + w - 168, y + 22, 120, 5, g.need > 0 ? g.have / g.need : 0,
-        { color: C.warnDim, track: C.inkGhost, segments: Math.min(8, g.need) });
-      P.text(P.clip(String(g.text).toUpperCase(), F.micro, 164), x + w, y + 34,
-        { font: F.micro, color: C.inkGhost, align: 'right', track: TRACK.label });
+      P.chipOutline(`${g.have}/${g.need}`, rx, y + 5, { color: C.warnDim, h: 14, align: 'right' });
+      // Under the chip, inside the lane, and clear of the effect line's baseline.
+      P.bar(rx - lane, y + 26, lane, 5, g.need > 0 ? g.have / g.need : 0,
+        { color: C.warnDim, track: C.track, segments: Math.min(8, g.need) });
+      P.text(String(g.text).toUpperCase(), rx, y + 42,
+        { font: F.micro, color: C.inkFaint, align: 'right', track: TRACK.label, maxW: lane });
     } else if (p.affordable) {
-      P.chip(`BUY · ${costText(p.cost)}`, x + w, y + 4, {
-        fill: C.ink, color: C.void, h: 13, align: 'right',
+      P.chip(P.clip(`BUY · ${costText(p.cost)}`, F.microBold, lane - 10), rx, y + 5, {
+        fill: C.ink, color: C.void, h: 14, align: 'right',
       });
     } else {
-      P.chip(`SHORT ${costText(p.shortfall)}`, x + w, y + 4, {
-        fill: C.warn, color: C.void, h: 13, align: 'right',
+      P.chip(`SHORT ${costText(p.shortfall)}`, rx, y + 5, {
+        fill: C.warn, color: C.void, h: 14, align: 'right',
       });
-      P.text(costText(p.cost), x + w, y + 30, {
-        font: F.micro, color: C.inkFaint, align: 'right',
-      });
+      P.text(costText(p.cost), rx, y + 32, {
+        font: F.micro, color: C.inkFaint, align: 'right', maxW: lane });
     }
 
-    if (hit) hit.push({ kind: 'perk:buy', panel: this.id, perkId: p.id, x, y, w, h: 38 });
-    return y + 40;
+    if (hit) hit.push({ kind: 'perk:buy', panel: this.id, perkId: p.id, x, y, w, h: 46 });
+    return y + 48;
   }
 
   onClick(region) {

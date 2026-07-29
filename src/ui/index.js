@@ -38,7 +38,10 @@ import * as THREE from 'three';
 import { EV } from '../core/events.js';
 import { ActiveSet } from '../core/pool.js';
 import { getItem } from '../core/contracts.js';
-import { Surface, Painter, Projector, C, F, TRACK } from './theme.js';
+import {
+  Surface, Painter, Projector, C, F, TRACK,
+  UI_SCALES, setUIScale, uiScale, defaultUIScale,
+} from './theme.js';
 import { HUD, BREACH_WARN_FRACTION } from './hud.js';
 import { TacticalOverlay, bearingAdvice } from './tactical.js';
 import { PowerPanel } from './power.js';
@@ -71,6 +74,22 @@ const PANEL_KEYS = {
   keyk: 'materials',
   keyp: 'perks',
 };
+
+/**
+ * HOLD TO SEE THE SHIP.
+ *
+ * Even with every window closed and a solver keeping the rest off the hull, there is
+ * one thing an interface owes the player of a game about a ship they have built: a
+ * way to look at it with nothing in front of it at all. Held, not toggled, so it
+ * cannot be left on by accident and so the reflex is "press it, look, let go".
+ *
+ * BACKSLASH is free: controls.js owns space, 1-3, [ ], HOME, F, V, H, ESC, Z, F1-F5
+ * and WASD/QE, and this layer owns M, backquote, X, C, J, G, K, P and 4-8.
+ */
+const HIDE_KEY = 'backslash';
+
+/** Cycle the interface scale. See theme.js UI_SCALES. */
+const SCALE_KEY = 'equal';
 
 /** Order-band slots this stream occupies. Both inside the documented UI band. */
 export const UI_ORDER = { watch: 95, draw: 320 };
@@ -110,9 +129,15 @@ export class UILayer {
      * that ours sits on the cruiser at ordinary framings. A panel you can close and
      * drag cannot occlude anything you did not choose to occlude.
      *
-     * Only ARMAMENT opens by default. It carries per-mount heat, condition, stores and
-     * sub-part state — the state that is changing while the player is being shot at,
-     * and therefore the only set that has earned permanent screen space.
+     * NOTHING OPENS BY DEFAULT.
+     *
+     * ARMAMENT used to, and it was measured landing dead centre at every one of five
+     * camera poses: 99.0 % of the ship's pixels altered by the HUD at the everyday
+     * three-quarter view, 36.3 % chrome coverage of the central half of the frame.
+     * A window that is open before the player asked for it is welded chrome wearing a
+     * close button. The tab row along the top says the windows exist and what key
+     * opens them, which is the reference's own idiom (§7, `B Build`, `F1 CAM`), and
+     * the always-on welded readouts carry what genuinely cannot wait for a keystroke.
      */
     this.panels = new PanelHost(this);
     this.armament = this.panels.add(new ArmamentPanel(this));
@@ -150,8 +175,30 @@ export class UILayer {
     /** Directional damage chevron state. Written from the fixed watcher. */
     this.damage = { at: -100, lastHull: -1, amount: 0 };
 
+    /**
+     * LAYER RATES — the number the reference puts first.
+     *
+     * `reference-ui-language.md` §9 calls `0.0 HP/s` out as the single figure carrying
+     * the most decision weight in the reference's whole hull block, because it is the
+     * only one that says whether you are WINNING the repair race right now. A bar
+     * says where you are; a rate says where you are going.
+     *
+     * Sampled on the FIXED step, not the render step, for the same reason the damage
+     * chevron is: at 4x with a 30 fps frame eight sim steps pass per rendered frame,
+     * and a rate differentiated across a rendered frame would read eight times the
+     * true value at 4x and the correct value at 1x. Exponentially smoothed over about
+     * a second so a single shell does not spike it to a meaningless number.
+     */
+    this.vitals = { hull: -1, shield: -1, hullRate: 0, shieldRate: 0, acc: 0 };
+
     this.hit = [];
     this.pointer = { x: -1, y: -1, down: false };
+    /** True while the hide key is held. Suppresses everything but the hint line. */
+    this.hideHUD = false;
+    /** Welded-readout rectangles, rebuilt every frame. See `_weldedRegions`. */
+    this._regions = [];
+    /** The player's projected screen box. Drives the panel solver. */
+    this.shipBox = { x: 0, y: 0, w: 0, h: 0, ok: false };
 
     this._offs = [];
     this._bindEvents();
@@ -247,6 +294,20 @@ export class UILayer {
         e.stopPropagation();
         return;
       }
+      if (code === HIDE_KEY) {
+        // Held, not toggled. `keyup` puts it back; see `_onKeyUp`.
+        this.hideHUD = true;
+        e.stopPropagation(); e.preventDefault();
+        return;
+      }
+      if (code === SCALE_KEY) {
+        const i = UI_SCALES.indexOf(uiScale());
+        const next = UI_SCALES[(i + 1) % UI_SCALES.length] ?? 1;
+        setUIScale(next);
+        this.orderBar.say(`INTERFACE SCALE ${Math.round(next * 100)}%`, 'info');
+        e.stopPropagation(); e.preventDefault();
+        return;
+      }
       if (this.screen) return;
 
       const panelId = PANEL_KEYS[code];
@@ -278,6 +339,14 @@ export class UILayer {
     };
     // Capture phase so a modal screen wins the key before the flight controls see it.
     window.addEventListener('keydown', this._onKeyDown, true);
+    this._onKeyUp = (e) => {
+      if (String(e.code || '').toLowerCase() === HIDE_KEY) this.hideHUD = false;
+    };
+    window.addEventListener('keyup', this._onKeyUp, true);
+    // A window that loses focus mid-hold would otherwise never see the keyup and the
+    // interface would stay hidden until the key was pressed and released again.
+    this._onBlur = () => { this.hideHUD = false; };
+    window.addEventListener('blur', this._onBlur);
 
     /**
      * POINTER, WITHOUT TAKING THE MOUSE AWAY FROM THE GAME.
@@ -291,15 +360,19 @@ export class UILayer {
      */
     this._onWinMove = (e) => {
       if (this.screen) return;
-      this.pointer.x = e.clientX;
-      this.pointer.y = e.clientY;
-      if (this.panels.onPointerMove(e.clientX, e.clientY)) {
+      const px = this.painter.toLocal(e.clientX);
+      const py = this.painter.toLocal(e.clientY);
+      this.pointer.x = px;
+      this.pointer.y = py;
+      if (this.panels.onPointerMove(px, py)) {
         e.stopPropagation();
       }
     };
     this._onWinDown = (e) => {
       if (this.screen) return;
-      const region = this._pick(e.clientX, e.clientY);
+      const px = this.painter.toLocal(e.clientX);
+      const py = this.painter.toLocal(e.clientY);
+      const region = this._pick(px, py);
       if (!region) return;
 
       // The second-tier aim ring. Clicking a sub-part goes through the SAME public
@@ -326,7 +399,7 @@ export class UILayer {
         return;
       }
 
-      if (this.panels.onPointerDown(region, e.clientX, e.clientY)) {
+      if (this.panels.onPointerDown(region, px, py)) {
         e.stopPropagation();
         e.preventDefault();
       }
@@ -336,7 +409,7 @@ export class UILayer {
     };
     this._onWinWheel = (e) => {
       if (this.screen) return;
-      const region = this._pick(e.clientX, e.clientY);
+      const region = this._pick(this.painter.toLocal(e.clientX), this.painter.toLocal(e.clientY));
       if (!region) return;
       if (this.panels.onWheel(region, e.deltaY)) {
         e.stopPropagation();
@@ -356,8 +429,8 @@ export class UILayer {
     if (!canvas) return;
     this._onMove = (e) => {
       const r = canvas.getBoundingClientRect();
-      this.pointer.x = e.clientX - r.left;
-      this.pointer.y = e.clientY - r.top;
+      this.pointer.x = this.painter.toLocal(e.clientX - r.left);
+      this.pointer.y = this.painter.toLocal(e.clientY - r.top);
       this.refit.hoverUid = null;
       this.refit.hoverMount = null;
       const region = this._pick(this.pointer.x, this.pointer.y);
@@ -366,7 +439,8 @@ export class UILayer {
     };
     this._onDown = (e) => {
       const r = canvas.getBoundingClientRect();
-      const region = this._pick(e.clientX - r.left, e.clientY - r.top);
+      const region = this._pick(this.painter.toLocal(e.clientX - r.left),
+        this.painter.toLocal(e.clientY - r.top));
       if (!region) return;
       e.stopPropagation();
       e.preventDefault();
@@ -498,7 +572,7 @@ export class UILayer {
   // Systems
   // =========================================================================
 
-  _fixedUpdate() {
+  _fixedUpdate(dt) {
     const player = this.world.player;
     if (!player) return;
     // Hull damage is not an event, and it is the one thing the chevron needs. Sample
@@ -509,6 +583,21 @@ export class UILayer {
       this.damage.at = this.time;
     }
     this.damage.lastHull = player.hullHP;
+
+    const v = this.vitals;
+    const step = dt || 1 / 60;
+    const shield = player.shields?.current ?? 0;
+    if (v.hull < 0) { v.hull = player.hullHP; v.shield = shield; return; }
+    const k = 1 - Math.exp(-step / 0.9);
+    v.hullRate += ((player.hullHP - v.hull) / step - v.hullRate) * k;
+    v.shieldRate += ((shield - v.shield) / step - v.shieldRate) * k;
+    v.hull = player.hullHP;
+    v.shield = shield;
+    // Below a tenth of a point per second the readout says 0.0 and means it: a rate
+    // that jitters in the last digit while nothing is happening is noise pretending
+    // to be information.
+    if (Math.abs(v.hullRate) < 0.05) v.hullRate = 0;
+    if (Math.abs(v.shieldRate) < 0.05) v.shieldRate = 0;
   }
 
   _render(dt) {
@@ -524,6 +613,7 @@ export class UILayer {
     if (camera) this.projector.begin(camera, P.w, P.h);
 
     this._updateMarkers();
+    this._measureShip(P);
     this.hit.length = 0;
 
     try {
@@ -532,7 +622,20 @@ export class UILayer {
         this.refit.draw(P, this.hit);
         this.hud._drawNotifications(P);
         this.hud._drawOrderBar(P);
+      } else if (this.hideHUD) {
+        // Hold-to-look. One line, bottom-centre, on its own plate so it is legible
+        // over whatever the player wanted to look at.
+        const s = 'INTERFACE HIDDEN — RELEASE \\ TO RESTORE';
+        const tw = P.measure(s, F.microBold, TRACK.label);
+        P.plate(P.w * 0.5 - tw * 0.5 - 10, P.h - 34, tw + 20, 18, { border: C.ruleDim });
+        P.text(s, P.w * 0.5, P.h - 21, {
+          font: F.microBold, color: C.inkDim, align: 'center', track: TRACK.label,
+        });
       } else {
+        // The solver needs the ship's box and the welded rectangles before any window
+        // is placed, and both are frame-local.
+        this.panels.ship = this.shipBox.ok ? this.shipBox : null;
+        this.panels.reserved = this._regions;
         if (camera) this.tactical.draw(P, this.hit);
         this.hud.draw(P);
         this.power.draw(P);
@@ -559,15 +662,40 @@ export class UILayer {
    * instead of a race, and it is the difference between a display that stays
    * readable at every zoom and one that only works at the zoom it was authored at.
    */
+  /**
+   * The welded readouts' rectangles, rebuilt each frame in logical pixels.
+   *
+   * ONE list, read by three consumers: `Painter.claim` (so world-anchored captions
+   * get out of the way), the panel solver (so a window never opens on top of the
+   * hull-integrity block) and the HUD itself (so a block and its plate agree about
+   * where the block is). They used to be three sets of numbers in three files and
+   * they disagreed, which is how the OBJECTIVES window came to cover HULL INTEGRITY.
+   */
+  _weldedRegions(P) {
+    const r = this._regions;
+    r.length = 0;
+    const shipW = this.hud.shipPanelW;
+    const shipH = this.hud.shipPanelH;
+    const tgtW = this.hud.targetPanelW;
+    // `hard` regions are the two blocks the player is actually steering by. A window
+    // that covers the hull-integrity stack or the target's salvage projection has
+    // taken away the reason the player is looking at the screen; everything else here
+    // is chrome that can be covered when the frame genuinely runs out of room.
+    r.push({ id: 'time', x: P.w * 0.5 - 280, y: 0, w: 560, h: 150 });
+    r.push({ id: 'tabs', x: 12, y: 2, w: Math.min(P.w - 24, 620), h: 30 });
+    r.push({ id: 'stores', x: P.w - 214, y: 34, w: 206, h: 96 });
+    r.push({ id: 'ship', x: 14, y: P.h - shipH - 14, w: shipW, h: shipH, hard: true });
+    r.push({ id: 'power', x: P.w * 0.5 - 190, y: P.h - this.power.height - 30, w: 380, h: this.power.height + 26 });
+    r.push({ id: 'target', x: P.w - tgtW - 14, y: P.h - 372, w: tgtW, h: 360, hard: true });
+    // The arc dial's column, above the player-state block. Reserved even when the
+    // dial is collapsed: the collapsed form is a line of type and it needs a ground.
+    r.push({ id: 'arc', x: 24, y: P.h - shipH - 118, w: 130, h: 106 });
+    return r;
+  }
+
   _reserveFrame(P) {
     const claim = (x, y, w, h) => P.claim(x, y, w, h, 3);
-    claim(P.w * 0.5 - 270, 0, 540, 142);            // time strip, order bar, toasts
-    claim(16, 4, 560, 30);                          // window tab row
-    claim(P.w - 200, 6, 200, 108);                  // hold volume and material pools
-    claim(6, P.h - 336, 356, 336);                  // own-ship panel
-    claim(352, P.h - 168, 116, 160);                // arc coverage rose
-    claim(P.w * 0.5 - 196, P.h - 240, 392, 240);    // reactor routing
-    claim(P.w - 376, P.h - 386, 376, 386);          // target panel
+    for (const r of this._weldedRegions(P)) claim(r.x, r.y, r.w, r.h);
 
     // Open windows are opaque. Claiming their rectangles here stops the world-anchored
     // caption layer - range rings, arc labels, contact names - from writing text that
@@ -603,6 +731,35 @@ export class UILayer {
     });
   }
 
+  /**
+   * The player's projected screen box, from the hull's bounding sphere.
+   *
+   * This is the rectangle the interface is not allowed to build on. A sphere is used
+   * rather than the eight corners of an oriented box because the cruiser is 340 m
+   * long and its silhouette changes with every degree of yaw; the sphere is the
+   * conservative answer and being slightly generous about where the ship is costs a
+   * window a few pixels of margin, while being slightly mean costs the player the
+   * sight of their own hull.
+   */
+  _measureShip(P) {
+    const box = this.shipBox;
+    box.ok = false;
+    const player = this.world.player;
+    const proj = this.projector;
+    if (!player || player.dead || !proj.camera) return;
+    if (!proj.vec(player.position, _reserveP)) return;
+    const r = proj.radiusAt(player.position, player.radius ?? 200);
+    // A speck at maximum zoom is not an occlusion problem and reserving 90 px around
+    // it would push every window off a 1280-wide frame for no gain.
+    if (r < 26) return;
+    const pad = Math.min(64, r * 0.35);
+    box.x = _reserveP.x - r - pad;
+    box.y = _reserveP.y - r - pad;
+    box.w = (r + pad) * 2;
+    box.h = (r + pad) * 2;
+    box.ok = true;
+  }
+
   _updateMarkers() {
     for (let i = this.markers.count - 1; i >= 0; i--) {
       const m = this.markers.items[i];
@@ -629,6 +786,8 @@ export class UILayer {
       if (this._onWinDown) window.removeEventListener('pointerdown', this._onWinDown, true);
       if (this._onWinUp) window.removeEventListener('pointerup', this._onWinUp, true);
       if (this._onWinWheel) window.removeEventListener('wheel', this._onWinWheel, true);
+      if (this._onKeyUp) window.removeEventListener('keyup', this._onKeyUp, true);
+      if (this._onBlur) window.removeEventListener('blur', this._onBlur);
     }
     const canvas = this.surface.canvas;
     if (canvas) {

@@ -35,5 +35,29 @@
     "settle": 28,
     "settleAfterSetup": 40,
     "setup": "const w = N.world; const t = w.systems.tactical; t.mode='LOCKED'; t.lockTarget = w.player; t.yaw = t._yawTarget = 0.4; t.pitchOffset = t._pitchTarget = 0.42; t.zoomT = t._zoomTTarget = 0.48; const foe = w.ships.find(s => s !== w.player && !s.dead); if (foe) { w.player.orderAttack(foe); foe.orderAttack(w.player); }"
+  },
+  {
+    "id": "hud-close",
+    "description": "Close pose WITH the interface up. The occlusion frame: diff it against `close` to measure what share of the hull the chrome is standing on.",
+    "settle": 28,
+    "settleAfterSetup": 40,
+    "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 2.35; t.pitchOffset = t._pitchTarget = 0.18; t.zoomT = t._zoomTTarget = 0.02;",
+    "hud": true
+  },
+  {
+    "id": "hud-three-quarter",
+    "description": "The everyday playing view WITH the interface up. This is the frame the HUD-occludes-the-ship finding was measured on.",
+    "settle": 28,
+    "settleAfterSetup": 40,
+    "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 0.9; t.pitchOffset = t._pitchTarget = 0.30; t.zoomT = t._zoomTTarget = 0.26;",
+    "hud": true
+  },
+  {
+    "id": "hud-engagement",
+    "description": "Fight, interface up, hostiles on the plane. Tests the target block and the world-anchored label chips over a lit backdrop.",
+    "settle": 28,
+    "settleAfterSetup": 40,
+    "setup": "const w = N.world; const t = w.systems.tactical; t.mode='LOCKED'; t.lockTarget = w.player; t.yaw = t._yawTarget = 0.4; t.pitchOffset = t._pitchTarget = 0.42; t.zoomT = t._zoomTTarget = 0.48; const foe = w.ships.find(s => s !== w.player && !s.dead); if (foe) { w.player.orderAttack(foe); foe.orderAttack(w.player); }",
+    "hud": true
   }
 ]

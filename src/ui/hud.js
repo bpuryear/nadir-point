@@ -37,9 +37,10 @@ import * as THREE from 'three';
 import { HARDPOINTS } from '../core/contracts.js';
 import { TIME_SCALES_COMBAT } from '../core/units.js';
 import {
-  C, F, TRACK, Painter, screenPointRing, fmtRange, fmtPct,
+  C, F, TRACK, Painter, screenPointRing, fmtRange, fmtPct, fmtSigned,
   factionInk, smootherstep, smoothstep, projectedSalvageState, projectedYieldsModule,
 } from './theme.js';
+import { moduleName, MOUNT_EMPTY } from './names.js';
 
 const RING_SEGS = 44;
 const MOUNT_LABEL = {
@@ -93,7 +94,8 @@ export class HUD {
       this._planeRing(P, p.x, p.z, 220, C.friendlyDim, 1, null);
       if (proj.point(p.x, 0, p.z, this._pt) && this._pt.ok) {
         P.leader(this._pt.x, this._pt.y - 26, this._pt.x, this._pt.y - 8, C.friendlyDim, 1);
-        P.label('ORDERED', this._pt.x, this._pt.y - 30, { color: C.friendlyDim, align: 'center' });
+        // A filled chip, not light ink on nothing: reference-ui-language.md §4.
+        P.worldLabel('ORDERED', this._pt.x, this._pt.y - 40, { fill: C.friendly, color: C.void });
       }
     }
 
@@ -170,13 +172,12 @@ export class HUD {
           P.leader(this._pt2.x, this._pt2.y, this._pt.x, this._pt.y, C.friendlyDim, 1, this._dash8);
         }
         const dist = player ? Math.hypot(m.x - player.position.x, m.z - player.position.z) : 0;
-        P.text(fmtRange(dist), this._pt.x + 12, this._pt.y - 10,
-          { font: F.small, color, track: TRACK.value });
+        P.worldLabel(fmtRange(dist), this._pt.x + 12, this._pt.y - 20, { fill: color, color: C.void, align: 'left' });
         if (m.stage === 'rejected' && m.reason) {
           // On its own plate. A rejection reason is the one string in the interface
           // that has to survive being drawn over a starfield, a hull or an arc.
           const tw = P.measure(m.reason, F.microBold, TRACK.label);
-          P.scrim(this._pt.x + 8, this._pt.y - 4, tw + 12, 15, { alpha: 0.86 });
+          P.plate(this._pt.x + 8, this._pt.y - 4, tw + 12, 15, { border: null });
           P.fill(this._pt.x + 8, this._pt.y - 4, 2, 15, C.warn);
           P.text(m.reason, this._pt.x + 14, this._pt.y + 7,
             { font: F.microBold, color: C.warn, track: TRACK.label });
@@ -194,8 +195,8 @@ export class HUD {
         const grow = 1.9 - 0.9 * k;
         P.corners(this._pt.x, this._pt.y, r * grow * scale, r * grow * scale * 0.74,
           Math.min(18, r * 0.55), color, 1.5);
-        P.label(m.subsystem ? `AIM · ${m.subsystem}` : 'ENGAGE',
-          this._pt.x, this._pt.y - r * grow * 0.74 - 8, { color, align: 'center' });
+        P.worldLabel(m.subsystem ? `AIM · ${String(m.subsystem).toUpperCase()}` : 'ENGAGE',
+          this._pt.x, this._pt.y - r * grow * 0.74 - 20, { fill: color, color: C.void });
       }
     } else if (m.kind === 'salvage') {
       const s = m.section;
@@ -203,7 +204,8 @@ export class HUD {
       if (wp && proj.vec(wp, this._pt)) {
         const r = Math.max(14, proj.radiusAt(wp, (s.radius ?? 40) * 1.6)) * scale;
         P.corners(this._pt.x, this._pt.y, r, r, r * 0.5, color, 1.5);
-        P.label(s.label ?? 'SECTION', this._pt.x, this._pt.y - r - 7, { color, align: 'center' });
+        P.worldLabel(String(s.label ?? 'SECTION').toUpperCase(), this._pt.x, this._pt.y - r - 18,
+          { fill: color, color: C.void });
         if (s.cutProgress > 0) {
           P.bar(this._pt.x - r, this._pt.y + r + 4, r * 2, 3, s.cutProgress,
             { color: C.salvage, track: C.salvageGhost });
@@ -226,20 +228,23 @@ export class HUD {
     const idx = engine.timeScaleIndex;
     const transitBand = table.length > TIME_SCALES_COMBAT.length;
 
-    const cellW = 34, cellH = 17, gap = 3;
+    const cellW = 36, cellH = 18, gap = 3;
     const combatCount = TIME_SCALES_COMBAT.length;
     const extra = transitBand ? table.length - combatCount : 0;
     const totalW = combatCount * (cellW + gap) - gap + (extra ? 14 + extra * (cellW + gap) - gap : 0);
     let x = Math.round(P.w * 0.5 - totalW * 0.5);
-    const y = 22;
+    const y = 46;
 
-    P.label('TIME', x, y - 7, { color: C.inkFaint });
+    // On its own plate, below the window tab row rather than sharing its band — the
+    // tab row's plate used to be drawn afterwards and clip the word TIME to `IME`.
+    P.plate(x - 40, y - 6, totalW + 48, cellH + 12, { border: C.ruleDim });
+    P.label('TIME', x - 34, y + 12, { color: C.inkDim });
 
     for (let i = 0; i < table.length; i++) {
       if (i === combatCount) {
         // The compression band is bracketed off: it is a different privilege, not
         // four more numbers on the same strip.
-        P.label('TRANSIT', x + 4, y - 7, { color: C.salvageDim });
+        P.label('TRANSIT', x + 4, y - 2, { color: C.salvageDim });
         P.vline(x + 5, y, cellH, C.salvageDim);
         x += 14;
       }
@@ -253,10 +258,10 @@ export class HUD {
         P.frame(x, y, cellW, cellH, inBand ? C.salvageDim : C.ruleDim);
       }
       const txt = paused ? 'HOLD' : `${v}×`;
-      P.text(txt, x + cellW * 0.5, y + 12, {
+      P.text(txt, x + cellW * 0.5, y + 13, {
         font: F.microBold,
-        color: active ? C.void : (inBand ? C.salvageDim : C.inkFaint),
-        align: 'center', track: TRACK.label,
+        color: active ? C.void : (inBand ? C.salvageDim : C.inkDim),
+        align: 'center', track: TRACK.label, onFill: active,
       });
       x += cellW + gap;
     }
@@ -264,8 +269,14 @@ export class HUD {
     if (engine.paused) {
       const pulse = 0.55 + 0.45 * Math.sin(P.t * 3.4);
       P.hline(0, 0, P.w, C.warn, 2);
-      P.text('SIMULATION HELD', P.w * 0.5, y + 32,
-        { font: F.microBold, color: C.warn, align: 'center', track: TRACK.head, alpha: pulse });
+      // Its own plate, clear of the strip's. A pulsing string half-behind a border
+      // reads as a glitch rather than as the most important state in the game.
+      const tw = P.measure('SIMULATION HELD', F.microBold, TRACK.head);
+      P.ctx.globalAlpha = pulse;
+      P.plate(P.w * 0.5 - tw * 0.5 - 10, y + cellH + 8, tw + 20, 18, { border: C.warnDim });
+      P.text('SIMULATION HELD', P.w * 0.5, y + cellH + 21,
+        { font: F.microBold, color: C.warn, align: 'center', track: TRACK.head });
+      P.ctx.globalAlpha = 1;
     }
 
     const travel = this.world.systems?.travel;
@@ -274,7 +285,9 @@ export class HUD {
       const line = st.state === 'spooling'
         ? `TRANSIT SPOOL ${st.spoolRemaining.toFixed(0)} S`
         : `TRANSIT ${st.state.toUpperCase()} · LEG ${st.leg + 1}/${st.legs}`;
-      P.text(line, P.w * 0.5, y + 32,
+      const tw = P.measure(line, F.microBold, TRACK.head);
+      P.plate(P.w * 0.5 - tw * 0.5 - 10, y + cellH + 8, tw + 20, 18, { border: C.salvageGhost });
+      P.text(line, P.w * 0.5, y + cellH + 21,
         { font: F.microBold, color: C.salvage, align: 'center', track: TRACK.head });
     }
   }
@@ -283,152 +296,274 @@ export class HUD {
   // Own ship
   // =========================================================================
 
-  _drawShipPanel(P, player) {
-    const x = 28;
-    const w = 306;
-    const rows = HARDPOINTS.length;
-    const rowH = 17;
-    const blockH = rows * rowH + 34;
-    let y = P.h - blockH - 92;
+  /**
+   * THE PLAYER-STATE BLOCK — layered, with rates, and on a real plate.
+   *
+   * `reference-ui-language.md` §5 and §9 read three things off the reference's own
+   * hull block that ours did not have:
+   *
+   *   1. THE MODEL IS LAYERED. `NO SHIELD 0%` / `NO ARMOR 0%` / a hull figure are
+   *      three separate tracked things, each with its own percentage. Ours printed
+   *      one hull bar and, when a shield module happened to be fitted, one thin
+   *      unlabelled strip. The layers are now a stack that is ALWAYS three rows tall,
+   *      because the shape of what you do not have is information: a player who has
+   *      never seen an armour row does not know there is armour to go and find. The
+   *      reference prints `NO ARMOR 0%` for exactly the same reason.
+   *
+   *   2. A RATE PER LAYER. `0.0 HP/s` is called out in our own transcription as the
+   *      single number carrying the most decision weight, and it did not exist here.
+   *      It is sampled on the fixed step — see `UILayer.vitals`.
+   *
+   *   3. AN ANCHOR ON THE VELOCITY BAR. The reference prints `MAX 290 m/s` over the
+   *      fill. Ours printed `87 M/S` against a bar with no maximum, so neither the
+   *      number nor the bar meant anything. The max is printed, and beside it what
+   *      the fitted mass is costing in acceleration and turn — which is the honest
+   *      answer to "what does the weight cost you", because `refit.js` divides accel
+   *      by `massLoad` and turn by its square root and NOTHING in the sim makes hull
+   *      mass reduce top speed. Printing a falling maximum would have been a lie.
+   */
+  get shipPanelW() { return 346; }
+  get shipPanelH() { return HARDPOINTS.length * 17 + 196; }
 
-    P.scrim(x - 12, y - 26, w + 24, blockH + 108, { alpha: 0.62, fadeRight: true });
+  _drawShipPanel(P, player) {
+    const w = this.shipPanelW;
+    const h = this.shipPanelH;
+    const px = 14;
+    const py = P.h - h - 14;
+    const x = px + 12;
+    const iw = w - 24;
+
+    P.plate(px, py, w, h, { border: C.rule });
 
     if (!player) {
-      P.label('NO HULL', x, y, { color: C.inkFaint });
+      P.label('NO HULL', x, py + 20, { color: C.inkFaint });
       return;
     }
 
+    let y = py + 18;
     const cls = player.classDef;
-    P.text((cls?.name ?? 'CRUISER').toUpperCase(), x, y - 12,
+    P.text((cls?.name ?? 'CRUISER').toUpperCase(), x, y,
       { font: F.midBold, color: C.inkStrong, track: TRACK.head });
 
-    // --- hull ---------------------------------------------------------------
+    // --- the layer stack ----------------------------------------------------
+    const v = this.ui.vitals;
+    y += 15;
+    P.label('LAYERS', x, y, { color: C.inkFaint });
+    P.label('HP/S', x + iw, y, { color: C.inkFaint, align: 'right' });
+    P.hline(x, y + 4, iw, C.rule);
+    y += 15;
+
+    const shieldMax = player.shields?.max ?? 0;
     const hullFrac = player.maxHullHP > 0 ? player.hullHP / player.maxHullHP : 1;
     const hullCrit = hullFrac < 0.3;
-    P.label('HULL INTEGRITY', x, y + 4, { color: C.inkFaint });
-    P.text(fmtPct(hullFrac), x + w, y + 4,
-      { font: F.bodyBold, color: hullCrit ? C.warn : C.inkStrong, align: 'right' });
-    P.bar(x, y + 9, w, 9, hullFrac, {
-      color: hullCrit ? C.warn : C.ink, track: C.inkGhost, segments: 10, frame: false,
+
+    y = this._layerRow(P, x, y, iw, 'SHIELD',
+      shieldMax > 0 ? (player.shields.current / shieldMax) : null,
+      shieldMax > 0 ? `${Math.round(player.shields.current)}/${Math.round(shieldMax)}` : 'NONE FITTED',
+      shieldMax > 0 ? v.shieldRate : 0, C.shield);
+
+    // ARMOUR is an empty row, deliberately. There is no armour layer in this build;
+    // drawing the empty slot is how the player learns the layer exists at all.
+    y = this._layerRow(P, x, y, iw, 'ARMOUR', null, 'NONE FITTED', 0, C.inkDim);
+
+    y = this._layerRow(P, x, y, iw, 'HULL', hullFrac,
+      `${Math.round(player.hullHP)}/${Math.round(player.maxHullHP)}`,
+      v.hullRate, hullCrit ? C.warn : C.ink);
+
+    // The net figure, in the reference's own form. One number, and it is the one the
+    // player is actually asking: am I winning this or losing it.
+    const net = v.hullRate + v.shieldRate;
+    P.hline(x, y - 2, iw, C.ruleDim);
+    P.label('NET', x, y + 11, { color: C.inkDim });
+    P.text(`${net > 0.05 ? '+' : net < -0.05 ? '−' : ''}${Math.abs(net).toFixed(1)} HP/S`, x + iw, y + 11, {
+      font: F.bodyBold, color: net < -0.05 ? C.warn : net > 0.05 ? C.friendly : C.inkDim, align: 'right',
     });
-    P.hline(x, y + 19, w, C.ruleDim);
-
-    let cy = y + 34;
-
-    if (player.shields?.max > 0) {
-      P.label('SHIELD', x, cy, { color: C.inkFaint });
-      P.bar(x + 52, cy - 6, w - 52, 5, player.shields.current / player.shields.max,
-        { color: C.shield, track: C.inkGhost, segments: 8 });
-      cy += 14;
-    }
+    y += 34;
 
     // --- hardpoint structure ------------------------------------------------
-    P.label('MOUNT STRUCTURE', x, cy, { color: C.inkFaint });
-    P.label(`BREACH AT ${Math.round(BREACH_WARN_FRACTION * 100)}%`, x + w, cy,
+    P.label('MOUNT STRUCTURE', x, y, { color: C.inkFaint });
+    P.label(`BREACH AT ${Math.round(BREACH_WARN_FRACTION * 100)}%`, x + iw, y,
       { color: C.warnDim, align: 'right' });
-    P.hline(x, cy + 5, w, C.rule);
-    cy += 16;
+    P.hline(x, y + 4, iw, C.rule);
+    let cy = y + 16;
 
+    const rowH = 17;
     const hullRes = this.world.hullResult;
+    const barX = x + iw - 92;
+    // Measured, not guessed: `DORSAL` used to run straight into `RAIL BATTERY` and
+    // `VENTRAL` into `TRACTOR` because the name column started at a fixed +51.
+    let mountW = 0;
+    for (const id of HARDPOINTS) {
+      mountW = Math.max(mountW, P.measure(MOUNT_LABEL[id] ?? id, F.micro, TRACK.label));
+    }
+    const nameX = x + mountW + 16;
+    const nameW = barX - nameX - 8;
     for (const id of HARDPOINTS) {
       const hp = player.hardpoints?.get(id);
       const frac = hp ? hp.structureHP / Math.max(1, hp.maxStructureHP) : 1;
       const breached = !!hp?.breached;
       const critical = !breached && !!hp?.module && frac <= BREACH_WARN_FRACTION;
-      const def = hullRes?.hardpoints?.get(id)?.def;
       const mod = hp?.module?.def ?? hullRes?.hardpoints?.get(id)?.module ?? null;
 
-      // A critical mount pulses, but never below three quarters. A warning that is
+      // A critical mount pulses, but never below four fifths. A warning that is
       // invisible at the trough of its own animation is not a warning.
-      const pulse = critical ? 0.78 + 0.22 * Math.sin(P.t * 6.2) : 1;
-      const nameCol = breached ? C.warn : critical ? C.warn : mod ? C.ink : C.inkGhost;
+      const pulse = critical ? 0.82 + 0.18 * Math.sin(P.t * 6.2) : 1;
 
-      P.label(MOUNT_LABEL[id] ?? id, x, cy + 8, { color: breached || critical ? C.warnDim : C.inkFaint });
+      P.label(MOUNT_LABEL[id] ?? id, x, cy + 8, { color: breached ? C.hostileDim : C.inkFaint });
 
       // Faction identity stripe: the one chromatic mark on this panel.
       if (mod) {
         const fi = factionInk(mod.faction);
-        P.fill(x + 46, cy + 1, 2, 9, breached ? C.warnDim : fi.stripe);
+        P.fill(nameX - 8, cy + 1, 2, 9, breached ? C.hostileDim : fi.stripe);
       }
 
-      const label = breached ? 'BREACHED — MOUNT LOST'
-        : mod ? mod.name.toUpperCase()
-          : (def?.label ? `${def.label.toUpperCase()} · EMPTY` : 'EMPTY');
       P.ctx.globalAlpha = pulse;
-      P.text(clip(P, label, F.small, 120), x + 53, cy + 9,
-        { font: F.small, color: nameCol, track: TRACK.value });
+      if (breached) {
+        // STRUCTURAL LOSS is the one thing in this block allowed hostile red.
+        P.text('BREACHED', nameX, cy + 9, { font: F.small, color: C.hostile, track: TRACK.value });
+      } else if (mod) {
+        // The AUTHORED short name, not a name with its tail cut off. See ui/names.js.
+        P.text(moduleName(mod), nameX, cy + 9,
+          { font: F.small, color: critical ? C.warn : C.ink, track: TRACK.value, maxW: nameW });
+      } else {
+        P.struck(P.clip(MOUNT_EMPTY[id] ?? 'EMPTY', F.small, nameW - 14), nameX, cy + 9,
+          { font: F.small, color: C.inkFaint });
+      }
       P.ctx.globalAlpha = 1;
 
-      const barX = x + w - 92;
-      P.bar(barX, cy + 2, 62, 7, breached ? 0 : frac, {
-        color: breached ? C.warnGhost : critical ? C.warn : C.inkDim,
-        track: C.inkGhost,
+      P.bar(barX, cy + 2, 58, 7, breached ? 0 : frac, {
+        color: breached ? C.hostileGhost : critical ? C.warn : C.inkDim,
+        track: C.track,
         threshold: BREACH_WARN_FRACTION,
-        thresholdColor: critical || breached ? C.warn : C.warnDim,
+        thresholdColor: critical ? C.warn : C.warnDim,
+        struck: breached,
       });
-      P.text(breached ? 'LOST' : fmtPct(frac), x + w, cy + 9, {
-        font: F.small, color: breached || critical ? C.warn : C.inkDim, align: 'right',
+      P.text(breached ? 'LOST' : fmtPct(frac), x + iw, cy + 9, {
+        font: F.small, color: breached ? C.hostile : critical ? C.warn : C.inkDim, align: 'right',
       });
 
       cy += rowH;
     }
 
     // --- motion -------------------------------------------------------------
-    P.hline(x, cy + 2, w, C.ruleDim);
-    cy += 16;
+    P.hline(x, cy - 2, iw, C.ruleDim);
+    cy += 13;
     const speed = player.body?.speed ?? 0;
-    const maxSpeed = Math.max(1, player.classDef?.maxSpeed ?? 180);
+    const maxSpeed = Math.max(1, player.body?.maxSpeed ?? player.classDef?.maxSpeed ?? 180);
     P.label('VELOCITY', x, cy, { color: C.inkFaint });
-    P.text(`${speed.toFixed(0)} M/S`, x + 78, cy, { font: F.small, color: C.ink });
-    P.bar(x + 140, cy - 6, 90, 5, speed / maxSpeed, { color: C.inkDim, track: C.inkGhost, segments: 6 });
+    P.text(`${speed.toFixed(0)}`, x + 96, cy, { font: F.bodyBold, color: C.ink, align: 'right' });
+    P.label('M/S', x + 100, cy, { color: C.inkFaint });
+    const bw = 92;
+    const bx = x + 128;
+    P.bar(bx, cy - 8, bw, 9, speed / maxSpeed, { color: C.inkDim, track: C.track, segments: 6 });
+    // The maximum, printed ON the fill the way the reference does it. Without the
+    // anchor the number and the bar are both meaningless.
+    P.text(`MAX ${Math.round(maxSpeed)}`, bx + bw - 3, cy - 1,
+      { font: F.micro, color: C.inkStrong, align: 'right', track: TRACK.none });
     const hdg = ((player.heading * 180) / Math.PI + 360) % 360;
-    P.label('HDG', x + 240, cy, { color: C.inkFaint });
-    P.text(`${hdg.toFixed(0).padStart(3, '0')}°`, x + w, cy, { font: F.small, color: C.ink, align: 'right' });
+    P.label('HDG', x + 232, cy, { color: C.inkFaint });
+    P.text(`${hdg.toFixed(0).padStart(3, '0')}°`, x + iw, cy, { font: F.small, color: C.ink, align: 'right' });
+
+    // What the fitted mass is actually costing. Both figures are read straight off
+    // the sim: refit.js sets body.accel = classDef.accel * thrust / massLoad.
+    cy += 15;
+    const load = player.massLoad ?? 1;
+    const accelPct = player.classDef?.accel ? player.body.accel / player.classDef.accel : 1;
+    const turnPct = player.classDef?.turnRate ? player.body.turnRate / player.classDef.turnRate : 1;
+    P.label('FITTED MASS', x, cy, { color: C.inkFaint });
+    P.text(`×${load.toFixed(2)}`, x + 128, cy,
+      { font: F.small, color: load > 1.25 ? C.warn : C.inkDim, align: 'right' });
+    P.label('ACCEL', x + 142, cy, { color: C.inkFaint });
+    P.text(fmtSigned((accelPct - 1) * 100), x + 220, cy,
+      { font: F.small, color: accelPct < 0.9 ? C.warn : C.inkDim, align: 'right' });
+    P.label('TURN', x + 236, cy, { color: C.inkFaint });
+    P.text(fmtSigned((turnPct - 1) * 100), x + iw, cy,
+      { font: F.small, color: turnPct < 0.9 ? C.warn : C.inkDim, align: 'right' });
+  }
+
+  /** One row of the layer stack: name, bar, figure, and its own signed rate. */
+  _layerRow(P, x, y, w, name, frac, figure, rate, color) {
+    const absent = frac === null;
+    P.label(name, x, y + 8, { color: absent ? C.inkFaint : C.inkDim });
+    const bx = x + 54;
+    const bw = w - 54 - 116;
+    if (absent) {
+      // An absent layer is an absent layer: an empty track with a strike through it
+      // and the words at full ink. Not a faded row nobody can read.
+      P.bar(bx, y + 1, bw, 8, 0, { track: C.track, struck: true });
+      P.text(figure, bx + bw + 7, y + 8, { font: F.small, color: C.inkFaint });
+      P.text('--', x + w, y + 8, { font: F.small, color: C.inkFaint, align: 'right' });
+      return y + 15;
+    }
+    P.bar(bx, y + 1, bw, 8, frac, { color, track: C.track, segments: 10 });
+    P.text(figure, bx + bw + 7, y + 8, { font: F.small, color: C.inkDim });
+    const rising = rate > 0.05;
+    const falling = rate < -0.05;
+    P.text(`${rising ? '+' : falling ? '−' : ''}${Math.abs(rate).toFixed(1)}`, x + w, y + 8, {
+      font: F.bodyBold, color: falling ? C.warn : rising ? C.friendly : C.inkDim, align: 'right',
+    });
+    return y + 15;
   }
 
   // =========================================================================
   // Target
   // =========================================================================
 
+  get targetPanelW() { return 372; }
+
   _drawTargetPanel(P, player) {
     const world = this.world;
     const combat = world.systems?.combat;
     const target = player?.target && !player.target.dead ? player.target : null;
 
-    const w = 322;
-    const x = P.w - 28 - w;
-    const y = P.h - 322;
+    const w = this.targetPanelW;
+    const px = P.w - w - 14;
+    const py = P.h - 372;
+    const x = px + 12;
+    const iw = w - 24;
 
-    P.scrim(x - 14, y - 30, w + 28, 300, { alpha: 0.62, fadeLeft: true });
-    P.label('TARGET', x, y - 14, { color: C.inkFaint });
-    P.hline(x, y - 9, w, C.rule);
+    P.plate(px, py, w, 360, { border: C.rule });
+    let y = py + 16;
+    P.label('TARGET', x, y, { color: C.inkFaint });
+    P.hline(x, y + 4, iw, C.rule);
 
     if (!target) {
-      P.text('NO LOCK', x, y + 8, { font: F.small, color: C.inkGhost, track: TRACK.label });
-      P.text('RMB A CONTACT TO ENGAGE', x, y + 24,
-        { font: F.micro, color: C.inkGhost, track: TRACK.label });
+      P.struck('NO LOCK', x, y + 22, { font: F.small, color: C.inkFaint });
+      P.text('RIGHT-CLICK A CONTACT TO ENGAGE', x, y + 38,
+        { font: F.micro, color: C.inkDim, track: TRACK.label });
       return;
     }
 
     const fi = factionInk(target.faction);
-    P.text(target.classDef.name.toUpperCase(), x, y + 10,
+    y += 22;
+    P.text(target.classDef.name.toUpperCase(), x, y,
       { font: F.midBold, color: C.hostile, track: TRACK.head });
-    P.fill(x, y + 16, 2, 10, fi.stripe);
-    P.text(fi.name.toUpperCase(), x + 8, y + 25, { font: F.micro, color: fi.hue, track: TRACK.label });
+    P.fill(x, y + 6, 2, 10, fi.stripe);
+    P.text(fi.name.toUpperCase(), x + 8, y + 15, { font: F.micro, color: fi.hue, track: TRACK.label });
     const dist = player ? player.position.distanceTo(target.position) : 0;
     P.text(`${(target.classDef.role ?? '').toUpperCase()} · ${target.classDef.length} M`,
-      x + 92, y + 25, { font: F.micro, color: C.inkFaint, track: TRACK.label });
-    P.text(fmtRange(dist), x + w, y + 25, { font: F.bodyBold, color: C.ink, align: 'right' });
+      x + 96, y + 15, { font: F.micro, color: C.inkFaint, track: TRACK.label });
+    P.text(fmtRange(dist), x + iw, y + 15, { font: F.bodyBold, color: C.ink, align: 'right' });
 
+    /**
+     * HULL AND SALVAGE, ON THEIR OWN LINES.
+     *
+     * These used to share one: `HULL   SALVAGE [bar] 58%`, two labels and two bars
+     * with a single number at the right, and it was not determinable which of the two
+     * the 58 % belonged to. They are the two questions this whole game is built on
+     * pulling against each other; they get a line and a number each.
+     */
+    y += 28;
     const hullFrac = target.maxHullHP > 0 ? target.hullHP / target.maxHullHP : 1;
-    P.bar(x, y + 32, w, 6, hullFrac, { color: C.hostile, track: C.hostileGhost, segments: 10 });
-    P.label('HULL', x, y + 48, { color: C.inkFaint });
-    P.text(fmtPct(hullFrac), x + w, y + 48, { font: F.small, color: C.ink, align: 'right' });
-
-    // Salvage integrity: the number the whole game is about.
-    P.label('SALVAGE', x + 60, y + 48, { color: C.salvageDim });
-    P.bar(x + 116, y + 42, 90, 4, target.salvageIntegrity ?? 1,
-      { color: C.salvage, track: C.salvageGhost });
+    P.label('HULL', x, y, { color: C.inkFaint });
+    P.bar(x + 58, y - 7, iw - 106, 7, hullFrac, { color: C.hostile, track: C.hostileGhost, segments: 10 });
+    P.text(fmtPct(hullFrac), x + iw, y, { font: F.bodyBold, color: C.ink, align: 'right' });
+    y += 15;
+    P.label('SALVAGE', x, y, { color: C.salvageDim });
+    P.bar(x + 58, y - 7, iw - 106, 7, target.salvageIntegrity ?? 1,
+      { color: C.salvage, track: C.salvageGhost, segments: 10 });
+    P.text(fmtPct(target.salvageIntegrity ?? 1), x + iw, y,
+      { font: F.bodyBold, color: C.salvage, align: 'right' });
 
     /**
      * PER-SECTION SALVAGE PROJECTION, LIVE.
@@ -444,50 +579,88 @@ export class HUD {
      */
     const projection = typeof target.salvageProjection === 'function' ? target.salvageProjection() : null;
 
-    let cy = y + 66;
+    /**
+     * THE LEGEND, WITH THE STATES SEPARATED.
+     *
+     * It said `GREY = NO MOUNT BEARS` while the grey rows were ALSO struck through and
+     * ALSO reading DEST — three encodings on the same two rows, none of which could be
+     * isolated. They are now one encoding each and the legend says all three:
+     *
+     *   dim ink       nothing you have fitted can reach this bearing
+     *   strikethrough this subsystem is destroyed
+     *   cyan dot      a whole installable part still comes out of this section
+     */
+    let cy = y + 20;
     P.label('SUBSYSTEMS', x, cy, { color: C.inkFaint });
-    P.label('GREY = NO MOUNT BEARS', x + 116, cy, { color: C.inkGhost });
-    P.label('YIELD', x + w, cy, { color: C.salvageDim, align: 'right' });
-    P.hline(x, cy + 5, w, C.ruleDim);
-    cy += 16;
+    P.label('YIELD', x + iw, cy, { color: C.salvageDim, align: 'right' });
+    P.hline(x, cy + 4, iw, C.rule);
+    cy += 13;
+    P.label('DIM = OUT OF ARC · STRUCK = DESTROYED', x, cy, { color: C.inkFaint });
+    cy += 12;
+    P.label('● = A WHOLE PART STILL COMES OUT OF THIS SECTION', x, cy, { color: C.inkFaint });
+    cy += 15;
+
+    /**
+     * COLUMNS ANCHORED FROM THE RIGHT, NAME CLIPPED TO WHAT IS LEFT.
+     *
+     * `STARBOARD NACELLE` used to run straight into its type column and print
+     * `STARBOARD NACELLEENGINE` with no gap at all. Measuring the name and starting
+     * the next column past it only works while the names are short; the moment one
+     * is long, either it collides or the fixed columns on its right go off the panel.
+     *
+     * So the four right-hand columns — kind, bar, percentage, yield — are laid out
+     * from the RIGHT EDGE at their own measured widths, and the name gets whatever
+     * remains and is clipped to it. Nothing can ever be pushed into anything else.
+     */
+    let kindW = 0;
+    for (const s of target.subsystems.values()) {
+      kindW = Math.max(kindW, P.measure(String(s.def.kind).toUpperCase(), F.micro, TRACK.label));
+    }
+    const yieldW = P.measure('DAMAGED', F.microBold, TRACK.label) + 14;
+    const pctW = P.measure('100%', F.small, TRACK.value) + 12;
+    const barW = 46;
+    const colPct = iw - yieldW;
+    const colBar = colPct - pctW - barW;
+    const colKind = colBar - kindW - 10;
+    const nameW = colKind - 8;
 
     const aimed = player?.targetSubsystem;
     for (const s of target.subsystems.values()) {
       const bears = !!(combat && player && !s.destroyed && combat.canAnyWeaponBear(player, s));
       const isAim = aimed === s.def.id;
       const dead = s.destroyed;
-      const col = dead ? C.inkGhost : bears ? C.ink : C.inkFaint;
+      // OUT OF ARC is dim ink; DESTROYED is the strike. Two states, two encodings.
+      const col = bears || dead ? C.ink : C.inkFaint;
 
       if (isAim) {
         P.fill(x - 6, cy - 8, 3, 11, C.hostile);
-        P.fill(x - 6, cy - 8, w + 6, 11, C.hostileGhost);
+        P.fill(x - 6, cy - 8, iw + 6, 11, C.hostileGhost);
       }
-      P.text((s.def.label ?? s.def.id).toUpperCase(), x, cy,
-        { font: F.small, color: col, track: TRACK.value });
+      const name = P.clip((s.def.label ?? s.def.id).toUpperCase(), F.small, nameW);
+      P.text(name, x, cy, { font: F.small, color: dead ? C.inkDim : col, track: TRACK.value });
       if (dead) {
-        // Struck through, not deleted. A subsystem you killed is information.
-        const tw = P.measure((s.def.label ?? s.def.id).toUpperCase(), F.small, TRACK.value);
-        P.rule(x, cy - 4, tw, P.hair, C.inkFaint);
+        P.rule(x, cy - 4, P.measure(name, F.small, TRACK.value), P.hair, C.inkDim);
       }
-      P.label(s.def.kind, x + 108, cy, { color: dead ? C.inkGhost : C.inkFaint });
+      P.label(s.def.kind, x + colKind, cy, { color: C.inkFaint });
 
       const frac = s.maxHP > 0 ? s.hp / s.maxHP : 0;
-      P.bar(x + 156, cy - 7, 44, 5, frac, {
-        color: dead ? C.inkGhost : bears ? C.hostile : C.inkFaint,
-        track: C.inkGhost,
+      P.bar(x + colBar, cy - 7, barW - 6, 6, frac, {
+        color: dead ? C.track : bears ? C.hostile : C.inkFaint,
+        track: C.track, struck: dead,
       });
-      P.text(dead ? 'DEST' : fmtPct(frac), x + 236, cy,
-        { font: F.small, color: dead ? C.inkFaint : col, align: 'right' });
+      P.text(dead ? 'DEST' : fmtPct(frac), x + colPct, cy,
+        { font: F.small, color: dead ? C.inkDim : col, align: 'right' });
 
       const row = projection ? findSection(projection, s.def.id) : null;
       if (row) {
         const state = projectedSalvageState(row.condition, dead);
         const ink = state === 'INTACT' ? C.salvage : state === 'DAMAGED' ? C.salvageDim : C.warn;
-        P.text(state, x + w, cy, { font: F.microBold, color: ink, align: 'right', track: TRACK.label });
+        P.text(state, x + iw, cy, { font: F.microBold, color: ink, align: 'right', track: TRACK.label });
         // A part only comes out of a section that is a module-bearing kind AND has not
         // been shot past scrap. The dot is the difference between "materials" and "the
-        // thing you came for", and it disappears while the player watches.
-        if (projectedYieldsModule(row, dead)) P.fill(x + 244, cy - 5, 4, 4, C.salvage);
+        // thing you came for", and it disappears while the player watches. It is
+        // legended above; an unexplained mark is decoration.
+        if (projectedYieldsModule(row, dead)) P.fill(x + colPct + 5, cy - 5, 4, 4, C.salvage);
       }
       cy += 14;
     }
@@ -495,39 +668,45 @@ export class HUD {
     // Hull plating: three runs of structure that are not subsystems and never appeared
     // in this panel, yet carry a real share of what a hulk is worth.
     if (projection) {
-      P.hline(x, cy - 6, w, C.ruleDim);
-      cy += 8;
-      P.label('PLATING', x, cy, { color: C.inkGhost });
-      let plateX = x + 52;
-      for (const row of projection) {
-        if (row.kind !== 'hull') continue;
+      P.hline(x, cy - 6, iw, C.ruleDim);
+      cy += 9;
+      P.label('PLATING', x, cy, { color: C.inkFaint });
+      const plates = [];
+      for (const row of projection) if (row.kind === 'hull') plates.push(row);
+      const headW = P.measure('PLATING', F.micro, TRACK.label) + 14;
+      const stride = plates.length ? (iw - headW) / plates.length : 0;
+      for (let i = 0; i < plates.length; i++) {
+        const row = plates[i];
         const state = projectedSalvageState(row.condition, false);
         const ink = state === 'INTACT' ? C.salvage : state === 'DAMAGED' ? C.salvageDim : C.warn;
         const short = String(row.label).replace(' PLATING', '').slice(0, 4);
-        P.text(short, plateX, cy, { font: F.micro, color: C.inkFaint, track: TRACK.label });
-        P.text(state, plateX + 34, cy, { font: F.micro, color: ink, track: TRACK.label });
-        plateX += 90;
+        const plateX = x + headW + i * stride;
+        P.text(short, plateX, cy, { font: F.micro, color: C.inkDim, track: TRACK.label });
+        // Right-aligned inside its own lane, so a long state word cannot run into the
+        // next section's name — `FORE INTACTMIDS INTACTAFT` was exactly that.
+        P.text(state, plateX + stride - 8, cy,
+          { font: F.micro, color: ink, track: TRACK.label, align: 'right' });
       }
       cy += 12;
     }
 
     // --- bearing report -----------------------------------------------------
-    cy += 6;
-    P.hline(x, cy - 8, w, C.ruleDim);
+    cy += 8;
+    P.hline(x, cy - 8, iw, C.ruleDim);
     if (combat && player) {
       const rep = combat.bearingReport(player, target);
       const bearing = rep.bearing > 0;
       P.label('BEARING', x, cy + 6, { color: C.inkFaint });
       P.text(`${rep.bearing}/${rep.total}`, x + 66, cy + 6,
         { font: F.bodyBold, color: bearing ? C.friendly : C.warn });
-      P.pips(x + 100, cy - 1, Math.max(1, rep.total), rep.bearing,
-        { size: 5, gap: 3, color: bearing ? C.friendly : C.warn, empty: C.inkGhost });
+      P.pips(x + 104, cy - 1, Math.max(1, rep.total), rep.bearing,
+        { size: 5, gap: 3, color: bearing ? C.friendly : C.warn, empty: C.track });
 
-      // Clipped to the space left by the pip row. An advice string that grows into
-      // its own readout is worse than one that ends in an ellipsis.
-      const advice = clip(P, this.ui.bearingAdvice(player, target, rep), F.microBold, w - 132);
-      P.text(advice, x + w, cy + 6, {
-        font: F.microBold, color: bearing ? C.friendlyDim : C.warn, align: 'right', track: TRACK.label,
+      // On its own line at full width. Squeezed in beside the pip row it was clipped
+      // to an ellipsis, and the advice is the only instruction in the block.
+      const advice = this.ui.bearingAdvice(player, target, rep);
+      P.text(clip(P, advice, F.microBold, iw), x, cy + 20, {
+        font: F.microBold, color: bearing ? C.friendly : C.warn, track: TRACK.label,
       });
     }
   }
@@ -550,50 +729,58 @@ export class HUD {
     const cargo = world.systems?.cargo ?? null;
     const m = world.materials ?? { alloy: 0, composite: 0, exotic: 0 };
 
-    const x = P.w - 28;
-    let y = 30;
+    const w = 206;
+    const px = P.w - w - 8;
+    const py = 34;
+    const h = 96;
+    P.plate(px, py, w, h, { border: C.rule });
+    const x = px + 10;
+    const iw = w - 20;
+    let y = py + 16;
 
     if (cargo) {
       const cap = Math.max(1, cargo.capacityM3);
       const used = cargo.usedM3();
       const frac = used / cap;
       const full = frac >= 0.995;
-      P.label('HOLD', x - 152, y, { color: C.inkFaint });
-      P.text(`${Math.round(used)} / ${Math.round(cap)} m3`, x, y, {
-        font: F.bodyBold, color: full ? C.warn : frac > 0.9 ? C.ink : C.inkDim, align: 'right',
+      P.label('HOLD', x, y, { color: C.inkFaint });
+      P.text(`${Math.round(used)} / ${Math.round(cap)} m3`, x + iw, y, {
+        font: F.bodyBold, color: full ? C.warn : C.ink, align: 'right',
       });
-      P.bar(x - 152, y + 4, 152, 5, frac, {
-        color: full ? C.warn : C.salvage, track: C.inkGhost, segments: 8,
+      P.bar(x, y + 4, iw, 6, frac, {
+        color: full ? C.warn : C.salvage, track: C.track, segments: 8,
       });
-      y += 20;
+      y += 22;
     } else {
       const cap = world.systems?.salvage?.cargoCapacity ?? 6;
       const held = world.inventory?.length ?? 0;
-      P.label('HOLD', x - 152, y, { color: C.inkFaint });
-      P.text(`${held}/${cap}`, x, y, { font: F.bodyBold, color: held >= cap ? C.warn : C.ink, align: 'right' });
-      y += 15;
+      P.label('HOLD', x, y, { color: C.inkFaint });
+      P.text(`${held}/${cap}`, x + iw, y, { font: F.bodyBold, color: held >= cap ? C.warn : C.ink, align: 'right' });
+      y += 17;
     }
-    P.hline(x - 152, y - 6, 152, C.ruleDim);
+    P.hline(x, y - 7, iw, C.ruleDim);
 
-    // Four pools now, not three: `electronics` landed with the material chain and was
+    // Four pools, not three: `electronics` landed with the material chain and was
     // never printed anywhere, which meant every cost quoted in it read as unpayable.
-    // Two rows of two, on a fixed grid — a variable-width count followed by the next
-    // label on the same line is the collision this panel had before.
+    // Two rows of two on a fixed grid — a variable-width count followed by the next
+    // label on the same line is the collision this block had before.
     const mats = [['ALLOY', m.alloy], ['COMP', m.composite], ['ELEC', m.electronics], ['EXOTIC', m.exotic]];
+    const colW = Math.floor(iw / 2);
     for (let i = 0; i < mats.length; i++) {
       const [k, v] = mats[i];
-      const col = i % 2;
-      const mx = x - 152 + col * 78;
-      const my = y + 6 + Math.floor(i / 2) * 13;
-      P.label(k, mx, my, { color: C.inkGhost });
-      P.text(String(Math.round(v ?? 0)), mx + 68, my, {
-        font: F.small, color: (v ?? 0) > 0 ? C.inkDim : C.inkGhost, align: 'right',
+      const mx = x + (i % 2) * colW;
+      const my = y + 6 + Math.floor(i / 2) * 14;
+      P.label(k, mx, my, { color: C.inkFaint });
+      P.text(String(Math.round(v ?? 0)), mx + colW - 10, my, {
+        font: F.small, color: (v ?? 0) > 0 ? C.ink : C.inkFaint, align: 'right',
       });
     }
-    y += 26;
+    y += 32;
 
     if (world.unlocked?.powerRouting === false) {
-      P.label('PWR SEALED', x, y + 6, { color: C.inkGhost, align: 'right' });
+      // At full ink with a leading dash. It used to be drawn at 1.33:1 — a note about
+      // a capability the player does not have yet, rendered so it could not be read.
+      P.struck('POWER ROUTING SEALED', x, y + 8, { font: F.micro, color: C.inkFaint });
     }
   }
 
@@ -602,27 +789,35 @@ export class HUD {
    *
    * `reference-ui-language.md` §7 observed mode tabs along the top of the reference
    * frame — `B Build`, `F1 CAM`, `F2 TAC`, `F3 SYS` — keycap first, inline and
-   * diegetic. Six systems that landed with no UI now have windows, and a window nobody
-   * knows the key for is a window nobody opens. Open ones invert, which makes this a
-   * state readout as well as a menu.
+   * diegetic. Six systems that landed with no UI have windows, and with nothing open
+   * by default this row is the only thing that says they exist. Open ones invert,
+   * which makes it a state readout as well as a menu.
    */
   _drawPanelTabs(P) {
     const host = this.ui.panels;
     if (!host) return;
-    let x = 24;
-    const y = 16;
-    P.label('WINDOWS', x, y - 6, { color: C.inkGhost });
+    const y = 8;
+    // Measured, then plated, so the row is legible over a planet like everything else.
+    let total = 0;
+    for (const panel of host.panels) {
+      total += P.measure(`${panel.hint} ${shortTitle(panel.title)}`, F.microBold, TRACK.label) + 16;
+    }
+    const hintW = P.measure('\\ HIDE', F.micro, TRACK.label) + 14;
+    P.plate(8, y - 4, total + hintW + 14, 24, { border: C.ruleDim });
+    let x = 14;
     for (const panel of host.panels) {
       const label = `${panel.hint} ${shortTitle(panel.title)}`;
       const w = P.measure(label, F.microBold, TRACK.label) + 12;
-      if (panel.open) P.fill(x, y, w, 14, C.ink);
-      else P.frame(x, y, w, 14, C.ruleDim);
-      P.text(label, x + 6, y + 10, {
-        font: F.microBold, color: panel.open ? C.void : C.inkFaint, track: TRACK.label,
+      if (panel.open) P.fill(x, y, w, 15, C.ink);
+      else P.frame(x, y, w, 15, C.rule);
+      P.text(label, x + 6, y + 11, {
+        font: F.microBold, color: panel.open ? C.void : C.inkDim, track: TRACK.label, onFill: panel.open,
       });
-      this.ui.hit.push({ kind: 'panel:tab', panelId: panel.id, x, y, w, h: 14 });
+      this.ui.hit.push({ kind: 'panel:tab', panelId: panel.id, x, y, w, h: 15 });
       x += w + 4;
     }
+    // The one control that is not a window, said in the same idiom.
+    P.label('\\ HIDE', x + 4, y + 11, { color: C.inkFaint });
   }
 
   // =========================================================================
@@ -631,17 +826,19 @@ export class HUD {
 
   _drawNotifications(P) {
     const list = this.ui.notifications;
-    let y = 112;
+    let y = 136;
     for (let i = 0; i < list.count; i++) {
       const n = list.items[i];
       const age = P.t - n.t0;
       const a = THREE.MathUtils.clamp(1 - (age - n.ttl + 0.8) / 0.8, 0, 1) * smoothstep(age / 0.12);
       if (a <= 0.01) continue;
       const col = n.important ? C.select : C.inkDim;
+      const font = n.important ? F.bodyBold : F.small;
+      const tw = P.measure(n.text.toUpperCase(), font, TRACK.label);
       P.ctx.globalAlpha = a;
+      P.plate(P.w * 0.5 - 192, y - 11, tw + 22, 15, { border: null });
       P.fill(P.w * 0.5 - 190, y - 10, 3, 12, col);
-      P.text(n.text.toUpperCase(), P.w * 0.5 - 180, y,
-        { font: n.important ? F.bodyBold : F.small, color: col, track: TRACK.label });
+      P.text(n.text.toUpperCase(), P.w * 0.5 - 180, y, { font, color: col, track: TRACK.label });
       P.ctx.globalAlpha = 1;
       y += 17;
     }
@@ -654,14 +851,14 @@ export class HUD {
     const a = THREE.MathUtils.clamp(1 - (age - 4.2) / 0.9, 0, 1);
     if (a <= 0.01) return;
     const col = bar.severity === 'error' ? C.warn : bar.severity === 'good' ? C.friendly : C.inkDim;
-    const y = 88;
+    const y = 112;
     P.ctx.globalAlpha = a;
     const tw = P.measure(bar.text.toUpperCase(), F.bodyBold, TRACK.label);
     const x0 = P.w * 0.5 - tw * 0.5;
-    P.scrim(x0 - 22, y - 14, tw + 44, 22, { alpha: 0.80 });
+    // An opaque plate, not a scrim: this is the string that tells the player their
+    // order was refused and why, and it has to survive being drawn over a planet.
+    P.plate(x0 - 22, y - 15, tw + 44, 23, { border: C.ruleDim });
     P.fill(x0 - 12, y - 11, 3, 14, col);
-    P.rule(x0 - 22, y - 14, tw + 44, P.hair, C.ruleDim);
-    P.rule(x0 - 22, y + 7, tw + 44, P.hair, C.ruleDim);
     P.text(bar.text.toUpperCase(), x0, y, { font: F.bodyBold, color: col, track: TRACK.label });
     P.ctx.globalAlpha = 1;
   }
@@ -717,14 +914,16 @@ export class HUD {
     c.globalAlpha = pulse * 0.5;
     c.stroke();
     c.restore();
+    P._forgetTrack();   // restore() reverts letterSpacing; see Painter._forgetTrack
     c.globalAlpha = 1;
 
     const camDist = proj.camera ? proj.camera.position.distanceTo(player.position) : 0;
     const tx = cx - dx * 46;
     const ty = cy - dy * 46;
     P.ctx.globalAlpha = THREE.MathUtils.clamp(1 - age / 3.2, 0, 1);
+    P.plate(tx - 34, ty - 16, 68, 26, { border: C.warnDim });
     P.text('HULL HIT', tx, ty - 5, { font: F.microBold, color: C.warn, align: 'center', track: TRACK.label });
-    P.text(fmtRange(camDist), tx, ty + 8, { font: F.micro, color: C.warnDim, align: 'center' });
+    P.text(fmtRange(camDist), tx, ty + 6, { font: F.micro, color: C.inkDim, align: 'center' });
     P.ctx.globalAlpha = 1;
   }
 }
