@@ -11,6 +11,53 @@ import { ModuleParts, partsFor, PART_EFFECT } from './subparts.js';
 import { MEV } from './meta/events.js';
 
 /**
+ * How a mount decides to shoot.
+ *
+ *   AUTO   — the mount fires itself the moment it bears. `combat.js` drives it.
+ *   SALVO  — the mount waits to be released as part of a broadside ripple.
+ *   CHARGE — the mount winds up, holds, and is released.
+ *
+ * This is the ONE piece of new per-mount state the armament design needs, and there
+ * is no other legitimate home for it: the mode belongs to the physical mount, not to
+ * the weapon definition (which is shared by every copy of the module) and not to the
+ * controller (which is rebuilt on every refit).
+ */
+export const FIRE_MODES = ['AUTO', 'SALVO', 'CHARGE'];
+
+/**
+ * Default mode per weapon archetype. `WEAPON_TYPES` in `core/contracts.js:27` is the
+ * closed set of eight and all eight are named here, so an unknown type is a
+ * registration defect rather than a silent AUTO.
+ *
+ * Point defence is reactive by definition — `combat.js:118,382,403` already treats
+ * `type === 'pd'` as not commandable — so its mode is not merely defaulted to AUTO,
+ * it is pinned there by the accessor below.
+ */
+export const DEFAULT_FIRE_MODE = {
+  pd: 'AUTO',
+  flak: 'AUTO',
+  beam: 'AUTO',
+  mining: 'AUTO',
+  cannon: 'SALVO',
+  rail: 'SALVO',
+  missile: 'SALVO',
+  lance: 'CHARGE',
+};
+
+/**
+ * How long `mount.traverseLocked = true` holds for, in seconds, when the caller does
+ * not name a duration. A controller that knows its own sweep length should assign a
+ * number instead.
+ */
+export const TRAVERSE_LOCK_HOLD = 0.35;
+
+/** Seconds from nothing to a full charge, when the weapon def does not say. */
+export const CHARGE_TIME_DEFAULT = 2.6;
+
+/** An abandoned charge bleeds away at this multiple of the rate it built up. */
+export const CHARGE_BLEED = 2;
+
+/**
  * A weapon mount: one weapon definition, bolted to a specific place on a specific
  * hull, with a firing arc that is a property of WHERE IT IS, not of what it is.
  *
@@ -29,6 +76,8 @@ export class WeaponMount {
    * @param {number} [opts.condition]           0..1 quality of this physical instance
    * @param {Object} [opts.moduleDef]           the ModuleDef, when it came from one
    * @param {number} [opts.containerHP]         HP pool the sub-parts divide up
+   * @param {string} [opts.fireMode]            restored from the module instance record
+   * @param {boolean} [opts.excluded]           restored from the module instance record
    */
   constructor(def, opts) {
     this.def = def;
@@ -48,6 +97,38 @@ export class WeaponMount {
     this.offlineReason = null;
     this.target = null;
     this.aimedSubsystem = null;
+
+    /**
+     * FIRE MODE. See FIRE_MODES above. Stored behind an accessor so point defence
+     * cannot be talked out of AUTO by a UI click or a stale save.
+     */
+    this._fireMode = FIRE_MODES.includes(opts.fireMode)
+      ? opts.fireMode
+      : (DEFAULT_FIRE_MODE[def.type] ?? 'AUTO');
+
+    /**
+     * Excluded from group fire. The player has told this mount to sit out the next
+     * broadside — usually to keep a cooked barrel out of the wave, or to hold one
+     * gun back for point work. It says nothing about whether the mount is usable.
+     */
+    this.excluded = opts.excluded === true;
+
+    /** Wind-up state for the CHARGE archetype. 0..1, and whether it is building. */
+    this.charge = 0;
+    this.charging = false;
+    /** Seconds from nothing to full. Derived once; the tick reads it every step. */
+    this.chargeTime = def.chargeTime > 0 ? def.chargeTime : CHARGE_TIME_DEFAULT;
+
+    /**
+     * TRAVERSE LOCK, in seconds remaining.
+     *
+     * A mount that has committed to a shot stops tracking, and that visible freeze is
+     * the anticipation tell the whole firing feel is built on. It is a countdown and
+     * not a flag on purpose: a controller that is torn down mid-salvo — by a refit, a
+     * cripple, a thermal trip — must not be able to leave a gun frozen for the rest
+     * of the run. Assign a boolean for the default hold or a number of seconds.
+     */
+    this.traverseLockFor = 0;
 
     /**
      * UNIVERSAL CONDITION on the instance. This is the same number that was on the
@@ -79,6 +160,28 @@ export class WeaponMount {
   }
 
   get range() { return this.def.range; }
+
+  /**
+   * Fire mode. Point defence always reads AUTO and its setter is a no-op: PD is
+   * reactive, it picks its own targets, and `combat.js:382,403` already refuses to
+   * treat it as a commandable weapon. Anything outside FIRE_MODES is ignored rather
+   * than stored, so a corrupt save cannot park a mount in a mode nothing drives.
+   */
+  get fireMode() { return this.def.type === 'pd' ? 'AUTO' : this._fireMode; }
+
+  set fireMode(mode) {
+    if (this.def.type === 'pd') return;
+    if (!FIRE_MODES.includes(mode)) return;
+    this._fireMode = mode;
+  }
+
+  /** True while the mount is committed and will not slew. See `traverseLockFor`. */
+  get traverseLocked() { return this.traverseLockFor > 0; }
+
+  set traverseLocked(v) {
+    if (typeof v === 'number') this.traverseLockFor = Math.max(0, v);
+    else this.traverseLockFor = v ? TRAVERSE_LOCK_HOLD : 0;
+  }
 
   /**
    * Half-arc actually available. A dead traverse ring freezes the gun where it stood:
@@ -142,7 +245,14 @@ export class WeaponMount {
     this.worldForward.set(Math.sin(aim), 0, Math.cos(aim));
   }
 
-  /** Traverse toward a bearing, clamped to the arc. Returns true when on target. */
+  /**
+   * Traverse toward a bearing, clamped to the arc. Returns true when on target.
+   *
+   * A traverse-locked mount does not slew: it has committed, and the frozen gun is
+   * the tell that a shot is coming. It still answers honestly about whether it
+   * happens to bear, because a locked gun that was already on target is a gun that
+   * can fire — returning a flat `false` here would make the lock a mute button.
+   */
   trackTowards(shipHeading, point, dt) {
     const dx = point.x - this.worldPosition.x;
     const dz = point.z - this.worldPosition.z;
@@ -150,9 +260,11 @@ export class WeaponMount {
     const centre = this.arcOffset;
     const half = this.halfArc;
     const clamped = THREE.MathUtils.clamp(desired, centre - half, centre + half);
-    const delta = clamped - this.traverse;
-    const step = this.trackingRate * dt;
-    this.traverse += THREE.MathUtils.clamp(delta, -step, step);
+    if (this.traverseLockFor <= 0) {
+      const delta = clamped - this.traverse;
+      const step = this.trackingRate * dt;
+      this.traverse += THREE.MathUtils.clamp(delta, -step, step);
+    }
     return Math.abs(clamped - this.traverse) < 0.02 && Math.abs(desired - clamped) < 0.02;
   }
 }
@@ -890,6 +1002,13 @@ export class Ship {
       if (m.cooldown > 0) m.cooldown -= dt;
       if (m.burstTimer > 0) m.burstTimer -= dt;
       if (m.stall > 0) m.stall -= dt;
+      // The commitment timers, on the same clock as every other mount timer. Ships
+      // tick at order 60 and combat at order 40 (game.js:184-190), so a controller
+      // that sets or consumes either of these in the same step sees its own write
+      // first and this loop only ever advances what it left behind.
+      if (m.traverseLockFor > 0) m.traverseLockFor -= dt;
+      if (m.charging) m.charge = Math.min(1, m.charge + dt / m.chargeTime);
+      else if (m.charge > 0) m.charge = Math.max(0, m.charge - (dt / m.chargeTime) * CHARGE_BLEED);
     }
 
     // Heat first, then stores: a mount that tripped this step must not also reload.

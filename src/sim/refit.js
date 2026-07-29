@@ -6,9 +6,38 @@ import {
   repairCost, scrapYield, grantMul, conditionLabel, clamp01, CONDITION,
 } from './condition.js';
 import { AMMO_SPEC } from './stores.js';
+import { breakDownItem } from './meta/index.js';
 
-/** Tonnage of a "normal" six-mount fit. Installed mass is measured against this. */
-const REFERENCE_FIT_MASS = 1800;
+/**
+ * Tonnage the installed fit is measured against. Not the hull's mass, deliberately:
+ * module masses are three orders of magnitude below hull mass, so wiring the handling
+ * penalty to `classDef.mass` makes mass inert (a 10,020 t fit on a 620,000 t hull is
+ * -1.6% acceleration, which no player can feel). The decoupled reference is the right
+ * mechanism; only its constant was wrong.
+ *
+ * MEASURED, against the module library as it stands. The heaviest legal six-mount fit
+ * is 10,020 t — bow_siege_lance 1180 + dorsal_rail_battery 1420 + ventral_hangar_deck
+ * 2400 + port_broadside_battery 1560 + its starboard mirror 1560 + engine_jump_drive
+ * 1900. At the old 1800 that is massLoad 6.567: -84.8% acceleration, -61.0% turn and,
+ * through `stores.js:284`, a 6.57x propellant bill — "never fit anything heavy".
+ * At 35500 it is massLoad 1.282: -22.0% acceleration and, at the 0.6 exponent below,
+ * -13.9% turn rate. `docs/design/controls.md:1165-1169` asks for -22% and -14%.
+ */
+const REFERENCE_FIT_MASS = 35500;
+
+/**
+ * Turn-rate penalty exponent. `controls.md:1160` specifies 0.6; the code had 0.5
+ * (`Math.sqrt`). At the heaviest fit that is the difference between -11.7% and -13.9%
+ * turn rate, i.e. between missing and hitting the spec's own -14% target.
+ */
+const MASS_TURN_EXP = 0.6;
+
+/**
+ * The two mounts that accept each other's parts. One definition, because "port and
+ * starboard are interchangeable" is asserted in three places in this file and the
+ * geometry stream asserts it again in `art/geometry/hardpoints.js:406-409`.
+ */
+const MIRRORED_PAIR = { port: 'starboard', starboard: 'port' };
 
 /** A hot mount cannot be worked on. Servicing waits for it to fall below this. */
 const SERVICE_HEAT = 0.35;
@@ -90,9 +119,7 @@ export class RefitSystem {
     if (!def) return { ok: false, reason: `unknown module "${moduleId}"` };
 
     // Port and starboard accept the same parts; the attachment system mirrors them.
-    const accepts = def.hardpoint === hardpointId
-      || (def.hardpoint === 'port' && hardpointId === 'starboard')
-      || (def.hardpoint === 'starboard' && hardpointId === 'port');
+    const accepts = def.hardpoint === hardpointId || MIRRORED_PAIR[hardpointId] === def.hardpoint;
     if (!accepts) return { ok: false, reason: `${def.name} does not mount on ${hardpointId}` };
 
     const hpDef = this._hardpointDef(hardpointId);
@@ -105,6 +132,42 @@ export class RefitSystem {
 
   _hardpointDef(id) {
     return this.world.hullResult?.hardpoints?.get(id)?.def ?? null;
+  }
+
+  /**
+   * Where a mount actually sits and which way it actually points.
+   *
+   * THE RULE: the TARGET hardpoint's definition is used verbatim. Port and starboard
+   * accept each other's parts, and `art/geometry/hardpoints.js:406-424` mirrors the
+   * module's GEOMETRY — but it mirrors it inside the target socket, and that socket is
+   * parented at the target hardpoint's own anchor with identity rotation and unit
+   * scale (`hardpoints.js:267-274`). The mount's position and arc are therefore the
+   * target's already, and negating them is not a correction, it is a second mirror.
+   *
+   * THE BUG THIS REPLACES. `mirrored = hpId === 'starboard' && def.hardpoint ===
+   * 'port'` gated `anchor[0] * -1` and `-hpDef.yawCentre`, where `anchor` and `hpDef`
+   * BOTH came from `_hardpointDef(hpId)` — the target. A port-authored cannon bank
+   * fitted to starboard resolved to x -158 (`CRUISER_ANCHORS.port`) with yawCentre
+   * +PI/2 (the port arc) while its geometry sat on the starboard sponson. Both flanks
+   * simulated as the port flank, which makes a two-broadside fit — one of the two
+   * archetypes the armament spec exists to differentiate — unbuildable.
+   *
+   * Mirroring is correct only when the anchor in hand is the AUTHORED side's and the
+   * authored side is not the target side, which is the fallback below. With all six
+   * cruiser hardpoints registered together (`CRUISER_HARDPOINTS`) that fallback never
+   * fires on the live path; it is here so the rule is stated in code rather than
+   * inferred from the absence of a branch.
+   *
+   * @returns {{hpDef: Object|null, mirror: 1|-1}}
+   */
+  _mountFrame(hardpointId, def) {
+    const target = this._hardpointDef(hardpointId);
+    if (target) return { hpDef: target, mirror: 1 };
+
+    const authoredId = def?.hardpoint;
+    const authored = authoredId && authoredId !== hardpointId ? this._hardpointDef(authoredId) : null;
+    if (!authored) return { hpDef: null, mirror: 1 };
+    return { hpDef: authored, mirror: MIRRORED_PAIR[hardpointId] === authoredId ? -1 : 1 };
   }
 
   /**
@@ -168,16 +231,43 @@ export class RefitSystem {
       if (this.world.inventory.length >= cargo) return { ok: false, reason: 'hold is full' };
     }
 
+    this._captureMountState(p);
     this.attachment.detachModule(this.world.hullResult, hardpointId);
     const item = hp.module;
     hp.module = null;
     hp.object = null;
+    // fireMode and excluded ride the part into the hold and back out again: `install`
+    // spreads the inventory entry onto the new instance record, so a battery you set
+    // to SALVO stays SALVO across a swap instead of quietly reverting.
     this.world.inventory.push({
       moduleId: item.def.id, condition: item.condition ?? 1, uid: item.uid, volume,
+      fireMode: item.fireMode, excluded: item.excluded,
     });
     this._applyModuleEffects(p);
     this.bus.emit(EV.MODULE_REMOVED, { hardpoint: hardpointId, module: item.def, ship: p });
     return { ok: true };
+  }
+
+  /**
+   * Write the player's per-mount choices back onto the module instance records.
+   *
+   * Every WeaponMount on the hull is rebuilt from scratch by `_applyModuleEffects`,
+   * which runs on every install, every uninstall and every completed repair job. The
+   * instance record is the only thing that survives that rebuild, so `fireMode` and
+   * `excluded` have to be parked on it first or finishing a bow repair would quietly
+   * un-exclude a cooked starboard barrel and reset both flanks to their defaults.
+   *
+   * Called before the rebuild, and again from `uninstall` before the record is
+   * detached - `uninstall` nulls `hp.module` before it reaches `_applyModuleEffects`,
+   * so by then there is nothing left to write to.
+   */
+  _captureMountState(ship) {
+    for (const m of ship?.weapons ?? []) {
+      const rec = m.hardpoint ? ship.hardpoints.get(m.hardpoint)?.module : null;
+      if (!rec || rec.def !== m.moduleDef) continue;
+      rec.fireMode = m.fireMode;
+      rec.excluded = m.excluded;
+    }
   }
 
   /**
@@ -188,6 +278,7 @@ export class RefitSystem {
   _applyModuleEffects(ship) {
     const w = this.world;
 
+    this._captureMountState(ship);
     ship.weapons.length = 0;
     let installedMass = 0;
     let powerBonus = 0;
@@ -202,8 +293,6 @@ export class RefitSystem {
     for (const [hpId, hp] of ship.hardpoints) {
       const def = hp.module?.def;
       if (!def) continue;
-      const mirrored = hpId === 'starboard' && def.hardpoint === 'port';
-      const hpDef = this._hardpointDef(hpId);
 
       // The instance's condition, not the definition's. This is the number that came
       // off the wreck and it follows the part onto the hull.
@@ -211,9 +300,10 @@ export class RefitSystem {
       installedMass += def.mass ?? 0;
 
       if (def.weapon) {
+        const { hpDef, mirror } = this._mountFrame(hpId, def);
         const anchor = hpDef?.anchor ?? [0, 0, 0];
-        const localPosition = new THREE.Vector3(anchor[0] * (mirrored ? -1 : 1), anchor[1], anchor[2]);
-        const yawCentre = mirrored && hpDef ? -hpDef.yawCentre : (hpDef?.yawCentre ?? 0);
+        const localPosition = new THREE.Vector3(anchor[0] * mirror, anchor[1], anchor[2]);
+        const yawCentre = (hpDef?.yawCentre ?? 0) * mirror;
         ship.weapons.push(new WeaponMount(def.weapon, {
           localPosition,
           yawCentre,
@@ -222,6 +312,10 @@ export class RefitSystem {
           condition,
           moduleDef: def,
           containerHP: hp.maxStructureHP,
+          // Restored from the instance record, so a mode the player set survives a
+          // repair, an uninstall into the hold and the reinstall that follows it.
+          fireMode: hp.module.fireMode,
+          excluded: hp.module.excluded,
         }));
       }
 
@@ -246,7 +340,7 @@ export class RefitSystem {
 
     ship.power.bonusOutput = powerBonus;
     ship.body.accel = ship.classDef.accel * thrustMul / ship.massLoad;
-    ship.body.turnRate = ship.classDef.turnRate * turnMul / Math.sqrt(ship.massLoad);
+    ship.body.turnRate = ship.classDef.turnRate * turnMul / Math.pow(ship.massLoad, MASS_TURN_EXP);
     ship.shields.max = shieldCapacity;
     ship.shields.regen = shieldCapacity * 0.06;
     if (ship.shields.current > ship.shields.max) ship.shields.current = ship.shields.max;
@@ -412,20 +506,57 @@ export class RefitSystem {
     };
   }
 
-  /** Scrap what is on a mount for materials instead of saving it. The other half. */
+  /**
+   * Scrap what is on a mount for materials instead of saving it. The other half.
+   *
+   * ONE BREAKDOWN PATH. When the economy layer is installed this routes through
+   * `meta/index.js#breakDownItem`, exactly as `salvage.scrapInventoryItem` does for a
+   * stored part, so an installed module and the same module sitting in the hold pay
+   * the same tier-0 scrap for the same mass and condition. Two arithmetics for one
+   * player action is how the two numbers drift apart and how the refit screen starts
+   * lying about which choice is better.
+   *
+   * `breakDownItem(world, item)` takes an INVENTORY-SHAPED RECORD - `{moduleId,
+   * condition, uid}`, from which it resolves the def itself (`meta/index.js:235-247`)
+   * - not a ModuleDef. The installed record already has that shape; it is normalised
+   * here only so a hand-built record with a `def` and no `moduleId` still resolves.
+   *
+   * The direct `world.materials` write survives as the no-economy path, because
+   * `breakDownItem` returns null without `world.systems.economy` and a scrap action
+   * that silently pays nothing is worse than either economy.
+   *
+   * @returns {{ok: boolean, scrap: Object|null, yield: Object|null, reason?: string}}
+   *   exactly one of `scrap` (graded units through the economy) and `yield` (alloy /
+   *   composite / exotic through the materials pool) is non-null on success.
+   */
   scrapInstalled(hardpointId) {
     const found = this._installed(hardpointId);
     if (!found) return { ok: false, reason: 'nothing installed' };
-    const out = scrapYield(found.def.mass ?? 200, found.item.condition ?? 1);
-    this.attachment?.detachModule?.(this.world.hullResult, hardpointId);
+    const w = this.world;
+
+    const record = {
+      moduleId: found.item.moduleId ?? found.def?.id,
+      condition: found.item.condition ?? 1,
+      uid: found.item.uid,
+    };
+
+    this.attachment?.detachModule?.(w.hullResult, hardpointId);
     found.hp.module = null;
     found.hp.object = null;
-    this.materials.alloy += out.alloy;
-    this.materials.composite += out.composite;
-    this.materials.exotic += out.exotic;
+
+    let scrap = null;
+    let out = null;
+    if (w.systems.economy) scrap = breakDownItem(w, record);
+    if (!scrap) {
+      out = scrapYield(found.def.mass ?? 200, record.condition);
+      this.materials.alloy += out.alloy;
+      this.materials.composite += out.composite;
+      this.materials.exotic += out.exotic;
+    }
+
     this._applyModuleEffects(this.player);
     this.bus.emit(EV.MODULE_REMOVED, { hardpoint: hardpointId, module: found.def, ship: this.player, scrapped: true });
-    return { ok: true, yield: out };
+    return { ok: true, scrap, yield: out };
   }
 
   /** Manufacture rounds. Competes with repair for exactly the same alloy. */
