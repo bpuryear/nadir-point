@@ -331,6 +331,27 @@ export default {
  *
  * @returns {string[]} human-readable descriptions, empty when the hull is sound
  */
+/**
+ * How close two parts must be to count as joined, in metres.
+ *
+ * This USED to be a shrink: every box was pulled in by up to 0.5 m per axis and the
+ * boxes were then tested for intersection. That demanded more than a metre of mutual
+ * INTERPENETRATION before two parts counted as connected, so anything bolted flat to
+ * a deck — which is how a bridge tower is built — was reported as floating in space.
+ *
+ * It reported exactly that for the whole life of the check. `core/hull#3` sits on
+ * `core/hull#2` with a measured y-separation of 0.000 m and overlap on x and z; the
+ * four superstructure parts overlap EACH OTHER by 10-29 m, so they formed a real
+ * connected component whose only link to the main hull was a flush face. HANDOFF.md
+ * recorded this as four pieces of core hull floating unattached, "not cosmetic" and
+ * impossible to revert away, and it was none of those things.
+ *
+ * Touching is joined. Expanding by a small tolerance and testing intersection says
+ * that; shrinking says the opposite. A sub-metre gap on a 1400 m hull is invisible
+ * anyway, so the tolerance costs no real detection.
+ */
+const TOUCH_TOLERANCE_M = 0.25;
+
 function floatingParts(lod, rng) {
   const { buckets } = hullParts({ rng: rng.fork('cruiser'), lod });
   const items = [];
@@ -340,13 +361,10 @@ function floatingParts(lod, rng) {
       const g = G.mergeParts([b.parts[i]], { uv: false });
       g.computeBoundingBox();
       const box = g.boundingBox.clone();
-      let flat = false;
-      for (const a of ['x', 'y', 'z']) {
-        const d = Math.min(0.5, (box.max[a] - box.min[a]) * 0.49);
-        if (d < 0.5) flat = true;
-        box.min[a] += d;
-        box.max[a] -= d;
-      }
+      // A part thinner than a metre on any axis is a panel or a decal laid ON another
+      // part rather than a structural member. Still audited, but not reported alone.
+      const flat = ['x', 'y', 'z'].some((a) => box.max[a] - box.min[a] < 1);
+      box.expandByScalar(TOUCH_TOLERANCE_M);
       items.push({ name: `${b.key}#${i}`, box, flat });
       g.dispose();
     }
