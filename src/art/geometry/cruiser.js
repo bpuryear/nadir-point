@@ -525,11 +525,17 @@ const SURFACE = {
    *
    * `hullDark` draws its albedo from palette.js#player.baseDark (0x2b2722, the
    * near-black of the three), and it now carries LARGE AREAS rather than crevices:
-   * the two 640 m flank armour belts below the chine, the stern block's armour
-   * casing, the drive pylons and pods, and the bay's outboard rail fairings. Every
-   * one of those boundaries is a real geometric edge — a plate lip, the chine, the
-   * step at the stern — so the value change never stops in the middle of a face,
-   * which §4 says is the diagnostic for a decal on styrene.
+   * the two 640 m flank armour belts, the stern block's armour casing, the drive
+   * pylons, the bay's outboard rail fairings and the tow-track beams.
+   *
+   * EVERY ONE OF THOSE IS BELOW THE CHINE, and that is a rule rather than an
+   * accident. Deck plane above the chine in bone, flank plane below it in
+   * near-black, and the chine itself is where they meet — so the value boundary is
+   * a real geometric edge with a shadow at it, not a line that stops in the middle
+   * of a face, which §4 names as the diagnostic for a decal on styrene. The raised
+   * dorsal armour spine is deliberately NOT dark for the same reason: it sits above
+   * the chine, and putting the second value on both sides of an edge is the one
+   * thing that stops the edge reading as the boundary between them.
    *
    * IT COSTS ONE DRAW CALL PER DAMAGE GROUP, and the offset is stated in the build:
    * the engine group's `plating` bucket is gone, its contents moved here, so LOD0 is
@@ -663,7 +669,7 @@ export function hullParts({ rng, lod = 0 }) {
     }
     // Raised armour spine: the step between deck 1 and deck 2, overhanging the waist
     // to port and starboard exactly as it does at LOD0.
-    B.add('core', 'dark', G.panelledSlab({ width: 216, height: 32, depth: 560, detail: D }),
+    B.add('core', 'hull', G.panelledSlab({ width: 216, height: 32, depth: 560, detail: D }),
       { pos: [0, 90, -252] });
 
     // FEATURE 1 — THE BAY, AS AN ACTUAL HOLE, and it is the last thing that may ever
@@ -800,7 +806,7 @@ export function hullParts({ rng, lod = 0 }) {
   // Both lofts keep ALL their stations at LOD1. They cost 64 and 80 triangles between
   // them and they are two of the four masses; thinning them was pure silhouette loss
   // for no measurable saving.
-  B.add('core', 'dark', G.loft(toStations(SPINE_STATIONS)));
+  B.add('core', 'hull', G.loft(toStations(SPINE_STATIONS)));
 
   // THE ISLAND, AS THREE INSET DECKS WITH HARD HORIZONTAL STEPS BETWEEN THEM.
   //

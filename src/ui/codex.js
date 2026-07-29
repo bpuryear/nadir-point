@@ -33,7 +33,12 @@ import { MEV } from '../sim/meta/events.js';
 import { C, F, TRACK, factionInk } from './theme.js';
 import { Panel, PAD, tableHead, rowBack } from './panels.js';
 
-const LIST_W = 246;
+/**
+ * The index column. Wide enough for the longest module name in the registry —
+ * `COALITION BREACHING PROW` — because an index that abbreviates the thing you are
+ * looking for is an index you have to read twice. The card beside it still gets 470 px.
+ */
+const LIST_W = 296;
 const ROW_H = 20;
 const TABS = ['module', 'ship', 'item', 'material'];
 const TAB_LABEL = { module: 'MODULES', ship: 'HULLS', item: 'DEVICES', material: 'MATERIALS' };
@@ -47,7 +52,7 @@ export class CodexPanel extends Panel {
       id: 'codex',
       title: 'CODEX',
       hint: 'C',
-      w: 780,
+      w: 820,
       h: 470,
       maxH: 470,
     });

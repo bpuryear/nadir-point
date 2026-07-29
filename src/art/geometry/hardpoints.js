@@ -121,7 +121,7 @@ import { mirrorGeometryX } from './greeble.js';
  * origin at the mount point, and moving an anchor simply moves the module with it.
  * What changed is that the six anchors now sit on six real, structurally distinct
  * parts of the ship, and that PORT AND STARBOARD ARE NO LONGER MIRRORS: the port
- * sponson owns z +60..+200 and the starboard one z -60..+80, so a fully fitted hull
+ * sponson owns z +18..+102 and the starboard one z -152..-68, so a fully fitted hull
  * is never bilaterally symmetric. That is a deliberate salvager read, not an
  * oversight, and the mirroring machinery in this file handles it unchanged.
  */

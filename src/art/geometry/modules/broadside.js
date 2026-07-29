@@ -7,7 +7,10 @@
  * starboard copy of anything here and there must never be one: a hand-authored
  * mirror is a second thing to keep in sync and it will drift.
  *
- * Mount is at [-156, 46, 130] and the seating adds a 7 m service gap outboard, so
+ * Mount is at [-158, 46, 60] - moved from [-156, 46, 130] so the sponson shelf sits
+ * over the salvage cradle's second transverse frame instead of bridging the 76 m of
+ * clear background between hull flank and bay rail - and the seating adds a 7 m
+ * service gap outboard, so
  * module local x = -100 is world x = -263. The hull's own widest point is x = 198
  * over the outrigger drive pods, which means LOCAL x = -35 IS WHERE THE SHIP ENDS.
  * A broadside module that stops at local -60 has added twenty-five metres to a
