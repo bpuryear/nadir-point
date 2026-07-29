@@ -1,45 +1,61 @@
 /**
  * SURFACE MEASUREMENT — the numbers ship-language.md §8 asks for, run on a PNG.
  *
- *   node tools/surface.mjs docs/review/look-surface/close.png [...more]
+ *   node tools/surface.mjs --frame ship  docs/probes/cruiser.png
+ *   node tools/surface.mjs --frame face  docs/review/look-surface/close.png --crop 0.30,0.39,0.62,0.50
+ *   node tools/surface.mjs --frame scene docs/review/look-surface/close.png
  *
- * Reports, per image:
+ * `--frame` IS REQUIRED, AND THAT IS THE POINT OF THIS TOOL.
  *
- *   hull mask       pixels that are neither near-black void nor UI chrome
- *   value range     p05 / p25 / median / p75 / p95 / max of sRGB luma on that mask
- *   frequency       calm / medium / dense tile fractions, using the EXACT method in
- *                   §3 — resample to 900 px wide, per-pixel luminance gradient
- *                   magnitude, mean over 8x8 tiles, thresholds 0.045 and 0.14
- *   saturated       fraction of the mask ABOVE luma 0.15 with HSV S > 0.5 (the §4
- *                   accent budget). The value floor is not optional — see the note at
- *                   the counter; HSV saturation is a ratio and runs to 1 in the dark.
- *   chroma          mean colour of the mask and its chroma. A hull whose identity is
- *                   "neutral gunmetal" should come back under ~0.05.
- *   aniso           horizontal gradient energy / vertical gradient energy. CROSSING a
- *                   horizontal seam is a move in Y, so a surface of long horizontal
- *                   seams pushes this BELOW 1; an isotropic block field sits near 1.
+ * §3's method applied to the same ship gives three incompatible answers depending on
+ * what you point it at. Measured on this tree:
  *
- *                   STATED LIMITATION, because the first version of this comment had
- *                   the sign backwards and the first reading of it was nearly quoted
- *                   as evidence: over a whole frame this number is dominated by
- *                   SILHOUETTE and geometry edges, not by surface. Between the
- *                   round-one hull and the strake rewrite it moved 0.74 -> 0.73, i.e.
- *                   not at all, while the same measurement on a crop of one lit face
- *                   read 2.06. Use it on a crop of a single continuous surface, or do
- *                   not use it. `tools/maps.mjs` is the honest place to judge whether
- *                   a plate layout is directional.
+ *   ship   docs/probes/cruiser.png            hull on void, no UI     44.9 / 45.7 /  9.3
+ *   scene  docs/review/look-surface/close.png game frame, HUD up      78.1 / 20.3 /  1.6
+ *   face   the same frame, one lit flank      --crop 0.30,0.39,0.62,0.50
+ *                                                                    97.2 /  2.8 /  0.0
  *
- * WHY THIS IS A SEPARATE TOOL AND NOT PART OF capture.mjs
- * capture.mjs measures the WHOLE FRAME at 160x90 — enough to catch an empty or
- * blown-out shot and nothing else. Every finding in the round-one review was about
- * the hull specifically, and a whole-frame statistic on a frame that is 45% black
- * sky cannot see it. This masks the hull and measures only that.
+ * All three are correct applications of the method. They disagree about the DIRECTION
+ * of the failure: the scene framing says the hull is too calm, the ship framing says
+ * it is too MEDIUM — which is `cruiser-modules.png`'s failure mode, the one §3
+ * describes as "nothing for the detail to be detail against". D-INT1 was written from
+ * the scene number and was therefore aimed at the wrong tier. The tool used to accept
+ * any image and print a split with no framing recorded, which is how that happened, so
+ * the framing is now part of the contract and there is no default.
  *
- * The mask is deliberately crude (luma > 0.055, and outside the UI's known rects)
- * and it is stated here rather than hidden: it will include lit rocks and exclude
- * the darkest hull. That is acceptable for tracking a delta between two runs of the
- * same shot, which is all it is used for, and it is NOT acceptable as an absolute
- * claim about the ship. Anything quoted from here should say "hull mask" out loud.
+ * WHICH FRAMING CARRIES THE §3 VERDICT: `ship`, and only `ship`.
+ *
+ * §3's reference table was built from ship renders of Homeworld and Star Citizen
+ * assets, and its own "ours" row names `docs/probes/cruiser.png`. Comparing a game
+ * frame against it is comparing a photograph of a room to a photograph of a model.
+ *
+ *   `ship`   hull rendered on void. The mask IS the ship. Gates on §3's band.
+ *   `face`   a crop of ONE continuous lit face. Reports value range, plate anisotropy
+ *            and the split, but does NOT gate on §3's band — the reference table has
+ *            no face-scale rows to compare against, and inventing one is how this
+ *            project has been burned before. This is the framing `aniso` is valid on.
+ *   `scene`  a whole game frame. The mask contains lit rocks, nebula and any UI left
+ *            up. Reports, and explicitly declines a §3 verdict. Useful only as a
+ *            delta between two runs of the same shot.
+ *
+ * THE BAND IS TWO-SIDED, AND ITS BOUNDS ARE MEASURED RATHER THAN CHOSEN.
+ *
+ * §3 states the rule one-sidedly — `calm >= 60, medium <= 28, dense <= 12` — and this
+ * tool printed those bounds verbatim while asserting nothing at all: it had no
+ * `process.exit` other than the usage guard, so it always exited 0, and the current
+ * split satisfies all three of those bounds anyway. A rule that cannot express "too
+ * calm" cannot catch the defect it was written for.
+ *
+ * The gate below is the ENVELOPE of §3's own six reference assets (the min and max of
+ * each column of the table at ship-language.md §3). Every bound is a number measured
+ * off a shipped reference game, so none of it is invented. §3's authored one-sided
+ * rule is still evaluated and still printed, as a second, tighter verdict.
+ *
+ * MASK. Crude and stated rather than hidden: luma > 0.055. There is no UI-rectangle
+ * exclusion — an earlier version of this header claimed one and there has never been
+ * any such code — so on `scene` the HUD is inside the mask, which is most of why that
+ * framing cannot carry a verdict. `hud: false` in `tools/shots.json` is the real fix
+ * for a look-review frame.
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -48,15 +64,67 @@ import { launchBrowser } from './harness.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+/**
+ * ship-language.md §3's reference table, transcribed. Kept here so the band's
+ * provenance is checkable from the tool rather than from prose that can drift.
+ */
+const REFERENCES = [
+  { name: 'SC Idris, side, dark render', calm: 79.8, medium: 11.5, dense: 8.7 },
+  { name: 'HW2 Hiigaran Dreadnaught', calm: 67.9, medium: 10.1, dense: 22.1 },
+  { name: 'SC UEE Stanton, isometric', calm: 55.4, medium: 26.1, dense: 18.5 },
+  { name: 'SC Idris, Invictus quarter view', calm: 54.2, medium: 39.0, dense: 6.8 },
+  { name: 'SC Javelin', calm: 51.3, medium: 28.6, dense: 20.1 },
+  { name: 'HW2 Vaygr supercarrier', calm: 74.7, medium: 15.5, dense: 9.8 },
+];
+const span = (k) => [Math.min(...REFERENCES.map((r) => r[k])), Math.max(...REFERENCES.map((r) => r[k]))];
+/** Two-sided, measured: the range the six reference assets actually occupy. */
+const BAND = { calm: span('calm'), medium: span('medium'), dense: span('dense') };
+/** §3's authored one-sided rule, evaluated separately and reported, not gated on. */
+const AUTHORED_RULE = { calmMin: 60, mediumMax: 28, denseMax: 12 };
+
+/**
+ * A tile has to be mostly on the subject to be counted, and a verdict needs enough
+ * tiles to mean anything. 120 tiles is roughly a 2% mask at 900 px wide; below that a
+ * "split" is a handful of tiles and reports noise as art direction.
+ */
+const MIN_TILES = 120;
+/**
+ * A `face` crop that is less than 60% mask is not a crop of a face — more than a
+ * third of it is void, and the gradient statistics are then dominated by the
+ * silhouette edge rather than by the surface. Stated as a definition, not a target.
+ */
+const FACE_MIN_MASK_PCT = 60;
+
+const FRAMES = new Set(['ship', 'face', 'scene']);
+
 const argv = process.argv.slice(2);
-const files = argv.filter((a, i) => !a.startsWith('--') && argv[i - 1] !== '--crop');
-if (!files.length) {
-  console.error('usage: node tools/surface.mjs <image.png> [more.png ...]');
+function opt(name) {
+  const i = argv.indexOf(`--${name}`);
+  return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : null;
+}
+const frame = opt('frame');
+const files = argv.filter((a, i) => !a.startsWith('--') && !(argv[i - 1] || '').startsWith('--'));
+
+if (!frame || !FRAMES.has(frame) || !files.length) {
+  console.error('usage: node tools/surface.mjs --frame ship|face|scene <image.png> [more.png ...] [--crop x0,y0,x1,y1]');
+  console.error('');
+  console.error('  --frame is REQUIRED. The same ship measures 44.9/45.7/9.3 as a ship render,');
+  console.error('  78.1/20.3/1.6 as a game frame and 97.2/2.8/0.0 as a crop of one flank. Without');
+  console.error('  a declared framing the number cannot be compared to anything.');
+  console.error('');
+  console.error('    ship   hull on void, no UI. The mask is the ship. GATES on the §3 band.');
+  console.error('    face   a crop of one continuous lit face. Reports; no §3 verdict.');
+  console.error('    scene  a whole game frame. Reports; declines a §3 verdict.');
   process.exit(2);
 }
-const cropArg = process.argv.indexOf('--crop');
+
+const cropArg = argv.indexOf('--crop');
 /** --crop x0,y0,x1,y1 in 0..1 of the image, to measure one region. */
-const crop = cropArg > 0 ? process.argv[cropArg + 1].split(',').map(Number) : [0, 0, 1, 1];
+const crop = cropArg > 0 ? argv[cropArg + 1].split(',').map(Number) : [0, 0, 1, 1];
+if (frame === 'face' && cropArg < 0) {
+  console.error('--frame face needs a --crop: a face is a region of an image, not an image.');
+  process.exit(2);
+}
 
 const browser = await launchBrowser();
 const page = await browser.newPage();
@@ -135,10 +203,11 @@ for (const f of files) {
         gy[p] = Math.abs(lum[p + W] - lum[p - W]) * 0.5;
       }
     }
-    let calm = 0, med = 0, dense = 0, tiles = 0;
+    let calm = 0, med = 0, dense = 0, tiles = 0, tilesSeen = 0;
     let energyX = 0, energyY = 0;
     for (let ty = 0; ty + 8 <= H; ty += 8) {
       for (let tx = 0; tx + 8 <= W; tx += 8) {
+        tilesSeen++;
         let sum = 0, n = 0, inMask = 0;
         for (let y = ty; y < ty + 8; y++) {
           for (let x = tx; x < tx + 8; x++) {
@@ -172,7 +241,13 @@ for (const f of files) {
       medium: tiles ? +(med / tiles * 100).toFixed(1) : 0,
       dense: tiles ? +(dense / tiles * 100).toFixed(1) : 0,
       tiles,
-      /** See the header: <1 is horizontal-seam-dominant, ~1 isotropic. Crop-only. */
+      tilesSeen,
+      /**
+       * See the header: <1 is horizontal-seam-dominant, ~1 isotropic. VALID ONLY on
+       * `--frame face`. Over a whole frame it is dominated by silhouette and geometry
+       * edges: between the round-one hull and the strake rewrite it moved 0.74 -> 0.73,
+       * i.e. not at all, while the same measurement on a crop of one lit face read 2.06.
+       */
       aniso: +(energyX / Math.max(1e-6, energyY)).toFixed(2),
     };
   }, { url, crop });
@@ -182,16 +257,91 @@ for (const f of files) {
 
 await browser.close();
 
+// ---------------------------------------------------------------------------
+// Report
+// ---------------------------------------------------------------------------
+
 const pad = (s, n) => String(s).padStart(n);
+const cropLabel = cropArg > 0 ? `  --crop ${crop.join(',')}` : '';
+console.log(`frame: ${frame}${cropLabel}`);
 console.log('file'.padEnd(42)
-  + ' mask%   p05   p25   med   p75   p95   max   sat%   calm   med  dense  aniso  chroma  mean RGB');
+  + ' mask%   p05   p25   med   p75   p95   max   sat%   calm   med  dense  tiles  aniso  chroma  mean RGB');
 for (const r of rows) {
   console.log(
     r.file.padEnd(42)
     + pad(r.maskPct, 5) + pad(r.p05, 6) + pad(r.p25, 6) + pad(r.med, 6) + pad(r.p75, 6)
     + pad(r.p95, 6) + pad(r.max, 6) + pad(r.satPct, 7)
-    + pad(r.calm, 7) + pad(r.medium, 6) + pad(r.dense, 7) + pad(r.aniso, 7)
+    + pad(r.calm, 7) + pad(r.medium, 6) + pad(r.dense, 7) + pad(r.tiles, 7)
+    + pad(frame === 'face' ? r.aniso : '  n/a', 7)
     + pad(r.chroma, 8) + '  ' + r.tint.join(' '),
   );
 }
-console.log('\ntargets: p95 0.72-0.80 on a fully lit face | calm >= 60 medium <= 28 dense <= 12 | sat <= 3.5');
+
+const failures = [];
+const notes = [];
+
+for (const r of rows) {
+  // SAMPLE SIZE FIRST. A check that measures nothing prints "ok".
+  if (r.tiles < MIN_TILES) {
+    failures.push(`${r.file}: only ${r.tiles} tiles are on the subject (floor ${MIN_TILES}, ${r.tilesSeen} tiles in the image). `
+      + 'Too small a sample for a frequency verdict — reframe or crop closer.');
+    continue;
+  }
+
+  if (frame === 'face') {
+    if (r.maskPct < FACE_MIN_MASK_PCT) {
+      failures.push(`${r.file}: --frame face but the crop is only ${r.maskPct}% mask (floor ${FACE_MIN_MASK_PCT}%). `
+        + 'More than a third of this crop is void, so the gradients are silhouette, not surface.');
+    }
+    notes.push(`--frame face carries NO §3 verdict: the reference table has no face-scale rows. `
+      + `Split ${r.calm}/${r.medium}/${r.dense} and aniso ${r.aniso} are reported for tracking a delta on the SAME crop.`);
+    continue;
+  }
+
+  if (frame === 'scene') {
+    notes.push(`--frame scene carries NO §3 verdict: the mask (${r.maskPct}% of the frame) contains lit rock, nebula `
+      + 'and any UI left up, so it is not a measurement of the ship. Use it as a delta between two runs of one shot.');
+    continue;
+  }
+
+  // --frame ship: the only framing §3's table can be compared against.
+  const band = (name, v, [lo, hi]) => {
+    if (v < lo) return `${name} ${v}% is BELOW the reference envelope ${lo}-${hi}%`;
+    if (v > hi) return `${name} ${v}% is ABOVE the reference envelope ${lo}-${hi}%`;
+    return null;
+  };
+  const misses = [
+    band('calm', r.calm, BAND.calm),
+    band('medium', r.medium, BAND.medium),
+    band('dense', r.dense, BAND.dense),
+  ].filter(Boolean);
+  if (misses.length) {
+    for (const m of misses) failures.push(`${r.file}: ${m}`);
+  } else {
+    notes.push(`${r.file}: inside the six-reference envelope on all three tiers.`);
+  }
+
+  // §3's authored rule, tighter and one-sided. Reported, never gated on: it cannot
+  // express "too calm", which is the exact reason this tool was rewritten.
+  const authored = [];
+  if (r.calm < AUTHORED_RULE.calmMin) authored.push(`calm ${r.calm} < ${AUTHORED_RULE.calmMin}`);
+  if (r.medium > AUTHORED_RULE.mediumMax) authored.push(`medium ${r.medium} > ${AUTHORED_RULE.mediumMax}`);
+  if (r.dense > AUTHORED_RULE.denseMax) authored.push(`dense ${r.dense} > ${AUTHORED_RULE.denseMax}`);
+  notes.push(authored.length
+    ? `${r.file}: §3's authored rule (calm>=60 medium<=28 dense<=12) MISSED on ${authored.join(', ')}`
+    : `${r.file}: §3's authored rule (calm>=60 medium<=28 dense<=12) satisfied`);
+}
+
+console.log('');
+console.log(`gate (--frame ship only): two-sided envelope of §3's six references — `
+  + `calm ${BAND.calm[0]}-${BAND.calm[1]}  medium ${BAND.medium[0]}-${BAND.medium[1]}  dense ${BAND.dense[0]}-${BAND.dense[1]}`);
+console.log(`reference median 62 / 21 / 14   |   sample: ${rows.length} image(s), `
+  + `${rows.map((r) => r.tiles).join(' + ')} tiles on subject`);
+for (const n of notes) console.log(`  note  ${n}`);
+for (const f of failures) console.log(`  FAIL  ${f}`);
+
+if (failures.length) {
+  console.error(`\nFAIL: ${failures.length} finding(s)`);
+  process.exit(1);
+}
+console.log('\nsurface ok');

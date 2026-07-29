@@ -2,6 +2,8 @@
  {
   "id": "close",
   "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity. HUD suppressed: this is a look-review frame.",
+  "why": "BLOCKED ON A DEFECT OUTSIDE THIS FILE — see D67. This shot renders literal black on hardware and the cause is not the camera: measured, the hull is dead centre at ndc [0,0], 1203 m from a 1402 m hull, LOD0 live, `core/hull` covering 57% of the frame and `core/greeble` 78%, key light frontal at dot +0.978 with the camera, 0 of 47 meshes frustum-culled. `vfx:plumes` writes a NaN into the HDR target and UnrealBloomPass smears it over every pixel. One line in src/vfx/engines.js fixes it. The POSE IS DELIBERATELY UNCHANGED so that the regenerated frame is comparable to the committed docs/review/look-surface/close.png the moment that lands.",
+  "query": "poi=giant-orbit",
   "settle": 28,
   "settleAfterSetup": 40,
   "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 2.35; t.pitchOffset = t._pitchTarget = 0.18; t.zoomT = t._zoomTTarget = 0.02;",
@@ -10,6 +12,8 @@
  {
   "id": "three-quarter",
   "description": "Mid tactical range, raking key. The everyday playing view. HUD suppressed: this is a look-review frame.",
+  "why": "Pinned to giant-orbit. The boot default moved from 'giant-orbit' to START_POI ('graveyard') this session, and the graveyard is authored as near-black silhouette and rim — so without this pin every look-review frame silently changed location and stopped being comparable to its committed predecessor.",
+  "query": "poi=giant-orbit",
   "settle": 28,
   "settleAfterSetup": 40,
   "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 0.9; t.pitchOffset = t._pitchTarget = 0.30; t.zoomT = t._zoomTTarget = 0.26;",
@@ -17,10 +21,12 @@
  },
  {
   "id": "wide",
-  "description": "Maximum tactical zoom. Cruiser a bright speck against the gas giant. The shot that sells the game, and it only sells anything if the giant is actually in frame: the camera yaw is SOLVED from the celestial's own direction rather than guessed at 1.7 rad, because a max-zoom frame with no large object and no small object cannot answer 'how big is this'. HUD suppressed, like the other look-review frames.",
+  "description": "The cruiser as a small bright hull against a ringed gas giant, seen ACROSS the combat plane. The shot that sells the game: scale comes from a recognisable object in front of an enormous one, so the ship has to stay identifiable and the giant has to fill the frame.",
+  "why": "REFRAMED. This used to be 'maximum tactical zoom' at zoomT 0.86, and 'maximum tactical zoom' and 'the frame that sells the game' are the same control wanting opposite things. The pitch floor rises with zoom (ORBIT.pitchFloorMax 0.95 over smoothstep(0.30, 1.00, zoomT)), so at 0.86 the camera looked 58 degrees DOWN at an empty plane against a 23 degree half-FOV; measured, the giant sat at ndc.y 2.21, 43.2 degrees off axis, entirely out of frame. Three things fix it and none of them touches the tactical camera's feel:  (1) the shot names the POI it needs — the boot default moved to START_POI ('graveyard'), which has no gas giant at all, so the shot's own yaw solve was falling back to a guessed 1.7 rad at a place with nothing to point at;  (2) the stand-off is stated in METRES and solved back through the camera's own zoomRange(), so a retune of the zoom curve moves the shot's zoomT and not its framing;  (3) the view elevation is stated in RADIANS and solved back through pitchFloor(), for the same reason. Measured at 20000 m / 0.20 rad: giant on screen at ndc [0, -0.15], 3.6 degrees off axis, angular radius 39.6 degrees; cruiser 74 px tall in a 900 px frame; luma 0.052, contrast 0.104, near-black 69.1%, clipped 0.00% — clear of all three of capture.mjs's guards.",
+  "query": "poi=giant-orbit",
   "settle": 28,
   "settleAfterSetup": 40,
-  "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; const g = N.world.systems.celestials?.parts?.giant?.object; let yaw = 1.7; if (g) { const p = g.position; const h = Math.hypot(p.x, p.z) || 1; yaw = Math.atan2(-p.x / h, -p.z / h); } t.yaw = t._yawTarget = yaw; t.pitchOffset = t._pitchTarget = 0.16; t.zoomT = t._zoomTTarget = 0.86;",
+  "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; const STANDOFF_M = 20000; const ELEVATION_RAD = 0.20; const g = N.world.systems.celestials?.parts?.giant?.object; if (!g) throw new Error('shot `wide` needs a POI with a gas giant; got poi=' + (N.world.systems.travel?.currentPOI ?? '?')); const p = g.position; const h = Math.hypot(p.x, p.z) || 1; t.yaw = t._yawTarget = Math.atan2(-p.x / h, -p.z / h); const zr = t.zoomRange(); t.zoomT = t._zoomTTarget = Math.log(STANDOFF_M / zr.softMin) / Math.log(zr.max / zr.softMin); t.pitchOffset = t._pitchTarget = ELEVATION_RAD - t.pitchFloor();",
   "hud": false
  },
  {
@@ -33,6 +39,7 @@
  {
   "id": "engagement",
   "description": "Cruiser under way with hostiles on the plane. Tests scale cues and the fight read.",
+  "why": "Deliberately NOT pinned to a POI: this one is about the fight, so it should show wherever the game actually starts.",
   "settle": 28,
   "settleAfterSetup": 40,
   "setup": "const w = N.world; const t = w.systems.tactical; t.mode='LOCKED'; t.lockTarget = w.player; t.yaw = t._yawTarget = 0.4; t.pitchOffset = t._pitchTarget = 0.42; t.zoomT = t._zoomTTarget = 0.48; const foe = w.ships.find(s => s !== w.player && !s.dead); if (foe) { w.player.orderAttack(foe); foe.orderAttack(w.player); }"
@@ -40,6 +47,8 @@
  {
   "id": "hud-close",
   "description": "Close pose WITH the interface up. The occlusion frame: diff it against `close` to measure what share of the hull the chrome is standing on.",
+  "why": "Same pose and same POI pin as `close`, so the diff is exactly one CSS property. Blocked by the same defect D67.",
+  "query": "poi=giant-orbit",
   "settle": 28,
   "settleAfterSetup": 40,
   "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 2.35; t.pitchOffset = t._pitchTarget = 0.18; t.zoomT = t._zoomTTarget = 0.02;",
@@ -48,6 +57,8 @@
  {
   "id": "hud-three-quarter",
   "description": "The everyday playing view WITH the interface up. This is the frame the HUD-occludes-the-ship finding was measured on.",
+  "why": "Same pose and same POI pin as `three-quarter`, so the diff is exactly one CSS property.",
+  "query": "poi=giant-orbit",
   "settle": 28,
   "settleAfterSetup": 40,
   "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 0.9; t.pitchOffset = t._pitchTarget = 0.30; t.zoomT = t._zoomTTarget = 0.26;",

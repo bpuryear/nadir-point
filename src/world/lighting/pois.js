@@ -103,6 +103,23 @@ const starSpec = CELESTIAL_SPECS['near-star'];
 
 const asVec = (v) => [v.x, v.y, v.z];
 
+/**
+ * NO `systemPos` ON ANY OF THESE THREE, DELIBERATELY.
+ *
+ * They used to carry `[0.62, 0.18]`, `[-0.44, 0.71]` and `[0.08, -0.83]`. The field is
+ * declared in `core/contracts.js` and read by NOTHING in `src/` — grep it — so those
+ * numbers were never rendered anywhere, and they disagreed with the only other place
+ * that computes the same quantity: `world/system.js` derives it from the node table as
+ * `[spec.pos[0] / 900, spec.pos[1] / 900]` — and `giant-orbit`'s row is
+ * `pos: [-120, -700]`, so that is `[-0.133, -0.778]`, nothing like `[0.62, 0.18]`.
+ *
+ * That was survivable while this file was dead. It is not survivable now that it is on
+ * the game path: the map positions are in `world/system.js`'s TABLE, in metres on the
+ * combat plane, and a second contradictory copy here is how the next session loses an
+ * hour deciding which one the map is drawn from. If a POI ever needs an authored map
+ * position, it belongs in the node table with every other node's, not in the lighting
+ * definition.
+ */
 export const POI_GIANT_ORBIT = registerPOI({
   id: 'giant-orbit',
   name: 'Marrow Belt, High Orbit',
@@ -117,7 +134,6 @@ export const POI_GIANT_ORBIT = registerPOI({
   fill: getPOIPalette('giant-orbit').fill,
   ibl: getPOIPalette('giant-orbit').ibl,
   grade: getPOIPalette('giant-orbit').grade,
-  systemPos: [0.62, 0.18],
   build(ctx, world) {
     // Captured rock left in orbit plus a shattered fleet; see FIELD_PRESETS.
     return assemble('giant-orbit', ctx, world, {
@@ -156,7 +172,6 @@ export const POI_GRAVEYARD = registerPOI({
   fill: getPOIPalette('graveyard').fill,
   ibl: getPOIPalette('graveyard').ibl,
   grade: getPOIPalette('graveyard').grade,
-  systemPos: [-0.44, 0.71],
   build(ctx, world) {
     // Decades old, three liveries, almost no rock; see FIELD_PRESETS.
     return assemble('graveyard', ctx, world, {
@@ -179,7 +194,6 @@ export const POI_NEAR_STAR = registerPOI({
   fill: getPOIPalette('near-star').fill,
   ibl: getPOIPalette('near-star').ibl,
   grade: getPOIPalette('near-star').grade,
-  systemPos: [0.08, -0.83],
   build(ctx, world) {
     /**
      * Dense sun-scorched rubble for the volumetrics to rake through; see

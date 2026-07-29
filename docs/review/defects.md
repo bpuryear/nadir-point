@@ -883,7 +883,16 @@ Every entry below was found by rendering the generated maps at 1:1 with
 `node tools/maps.mjs` or by reading the arithmetic, not by looking at a screenshot.
 Three of the five had been argued closed in prose in pass 9.
 
-### D49 · The plate generator was still a masonry generator, in three places · FIXED
+**RENUMBERED — this section's first three entries used to be D49, D50 and D51, which
+are also the ids of the three entries in the *silhouette coherence* section above.**
+That is D62, and it is closed by this renumber. The silhouette set keeps its numbers
+because it is the set with live external references — `HANDOFF.md:130` cites D49 for
+detached module parts and `tools/silhouette.mjs:460` cites D51 for the LOD2 proxy —
+so renaming those would have broken two working cross-references to fix an ambiguity
+that only this section created. The three below are now **D64, D65 and D66**; their
+old ids are recorded on each entry so an older reference can still be resolved.
+
+### D64 (was the second D49) · The plate generator was still a masonry generator, in three places · FIXED
 `docs/probes/hullmaps.png` before this pass shows the running bond plainly. The
 strake rewrite (D36) changed the DIRECTION of the field and left three mechanisms
 that produce ashlar regardless of direction:
@@ -907,7 +916,7 @@ that produce ashlar regardless of direction:
    and the maps sheet showed it: a field of visibly different-toned rectangles in
    ORM beside a nearly flat albedo. Roughness is now 75% per-STRAKE.
 
-### D50 · The three frequency tiers were one surface at three sizes · FIXED
+### D65 (was the second D50) · The three frequency tiers were one surface at three sizes · FIXED
 Pass 9 claimed the tiers "differ in how many seams they have and in which direction
 they run". True of the strake count, false of everything the eye uses: all three laid
 running bond. They now differ in **whether they have butts at all**, which is a
@@ -924,7 +933,7 @@ The calm tile came **down** from 187 m and that is not a retreat. A 31 x 187 m
 being too big to have any feature in frame — which is why review measured 93–97%
 calm and still called it blank. The calm now comes from what has been removed.
 
-### D51 · `alt` was being used as a second MATERIAL, so three variants rendered at the average of two colours · FIXED
+### D66 (was the second D51) · `alt` was being used as a second MATERIAL, so three variants rendered at the average of two colours · FIXED
 **The most consequential find of the pass, and it explains three rounds of "hulls read
 at a single value".** In `hullMaps.js` the per-texel colour is `lerp(base, alt, t)`
 with `t = 0.5 + (t0 - 0.5) * contrast` and contrast is 0.30–0.40, so `t` never leaves
@@ -1207,30 +1216,98 @@ An independent audit was run over the whole tree at the stopping point, specific
 find what two killed workflows had left inconsistent. It also re-ran the evidence behind
 every PASS in `acceptance.md`. Findings that are not already recorded above:
 
-### D-INT1 now has a number · STILL OPEN
-`node tools/surface.mjs docs/review/look-surface/close.png` gives a calm/medium/dense
-split of **78.1 / 20.3 / 1.6** against the brief's 60/30/10.
+### D-INT1 now has a number · **STILL OPEN, AND THE NUMBER POINTED THE WRONG WAY**
+The entry immediately below this heading used to read: *"`node tools/surface.mjs
+docs/review/look-surface/close.png` gives a calm/medium/dense split of 78.1 / 20.3 / 1.6
+against the brief's 60/30/10 … the hull genuinely is too calm."*
 
-That settles the caveat the entry above left open, and it settles it against the
-exposure theory: the hull genuinely is too calm, this is not lighting washing plating
-out, and it belongs to the art pass rather than to the deferred lighting work. It clears
-the tool's own printed thresholds (calm ≥ 60, medium ≤ 28, dense ≤ 12), which is worth
-noting because it means **the tool would not have caught this** — its thresholds are
-looser than the brief it is checking. The dense and medium tiers need restoring around
-machinery, joints between masses, and recesses.
+**That measurement reproduces exactly and its conclusion is still wrong**, because it was
+taken on the wrong image. `ship-language.md` §3's reference table is built from ship
+renders of Homeworld and Star Citizen assets, and its own "ours" row names
+`docs/probes/cruiser.png`. `look-surface/close.png` is a game frame whose mask is 29.9%
+of the picture and contains the HUD, lit asteroids and nebula. Comparing it to that table
+is comparing a photograph of a room to a photograph of a model.
 
-### D57 · Four pieces of the core hull float unattached · OPEN
-`node tools/probe.mjs cruiser` logs `DETACHED GEOMETRY` at **all three LODs**, in the
-bridge and sensor-mast region — roughly x −51..16, y 177..366, z −281..−170. At LOD0 the
-offenders are `core/hull#3`, `core/hull#4`, `core/greeble#0` and `core/greeble#1`.
+Measured today, all three framings of the same ship, `tools/surface.mjs` (which now
+**requires** `--frame` for exactly this reason):
 
-**Not a regression from the interrupted art work.** The identical bounding boxes appear
-at commit `5ea20d8`, before those commits, with only the part index shifted by one as a
-part was inserted ahead of them. So it cannot be reverted away and predates the restart.
+| framing | image | mask | tiles | calm | medium | dense |
+|---|---|---|---|---|---|---|
+| `ship` | `docs/probes/cruiser.png` @ HEAD | 8.0% | 503 | **44.9** | **45.7** | 9.3 |
+| `ship` | `docs/probes/cruiser.png`, working tree | 8.1% | 505 | 44.0 | 46.5 | 9.5 |
+| `scene` | `docs/review/look-surface/close.png` | 29.9% | 1781 | 78.1 | 20.3 | 1.6 |
+| `face` | the same frame, `--crop 0.30,0.39,0.62,0.50` | 90.5% | 2111 | 97.2 | 2.8 | 0.0 |
+| — | §3 reference median | | | 62 | 21 | 14 |
+| — | §3 six-reference envelope | | | 51.3–79.8 | 10.1–39.0 | 6.8–22.1 |
 
-This is the same class as D49, which was found and closed for *modules* by
-`tools/silhouette.mjs` — and never checked for the core hull. The check exists; it was
-pointed at one half of the problem. That is the finding, more than the four pieces.
+**On the like-for-like framing the hull fails by being TOO MEDIUM, not too calm.** Medium
+45.7% is over the top of the reference envelope (39.0, SC Idris Invictus quarter view) and
+calm 44.9% is under the bottom of it (51.3, SC Javelin). That is
+`cruiser-modules.png`'s failure mode, the one §3 describes as *"nothing for the detail to
+be detail against"* — the opposite direction from what this entry has said since it was
+written, and the opposite direction from what the greeble-band work was scoped against.
+
+Three consequences, in order of how much they cost if ignored:
+
+1. **Adding 6–9 dense greeble bands is aimed at the wrong tier.** It would raise dense
+   from 9.3 toward the envelope's 22.1 ceiling while medium is already 6.7 points over
+   the top. There are also **11 triangles of LOD0 headroom** (1989 against
+   `BUDGET.cruiserCoreTris` 2000, `src/core/units.js`), and `ARCHITECTURE.md:24-26` is a
+   non-negotiable that reads *"If you are about to add surface noise to make it look
+   better, stop."* The band work stays unscheduled.
+2. **The work that IS indicated is converting medium to calm** — enlarging continuous
+   armour faces and removing mid-frequency incident from them — which costs negative
+   triangles rather than positive ones and needs no budget decision.
+3. **`tools/surface.mjs` could not have caught any of this and now can.** It had no
+   `process.exit` outside its usage guard, so it always exited 0; and its printed rule
+   was one-sided (`calm >= 60, medium <= 28, dense <= 12`), which the 78.1/20.3/1.6 scene
+   figure *satisfies on all three counts*. A rule that cannot express "too calm" cannot
+   catch the defect it was written for. It now takes a required `--frame ship|face|scene`,
+   gates only on `ship`, gates against the two-sided envelope of §3's own six references,
+   and exits 1 outside it. It exits 1 on `docs/probes/cruiser.png` today.
+
+The `face` reading of 97.2/2.8/0.0 is not evidence of anything on its own: §3 has no
+face-scale reference rows, so there is nothing to compare it to. `--frame face` reports it
+and explicitly declines a verdict.
+
+### D57 · Four pieces of the core hull float unattached · **CLOSED — NOT A DEFECT. The detector was wrong, the geometry never was.**
+The entry as written said: `node tools/probe.mjs cruiser` logs `DETACHED GEOMETRY` at all
+three LODs, in the bridge and sensor-mast region — roughly x −51..16, y 177..366,
+z −281..−170, offenders `core/hull#3`, `core/hull#4`, `core/greeble#0`, `core/greeble#1`
+— and that it predated the interrupted art work and "cannot be reverted away".
+
+Every one of those bounding boxes was real. The conclusion drawn from them was not.
+
+`src/probes/cruiser.js` used to SHRINK every part's box by up to 0.5 m per axis and then
+test the shrunken boxes for intersection. That demanded more than a metre of mutual
+*interpenetration* before two parts counted as joined — so anything bolted flat to a
+deck, which is how a bridge tower is built, reported as floating. The comment now at
+`src/probes/cruiser.js:334-352` records the measurement that settles it: `core/hull#3`
+sits on `core/hull#2` with a y-separation of **0.000 m** and overlap on both other axes,
+and the four superstructure parts overlap *each other* by 10–29 m. They were a genuine
+connected component whose only link to the main hull was a flush face — which is a join.
+
+The check now EXPANDS by `TOUCH_TOLERANCE_M = 0.25` and tests intersection, i.e. touching
+counts as joined. Commit `0c30f6c`, "The detached-geometry defect was the detector, not
+the geometry". `src/probes/cruiser.js:280` prints `attachment audit: every part connected
+at LOD 0/1/2`.
+
+Re-run today: `node tools/probe.mjs cruiser` exits **0** and prints **no ERRORS block** —
+62 draw calls, 7,630 triangles, 27 programs, 20 geometries, 47 textures. Note for whoever
+checks this next: `tools/probe.mjs` forwards page `console.error` only, so the reassuring
+`attachment audit: …` line never reaches the terminal. The evidence that the audit ran
+and found nothing is the ABSENCE of a `DETACHED GEOMETRY` error, which is a `console.error`
+and would be forwarded.
+
+`HANDOFF.md:38` already said this in its own correction table and then `HANDOFF.md:125-132`
+re-opened it four paragraphs later with the bounding boxes quoted; this entry sided with
+the wrong half. **A defect sheet that lists a closed defect as open costs the next session
+the afternoon this one spent confirming it** — which is the actual lesson, and it is worth
+more than the four boxes were.
+
+Nothing about the *class* of check is retracted: a bounding-box attachment sweep over the
+core hull is worth having, it just has to answer "do these touch" rather than "do these
+interpenetrate by a metre".
 
 ### D58 · The progression layer's `game.js` seam was dead, and the boot report said so backwards · FIXED
 `STREAM_MODULES` in `src/game.js` had no glob matching `./sim/meta/`, so
@@ -1262,6 +1339,38 @@ the gaps." That is false at runtime — `system.js` fills all of it.
 
 **Deliberately not fixed at the stopping point:** wiring it changes what three POIs look
 like, which is a visual change that wants a capture pass behind it.
+
+**CLOSED (W1-F).** The import landed at `src/game.js` beside the other environment
+streams, before `installWorldSim`, and `tools/poicheck.mjs` now gates it. Measured on the
+live path — booting the assembled game and walking the player onto each node so that
+`TravelSystem._updateArrivalTracking` builds it from the registry, which is the code path
+a real run takes:
+
+| POI | live key direction | live shadow box |
+|---|---|---|
+| giant-orbit | (0.7763, 0.3471, −0.5262) | 1400 m, normalBias 1.846 m |
+| graveyard | (−0.9050, 0.1450, 0.4000) | 1400 m, normalBias 1.846 m |
+| near-star | (0.5601, 0.3001, −0.7722) | 1400 m, normalBias 1.846 m |
+| **control** `vault-nine` (generic) | — | **3600 m** |
+
+All three match their authored `CELESTIAL_SPECS.sunDir` to 0.000 deg. Before the fix all
+three resolved to `sunVector([200, 18])` = (−0.3253, 0.3090, −0.8937), which is 71.0 /
+91.0 / 53.1 degrees from where each of them was authored — three places, one photograph,
+which is the exact test `pois.js:4-6` sets for itself.
+
+The shadow box is the load-bearing half of the check and the reason `vault-nine` is
+measured alongside: the generic builder passes `shadowRadius ?? 3600` and the authored
+defs pass the measured 1400, so reading the box back identifies WHICH registration won
+independently of the sun vector. A control that still reads 3600 is what stops this
+check from being vacuous. `node tools/poicheck.mjs`: 3 of 3 POIs reached, 16 assertions,
+16 passed, exit 0.
+
+Also removed while the file was open: the dead `systemPos` values on the three defs
+(`[0.62, 0.18]`, `[-0.44, 0.71]`, `[0.08, -0.83]`). The field is declared in
+`src/core/contracts.js` and read by nothing in `src/`, and it contradicted the only other
+place that computes the same quantity — `world/system.js` derives it from the node table,
+and `giant-orbit`'s row is `pos: [-120, -700]`, i.e. `[-0.133, -0.778]`. Two contradictory
+map positions were survivable while the file was dead; they are not now that it is live.
 
 ### D60 · `docs/design/controls.md` §6.1 specifies a handling model the code does not implement · OPEN
 No `player_cruiser` ship class is registered, so `src/game.js:128` always falls through
@@ -1300,10 +1409,16 @@ The loadout row also shows a structural weakness worth fixing generally:
 so nothing gates it. That is exactly the setup that produced this project's one
 acknowledged false PASS.
 
-### D62 · Duplicate defect IDs in this file · OPEN
-D49, D50 and D51 each appear **twice**, under two sections both headed "Pass 10" — at
-lines 793 / 832 / 845 and again at 886 / 910 / 927. Any cross-reference to "D51" is
-therefore ambiguous, and at least one document makes one. Renumber the second set.
+### D62 · Duplicate defect IDs in this file · FIXED
+D49, D50 and D51 each appeared **twice**, under two sections both headed "Pass 10" —
+at lines 793 / 832 / 845 and again at 886 / 910 / 927. Any cross-reference to "D51" was
+therefore ambiguous, and at least one document makes one.
+
+The second set is renumbered to **D64 / D65 / D66**, and each entry states its old id.
+The *silhouette coherence* set keeps D49–D51 because it is the set with live external
+references — `HANDOFF.md:130` cites D49 for detached module parts and
+`tools/silhouette.mjs:460` cites D51 for the LOD2 proxy. Renumbering those to fix an
+ambiguity the other section introduced would have broken two working references.
 
 ### D63 · The reserve-clamp self-test asserted against a precondition it never set · FIXED
 `src/sim/selftest.mjs` §6 drained the propellant tank to `reserve + 0.05` and then ran
@@ -1320,3 +1435,162 @@ engine efficiency 0.361 — clamped, and above zero, so you can still limp.
 `node src/sim/selftest.mjs` is 50 PASS / 0 FAIL, exit 0. It was exiting 1 before this,
 which is worth noting on its own: a self-test that has been red for a while stops being
 read, and this one is the only gate on the determinism rule.
+
+---
+
+## Wave 1 — POI lighting and measurement honesty (W1-F)
+
+Everything below was measured on hardware (ANGLE/Metal, `tools/harness.mjs#rasterMode()`
+returns `hardware` on darwin), not reasoned about. Where a number is quoted, the command
+that produced it is named.
+
+### D67 · The `close` look-review frame renders LITERAL BLACK, and the cause is one `pow()` in the engine-plume shader · OPEN — NOT FIXABLE IN THIS STREAM'S LANE
+`npm run capture -- --shots close` gives **luma 0.009, contrast 0.004**, trips both of
+`capture.mjs`'s own guards (`FRAME IS FLAT OR EMPTY`, `FRAME IS ESSENTIALLY BLACK`) and
+exits 1. Measured over five consecutive runs of the identical command: **4 black, 1
+through** — so it is not merely broken, it is *intermittent*, which is worse for an
+evidence frame than a consistent failure.
+
+**Everything obvious was ruled out first, by measurement, with `tools/widediag.mjs`:**
+
+| suspected | measured |
+|---|---|
+| the ship is off-screen or behind the camera | dead centre, ndc `[0, 0]`, 1203 m from a 1402 m hull |
+| the hull is too small to see | `cruiser:lod0` projects to ndc `[-0.62, -1.54] .. [1.10, 0.99]` — it OVERFLOWS the frame; `core/hull` covers 57% of it and `core/greeble` 78% |
+| the camera is on the shadow side | key is FRONTAL: `dot(keyTravelDir, cameraForward) = +0.978` |
+| frustum culling is eating it | **0 of 47 meshes** culled |
+| the wrong LOD is showing | `cruiser:lod1` and `cruiser:lod2` are hidden, LOD0 is live |
+| an in-flight camera snap overrode the pose | 6 of 6 trials: `_snap` null, `zoomT` 0.020, distance 1203 m — the pose is exact and deterministic |
+| shadows / GTAO / godrays / the grade | disabling each ALONE leaves the frame black |
+
+**The cause, isolated by bisection and confirmed three independent ways:**
+
+1. Hiding the `vfx` subtree makes the frame render (mean luma 0.000 → 0.184). Inside it,
+   hiding **`vfx:plumes`** alone is sufficient; every other vfx child makes no difference.
+2. Disabling `UnrealBloomPass` alone makes the frame render. Bloom is the amplifier, not
+   the source: its separable Gaussian smears one poisoned texel over the whole target and
+   its additive composite then poisons every pixel.
+3. Setting the composer's HDR target from `samples: 4` to `samples: 0` makes the frame
+   render **at every one of eleven zoom steps** (a clean monotone 0.179 → 0.008).
+   `samples: 2` still fails at 8 of 11. `samples: 4` fails at 10 of 11, reproducibly.
+
+So: **MSAA on the composer target makes the rasteriser shade partially-covered edge
+pixels at a pixel centre that lies OUTSIDE the primitive. Non-centroid varying
+interpolation then EXTRAPOLATES, and `vUv.y` leaves `[0, 1]` by a hair.** A debug shader
+that paints any fragment whose `vUv.y` is outside `[0, 1]` found **54 such fragments** in
+a 320×180 sample of the frame. `src/vfx/engines.js` then evaluates `pow(t, 0.72)` (line
+82) and `pow(1.0 - t, 1.10)` (line 94) on a negative base, which is undefined and returns
+NaN. The `if (edge <= 0.0) discard;` on line 84 does **not** save it — every comparison
+against NaN is false, so the fragment is kept and NaN is written to the half-float target.
+
+Guarding only ONE of the three `pow()` calls still fails; guarding all three, or clamping
+`t` once at the source, fixes it. Clamping `t` is the smaller change.
+
+**THE FIX IS ONE LINE, IN A FILE THIS STREAM DOES NOT OWN** (`src/vfx/engines.js`
+belongs to VFX per `ARCHITECTURE.md`'s ownership table, and no Wave-1 agent owns it):
+
+```glsl
+-  float t = vUv.y;                        // 0 at the bell, 1 at the tail
++  float t = clamp(vUv.y, 0.0, 1.0);       // 0 at the bell, 1 at the tail
+```
+
+Verified by applying exactly that substitution at runtime and re-measuring the real shot
+with `capture.mjs`'s own statistic and its own three guards:
+
+| shot | plume shader | luma | contrast | near-black | clipped | capture's guards |
+|---|---|---|---|---|---|---|
+| `close` | stock | 0.0090 | 0.0040 | 99.9% | 0.00% | **BOTH FIRE** |
+| `close` | one-line guard | **0.1702** | **0.2622** | 67.8% | 0.00% | clear |
+| `three-quarter` | stock | 0.0642 | 0.1355 | 71.8% | 0.00% | clear |
+| `three-quarter` | one-line guard | 0.0647 | 0.1355 | 71.3% | 0.00% | clear |
+
+The guarded `close` reproduces the committed `docs/review/look-surface/close.png`
+manifest (meanLuma 0.1459, contrast 0.2263) to within the difference a POI pin and a
+hidden HUD account for, and the frame contains the hull, its number and its plate
+structure. `three-quarter` is unaffected either way, which is why this was never noticed.
+
+**Why nobody saw it.** The composer target went `samples: 0` → `samples: 4` in commit
+`64590fd`, and `docs/review/look-surface/close.png` was committed in that same commit —
+its manifest records `fps: 4`, i.e. it was rendered under SwiftShader, where the failure
+does not reproduce. Every frame since has been either black or unlooked-at.
+
+**Consequences while this is open:** no surface, damage or lighting claim measured from
+`docs/review/look-surface/close.png` can be regenerated on hardware, and `npm run capture`
+is red. This is a **live gameplay defect, not a tooling one** — the same pose is a
+perfectly ordinary tactical camera position, and the sweep found black frames across most
+of the zoom range at that yaw. A player would see it.
+
+### D68 · `QUALITY_PRESETS[*].msaa` is read by nothing · OPEN
+`src/render/postfx.js` declares `msaa: 0 / 2 / 4 / 4` across the four quality presets and
+documents it at length as "a quality knob and not a constant … on one that cannot afford
+it, it is the first thing to drop". `PostChain.setQuality()` sets `gtao`, `godrays`,
+`godraySamples`, `bloom` and `smaa` — and never touches the composer target's sample
+count, which is hard-coded to `samples: 4` in the constructor. So `--quality low` does not
+drop MSAA and there is no supported way to turn it off.
+
+Found while measuring D67, where switching that number is the difference between a black
+frame and a good one. Two lines to fix, in the render stream's file. This is exactly the
+class of defect `?quality=` already produced once (`HANDOFF.md`: the query parameter was
+parsed, forwarded, stored and read by nothing for the life of the project).
+
+### D69 · Every look-review frame silently changed location when the boot POI default moved · FIXED
+`src/game.js` used to default to `params.get('poi') ?? 'giant-orbit'`; this session it
+became `?? START_POI`, which is `'graveyard'` (`src/world/system.js`). That is the right
+default for the game — the node table, travel and the HUD all said "The Graveyard" while
+the sky said otherwise — but no shot in `tools/shots.json` declared a POI, so every
+look-review frame moved with it, to a location `src/world/lighting/pois.js:14-17` authors
+as *"no fill worth the name … everything is silhouette, rim light and near-black"*.
+
+Measured: the reframed `wide` shot at the graveyard has **no gas giant at all**
+(`world.systems.celestials.parts.giant` is undefined), luma 0.030, contrast 0.021 — one
+thousandth above `capture.mjs`'s flat-frame guard, and a shot whose entire subject is
+absent. `close`, `three-quarter`, `wide`, `hud-close` and `hud-three-quarter` now carry
+`"query": "poi=giant-orbit"`, so they stay comparable to their committed predecessors.
+`cinematic`, `engagement` and `hud-engagement` deliberately do not: those are about the
+fight, and should show wherever the game actually starts.
+
+### D70 · The `wide` shot asked one control for two opposite things · FIXED
+`"Maximum tactical zoom"` and `"the frame that sells the game"` were the same setting.
+The pitch floor rises with zoom by design (`ORBIT.pitchFloorMax` 0.95 over
+`smoothstep(0.30, 1.00, zoomT)`, `src/camera/constants.js`), so `zoomT = 0.86` forced the
+camera to look **58 degrees down** at an empty plane against a 23 degree half-FOV. Measured
+before: the gas giant sat at ndc.y **2.21**, 43.2 degrees off axis, with an angular radius
+of 39.6 degrees — entirely out of frame; luma 0.009, contrast 0.004, both guards firing.
+
+The tactical camera's feel is untouched. The **shot** now states what it wants in the
+units the project uses and solves back through the camera's own accessors, so a retune of
+either curve moves the shot's parameters and not its framing:
+
+```js
+const zr = t.zoomRange();
+t.zoomT = t._zoomTTarget = Math.log(STANDOFF_M / zr.softMin) / Math.log(zr.max / zr.softMin);
+t.pitchOffset = t._pitchTarget = ELEVATION_RAD - t.pitchFloor();
+```
+
+At `STANDOFF_M = 20000` and `ELEVATION_RAD = 0.20`: giant on screen at ndc `[0, -0.15]`,
+3.6 degrees off axis, angular radius 39.6 degrees; cruiser 74 px tall in a 900 px frame;
+`npm run capture -- --shots wide` gives **luma 0.052, contrast 0.104, clipped 0.00%,
+exit 0**, against 0.009 / 0.004 / both-guards-firing before. The shot also now throws a
+named error if it is run at a POI with no gas giant, rather than silently pointing at
+nothing.
+
+### D71 · `giant-orbit` and `near-star` are 19.0 degrees apart · OPEN
+Not a bug, a measurement, and it contradicts the recon brief. `src/world/lighting/pois.js`
+states its own acceptance test as *"a player shown a single still frame can name where
+they are — not from a label, from the light"*, and the brief proposed asserting that the
+three key directions are at least 30 degrees apart. Measured from
+`CELESTIAL_SPECS[*].sunDir`:
+
+| pair | separation |
+|---|---|
+| giant-orbit vs graveyard | 149.6 deg |
+| graveyard vs near-star | 140.6 deg |
+| **giant-orbit vs near-star** | **19.0 deg** |
+
+A 30 degree gate would have shipped permanently red, or been quietly moved until it
+passed. `tools/poicheck.mjs` therefore gates on a floor that is physical rather than
+chosen — two POIs closer than the angular DIAMETER of the larger key disc
+(`POI_PALETTES[id].key.angularRadius`, 5.73 deg for near-star) are lit by the same sun —
+and prints the 30 degree target as a WARN. Closing this properly means moving a sun
+vector in `src/world/celestials/index.js`, which is the Environment stream's file and
+changes what two POIs look like. Filed, not fixed.
