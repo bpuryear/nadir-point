@@ -238,7 +238,7 @@ function buildJumpDrive(ctx) {
       [ca * 0.94, sa * 0.94, -1], [ca * 26, sa * 26, -66],
     ));
     // Field emitter where the pylon meets the ring.
-    b.add('greeble', G.panelledSlab({ width: 40, height: 40, depth: 44, chamfer: 8, detail: D }),
+    b.add('greeble', G.panelledSlab({ width: 40, height: 40, depth: 44, detail: D }),
       { pos: [ca * r, sa * r, -276] });
     b.glowDir([ca * (r - 34), sa * (r - 34), -276], 38, [-ca, -sa, 0]);
   }
@@ -255,8 +255,8 @@ function buildJumpDrive(ctx) {
   // there is nothing at all on the remaining two thirds. The ring now has a TOP and
   // a BOTTOM - which a wheel does not - and the housings are at neither the pylons
   // nor halfway between them, so nothing on it divides into equal parts.
-  for (const [a0, arc, depth, thick] of [[0.95, 1.55, 46, 34], [3.55, 0.62, 30, 20]]) {
-    const steps = b.full ? 3 : 2;
+  for (const [a0, arc, depth, thick] of [[0.95, 1.55, 46, 34], [3.55, 0.0, 30, 20]]) {
+    const steps = arc > 0 ? (b.full ? 3 : 2) : 1;
     for (let i = 0; i < steps; i++) {
       const a = a0 + (arc * i) / (steps - 1 || 1);
       const ca = Math.cos(a), sa = Math.sin(a);
