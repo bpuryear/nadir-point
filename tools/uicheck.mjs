@@ -134,9 +134,25 @@ async function checkFrame(screen) {
       const ui = window.__NADIR?.world?.systems?.ui;
       if (!ui) return ['no ui layer'];
       const P = ui.painter;
+
+      // OPEN EVERY PANEL FIRST. Every panel constructs closed, so an audit of the
+      // default combat screen measured 191 boxes and attributed none of them: the
+      // escape and collide checks below only consider boxes owned by an OPEN panel,
+      // and there were none. The check reported `ok` for months while asserting
+      // nothing about the thing it was written to catch — the HULL window slicing
+      // its own header. Five more panels have been added since, none ever audited.
+      // Iterate a COPY: `toggle` calls `raise`, which splices the panel to the end of
+      // this very array, so walking the live one skips every other panel. The first
+      // version of this loop opened three of six and looked like a gameplay gate.
+      for (const p of [...ui.panels.panels]) if (!p.open) ui.panels.toggle(p.id);
+
+      // Lay out unaudited: `toggle` clears x/y, and the placement solver runs inside
+      // draw(), so the first frame is where panels acquire their rects.
+      ui._render(1 / 60);
+
       P.audit = true;
       P.violations.length = 0;
-      // One audited frame. `_render` is the same path the game runs.
+      // The audited frame. `_render` is the same path the game runs.
       ui._render(1 / 60);
       const boxes = P.boxes;
       const out = [];
@@ -174,8 +190,14 @@ async function checkFrame(screen) {
           }
         }
       }
-      // A silent pass because nothing was measured is worse than a failure: report
-      // the sample size so an empty audit cannot be mistaken for a clean one.
+      // A silent pass because nothing was measured is worse than a failure. Reporting
+      // the sample size was not enough — it printed `0 boxes in 0 panel(s)` next to an
+      // `ok` and nobody read it. An empty sample is now a FAIL, so the check cannot
+      // pass by measuring nothing.
+      if (owned.length === 0 || rects.size === 0) {
+        out.push(`EMPTY AUDIT: ${owned.length} attributed boxes in ${rects.size} open panel(s) `
+          + `(${boxes.length} drawn) — the layout assertions ran against nothing`);
+      }
       out.push(`#sampled ${owned.length} boxes in ${rects.size} panel(s), ${boxes.length} total`);
       return out.slice(0, 40);
     });
