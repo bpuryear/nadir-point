@@ -159,7 +159,7 @@ try {
     const CH = [
       [0, 'R  value drift  (+ the 180 m frame rhythm)'],
       [2, 'B  soot'],
-      [3, 'A  marks:  mid grey = ink 0.42,  white = hazard 1.0'],
+      [3, 'A  marks:  0.42 ink (neutral)   0.72 hazard (ACCESS, orange)   1.00 sensor (WHITE)'],
     ];
     const cw = 470, chh = cw * (img.height / img.width);
     let cx = PAD;

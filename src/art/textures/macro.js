@@ -349,9 +349,15 @@ function sootWash(ctx, size, cx, cy, r, strength) {
  * patch carries a sub-4 m lighter edging. That is a placard border, it is what real
  * hazard markings have, and it is cheaper than a second texture fetch.
  */
+/**
+ * Band order is INK < HAZARD < SENSOR and it is load-bearing, not alphabetical: a
+ * mark's filtered outer edge ramps down through every band beneath it, so the family
+ * with the largest painted area has to sit below the family whose colour it must not
+ * be averaged towards. The full argument is in materials/hullShader.js#nadirMark.
+ */
 const INK_V = 0.42;
-const SENSOR_V = 0.72;
-const HAZ_V = 1.0;
+const HAZ_V = 0.72;
+const SENSOR_V = 1.0;
 
 /**
  * ---------------------------------------------------------------------------
@@ -698,9 +704,15 @@ function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
    * because 6 m is 1.4 texels here and would alias into a flat wash — the honest
    * trade is a coarser bar that resolves over a finer one that does not.
    */
+  /**
+   * The bar colour is 0xb8b8b8, not 0xffffff, because the value IS the family: 184/255
+   * is 0.72, the HAZARD band. White would classify as SENSOR and paint every access
+   * marking on the ship bone instead of orange. See the band table above.
+   */
+  const HAZ_HEX = 0xb8b8b8;
   const hazardAt = (a, b, wM, hM, pitchM = 16) => {
     hazardStripes(ctx, X(a) - ms(wM) * 0.5, Y(b) - ms(hM) * 0.5, ms(wM), ms(hM), {
-      a: 0xffffff, b: 0x000000, period: Math.max(2, ms(pitchM)), angle: Math.PI / 4,
+      a: HAZ_HEX, b: 0x000000, period: Math.max(2, ms(pitchM)), angle: Math.PI / 4,
     });
   };
 

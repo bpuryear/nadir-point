@@ -117,8 +117,6 @@ async function checkContrast() {
 // 2-4. Layout and ink, measured from a live frame
 // ---------------------------------------------------------------------------
 
-const OVERLAP_SLACK = 1.5;   // logical px; a glyph box is a bounding box, not a hull
-
 async function checkFrame(screen) {
   const port = 5400 + Math.floor(Math.random() * 200);
   let server;
@@ -162,6 +160,7 @@ async function checkFrame(screen) {
         }
       }
 
+      // A glyph box is a bounding box, not a hull, so a hairline of touching is fine.
       const SLACK = 1.5;
       for (let i = 0; i < owned.length; i++) {
         for (let j = i + 1; j < owned.length; j++) {

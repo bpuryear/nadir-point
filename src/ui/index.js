@@ -40,7 +40,7 @@ import { ActiveSet } from '../core/pool.js';
 import { getItem } from '../core/contracts.js';
 import {
   Surface, Painter, Projector, C, F, TRACK,
-  UI_SCALES, setUIScale, uiScale, defaultUIScale,
+  UI_SCALES, setUIScale, uiScale,
 } from './theme.js';
 import { HUD, BREACH_WARN_FRACTION } from './hud.js';
 import { TacticalOverlay, bearingAdvice } from './tactical.js';

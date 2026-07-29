@@ -856,6 +856,290 @@ information available. Everything else sits at 0.795–0.982.
 
 ---
 
+## Pass 10 — surface and material identity, round three
+
+Every entry below was found by rendering the generated maps at 1:1 with
+`node tools/maps.mjs` or by reading the arithmetic, not by looking at a screenshot.
+Three of the five had been argued closed in prose in pass 9.
+
+### D49 · The plate generator was still a masonry generator, in three places · FIXED
+`docs/probes/hullmaps.png` before this pass shows the running bond plainly. The
+strake rewrite (D36) changed the DIRECTION of the field and left three mechanisms
+that produce ashlar regardless of direction:
+
+1. **One butt per strake per tile at a jittered phase is running bond.** That is the
+   definition of the pattern. `nPlates = round(strakes / plateAspect)` resolved to
+   exactly 1 on both the calm and the medium tier, so every strake carried exactly
+   one vertical break offset from its neighbours' — a brick wall with a 6:1 brick.
+   `panelLines.js#buttChance` now GATES each butt: 0.20 on the calm tier, so four
+   strakes in five run unbroken across the tile.
+2. **The lip was a 7 m soft bevel.** `hullMaps.js` derives `lipM = seamM * 2.1`, and
+   seamM on the calm tier was 3.37 m, so every strake seam had a nineteen-texel
+   squared falloff up one side and down the other. That is the "bright rim on two
+   sides, dark rim on the other two" this generator's own header calls the loudest
+   masonry cue, reintroduced as a gradient instead of a hard edge. `lipPx` is now
+   clamped to **two texels** and the falloff is linear, so a plate lap is a step.
+3. **Per-plate roughness was a uniform random constant per rectangle.** D41 capped
+   per-plate ALBEDO at ±4% and left the identical defect standing in the ORM map,
+   where `plate.rough` ran the full ±1 into a ±8.8-point roughness step at every
+   plate boundary. Under a key that reads as a value step exactly like albedo does,
+   and the maps sheet showed it: a field of visibly different-toned rectangles in
+   ORM beside a nearly flat albedo. Roughness is now 75% per-STRAKE.
+
+### D50 · The three frequency tiers were one surface at three sizes · FIXED
+Pass 9 claimed the tiers "differ in how many seams they have and in which direction
+they run". True of the strake count, false of everything the eye uses: all three laid
+running bond. They now differ in **whether they have butts at all**, which is a
+difference of kind:
+
+| tier | tile | strakes | strake h | butts | greeble | rivets | steps | repeats/1400 m |
+|---|---|---|---|---|---|---|---|---|
+| hull (calm) | **109.2 m** | 6 | 18.2 m | **0.20** | 0 | 0 | 0 | **12.8** |
+| plating (medium) | 52.0 m | 6 | 8.7 m | 0.62 | 0.34 | 0.85 | yes | 26.9 |
+| greeble (dense) | 16.1 m | 4 | 4.0 m | 1.00 | 0.90 | 1.00 | yes | 86.8 |
+
+The calm tile came **down** from 187 m and that is not a retreat. A 31 x 187 m
+"plate" is not an object anyone recognises, so the previous tier bought its calm by
+being too big to have any feature in frame — which is why review measured 93–97%
+calm and still called it blank. The calm now comes from what has been removed.
+
+### D51 · `alt` was being used as a second MATERIAL, so three variants rendered at the average of two colours · FIXED
+**The most consequential find of the pass, and it explains three rounds of "hulls read
+at a single value".** In `hullMaps.js` the per-texel colour is `lerp(base, alt, t)`
+with `t = 0.5 + (t0 - 0.5) * contrast` and contrast is 0.30–0.40, so `t` never leaves
+0.5 ± 0.2 — **the surface's actual colour is the MIDPOINT of `base` and `alt`.**
+Harmless when they are neighbours, which is what a plate-to-plate variance is. Three
+variants had them as different materials:
+
+| variant | base | alt (was) | rendered |
+|---|---|---|---|
+| `hullDark` | baseDark | **base** | a mid grey, never a dark |
+| `greeble` | greeble | **baseDark** | the average of a bright metal and a near-black |
+| `plating` | plating | **base** | Y 0.130 against `hull`'s Y 0.132 |
+
+The last row is the one that matters. `palette.js` states at length that `plating`
+sits "a genuine half-stop BELOW `hull`" so "the belt/spine split is a VALUE split that
+survives to LOD2". It was not — the two rendered within **1.5%** of each other, which
+is invisible, and the fleet's `hull`, `plating` and `dark` surfaces were therefore all
+resolving to nearly the same grey. Solved together so the midpoints land where the
+palette says they land: **0.710 / 0.627 / 0.359** lit sRGB, in the ALBEDO, where no
+lighting pass can take them away.
+
+`greeble` is the one that moves down: its palette entry is a metal's F0 and the old
+`alt: baseDark` was wrong in KIND and accidentally right in VALUE (Y 0.21). The new
+pair keeps the value (Y 0.206) and fixes the kind.
+
+### D52 · Colour identity was four temperatures; the hull albedo was authored cool · FIXED
+`reference-ui-language.md` §1: "the whole screen is black, amber, and bone … our
+frames carry neutral-grey hull, blue planet, warm-brown asteroids and cobalt accents —
+four temperatures." Every hull albedo in `palette.js` was authored COOL (player base
+0x666d75 is hue 212°, B > G > R) under a cream key, and the two cancelled: the shipped
+frame's hull mask measured RGB(0.556, 0.537, 0.498), dead neutral.
+
+Rotated onto the warm axis **at constant linear luminance**, so the six solved POI key
+intensities remain valid (they were solved against a specific linear luminance):
+player base 0x666d75 → 0x716c63, Y 0.1505 → 0.1514. Every hull colour holds to within
+1%. Concord is left cool as the stated faction-hue exception.
+
+**Near-black was not near black.** `baseDark` — the third value of "amber / bone /
+near-black" — was 0x3a3f47 / 0x495561 / 0x373b31 (Y 0.049 / 0.088 / 0.042), i.e. mids.
+Every faction's is now Y 0.012–0.024.
+
+### D53 · Saturated navy and cobalt were whole-face fills, and it was a palette bug · FIXED
+`ships/common.js#SURFACES` maps the logical surfaces `dark` and `trim` onto whole
+merged meshes, so every square metre Concord geometry called "trim" was painted
+`0x2f7fa8` (chroma **0.72**) and every square metre it called "dark" was `0x495561`.
+That is the model-kit finding, and D24 had already cleared the fill LIGHT of it — it
+was in the palette the whole time. Both are near-neutral slate now (trim chroma
+0.720 → 0.098). `variantSpec('trim')` no longer fills with the accent at all: it fills
+with the faction's own plating and draws the accent as a 2.6 m band along the strake
+seams (`stampAccentEdges`), so accent follows structure per §4.
+
+### D54 · Accent had no semantics, so no mark meant anything · FIXED
+Adopted Falling Frontier's rule from `closest-comparables.md`: **ORANGE = ACCESS AND
+MAINTENANCE, WHITE = SENSORS**, applied identically on every faction because the mark
+names a function and a function has no nationality. Three families now come out of the
+one atlas channel (`macro.js` values 0.42 ink / 0.72 hazard / 1.00 sensor,
+`hullShader.js#nadirMark` classifies).
+
+**The band ORDER is load-bearing.** A mark's filtered outer edge ramps down through
+every band beneath it. Sensor was tried at 0.72 with hazard at 1.0 and the consequence
+is arithmetic: a hazard patch is the largest mark on the hull, its bars are 2–3 texels
+at 4.17 m/texel, and every one would have carried a bone-white fringe on both sides —
+averaging an ORANGE access marking towards WHITE at exactly the distance the rule
+exists to serve. Hazard sits in the middle band; the fringe lands on the sensor
+family, whose members are thin outlines, and puts a warm rim on a white aperture.
+
+### D55 · Plate scale did not track surface size · PARTIAL
+"A 400 m armour face must not carry the same cell as a 30 m module", and it did:
+`modules/kit.js` asks for `get('hull', { tier: 2 })` for a 30–100 m bolt-on and
+`cruiser.js` asks for the same key for a 1400 m hull, so a module wore one sixth of
+one plate. `hullMaps.js#resolveTile` and a `surfaceM` registry option now bound the
+tile to 1.6–10 repeats across the stated surface, quantised to 25 m so it cannot
+fragment the material cache.
+
+**Still PARTIAL and it is not this stream's to close:** no geometry call site passes
+`surfaceM`, and `src/art/geometry` belongs to another stream. Two one-line changes
+would make it bite — `modules/kit.js:91` adding `surfaceM: 90` and
+`cruiser.js#SURFACE.hull` adding `surfaceM: 400`. What ships today is the mechanism,
+plus a calm tile that is no longer 187 m wide, which improves the module case on its
+own.
+
+### D56 · One macro atlas anchored every faction's marks to the PLAYER CRUISER · PARTIAL
+Raised by pass 9 as a stated limitation and by review as a finding. The mechanism is
+not fixable by moving marks: a region maps ±800 m of object space, `macroM` is a
+per-MATERIAL uniform, and a whole faction shares ONE hull material — so per-class
+scaling means per-class materials, i.e. a draw call per class per surface against a
+budget already at 499 for a committed 320.
+
+What is done instead: the mark set is **self-similar**, drawn at three scales of the
+same anchor table (1.00 / 0.34 / 0.14, reaching ±700 / ±240 / ±100 m), so the annulus
+a 480 m destroyer actually samples carries a stripe, a hatch and an aperture sized and
+placed for a 480 m hull. The scale multiplies both region axes, so a chine at y = 68 m
+on the cruiser sits at y = 23 m on the destroyer set.
+
+**Stated limitation, in full:** this makes the marks PLAUSIBLE at a class's size, not
+CORRECT for that class. A destroyer whose real chine is at y = 18 m still gets a
+stripe at 23 m. Closing it needs a per-class anchor table plus either the draw budget
+for per-class materials or a texture array.
+
+---
+
+## Round-1 UI review — systems-UI stream
+
+Every item below was raised with a measurement, so every one is closed with a
+measurement. Two new gates were added so none of them can silently come back:
+`npm run uicheck` (contrast, escaped text boxes, colliding text boxes, illegal ink)
+and `npm run occlusion` (what share of the ship the interface is standing on).
+
+### U1 · The HUD covered the player's ship — FIXED
+Measured by diffing the identical pose with the interface up and suppressed. That
+diff is now `tools/occlusion.mjs` and it runs on three poses.
+
+| pose | hull covered, before | after |
+|---|---|---|
+| three-quarter | 99.0% | **1.8%** |
+| close | 80.3% | **9.2%** |
+| engagement | — | **3.1%** |
+| central half of frame | 36.3% | **7.2 – 8.6%** |
+| whole frame | 15.5% | **12.2 – 12.6%** |
+
+Four changes, not one. ARMAMENT no longer opens by default and nothing else does
+either — a window open before the player asked for it is welded chrome wearing a close
+button. `PanelHost.solve` scores every 24 px grid position against the player's
+projected bounding sphere, the reserved welded regions and the other open windows, and
+re-solves when the ship's box moves. The target block collapses from 360 px to a
+two-line prompt when there is no lock, which is where most of the remaining figure
+came from. And `\` held hides the interface entirely.
+
+### U2 · Dim text below any usable contrast floor — FIXED
+`C.inkGhost` was alpha 0.17 of a bone white on near-black — 1.42:1, which cannot clear
+3:1 at any size — and `C.inkFaint` was 0.38, i.e. 2.91:1. Both were used as body text.
+The ramp is now three text values, all above 4.5:1 against the plate (ink 14.7,
+inkDim 9.7, inkFaint 6.6), and the old ghost value survives as `C.track` for bar
+tracks and inert chip fills ONLY. `Painter.text` audits every glyph against a
+whitelist and `tools/uicheck.mjs` walks every (font, colour, background) pair.
+
+Disabled state is now `Painter.struck` — a leading dash and a strike rule at full ink.
+
+### U3 · Welded blocks were transparent over bright content — FIXED
+Only the floating windows had the near-opaque plate; the welded chrome used
+`P.scrim` at alpha 0.62–0.70, and at a close framing the white hull read straight
+through the REACTOR ROUTING panel. `Painter.plate` is now used by every block, and
+`C.panel` went from 0.955 to **1.0** — the last 4.5% was printing the hull through the
+ARMAMENT window body at rgb(13,14,21) on rgb(2,3,10).
+
+`C.panelTitle` was also wrong in a way nobody had measured: it was
+`mix(spaceBlack, ice, 0.045)` and `mix` lerps in LINEAR space, so it came out
+rgb(47,53,58) — a mid grey, not a near-black band. It is now a 5% ink lift composited
+over the plate, which lands at rgb(13,14,21) as intended.
+
+### U4 · The sealed-state hatch was drawn over the text — FIXED
+The power panel's diagonal hatch went down last, so every label in it was struck
+through and two rules ran through the WEAPONS and ENGINES baselines. The hatch is now
+drawn FIRST, on the plate, under everything, and the content is drawn on top at full
+ink — locked no longer means illegible. Same fix on the device hotbar's `NONE CARRIED`
+and on destroyed sub-part squares, where the glyph now goes down after the hatch.
+
+### U5 · Panel content overflowed its own frame — FIXED
+Every panel now reserves a footer strip; content clips above it and the strip prints
+`▼ N MORE · SCROLL`. Panels also GROW toward `maxH` before they scroll, and a row is
+only drawn when the whole row fits — a caption sliced by the panel border reads as a
+rendering fault, not as "there is more". `uicheck` asserts no drawn text box extends
+past its panel's inner rect.
+
+### U6 · Names truncated to uselessness — FIXED
+Nine ellipses in one ARMAMENT panel. `src/ui/names.js` authors a short name per module
+and per device at twelve characters or fewer, with the faction word stripped — it is
+already carried by the identity stripe and by the ORIGIN column, and re-printing
+`COALITION` was what forced the ellipsis. `COALITION RAIL BATTERY` is `RAIL BATTERY`.
+The empty state names the socket (`PORT SPONSON`) instead of fading `— NO MODULE —`.
+
+### U7 · Colour semantics had collapsed — FIXED
+One saturated red-orange carried thermal state, out-of-ammunition, structural failure,
+subsystem disabled and an alert count at the same value. `SEMANTIC` in theme.js now
+writes the split down and the call sites read from it: heat is amber escalating by
+VALUE (`warnLow` → `warn`), starved states are neutral ink with a struck bar, and only
+structural loss — BREACHED / LOST / DESTROYED — and the hostile contact get red.
+
+### U8 · The player-state block had no layers and no rate — FIXED
+It is now a three-row stack — SHIELD / ARMOUR / HULL — that is always three rows tall,
+because the shape of what you do not have is information; the reference prints
+`NO ARMOR 0%` for the same reason. Each row carries its own per-second rate, sampled on
+the FIXED step, and a net `HP/S` figure underneath. The velocity bar prints `MAX 180`
+over the fill, and beside it what the fitted mass is costing in acceleration and turn —
+the honest coupling, because `refit.js` divides accel by `massLoad` and turn by its
+square root and nothing in the sim makes mass reduce top speed.
+
+### U9 · Type fixed in CSS pixels with no scale control — FIXED
+`F.micro` was 9 px, which loses the counters in 8, 6 and 0 in this stack. The floor is
+10 px and `setUIScale` (0.85 / 1.0 / 1.25 / 1.5, `=` to cycle) multiplies the whole
+overlay by dividing the logical viewport, so type and every layout constant move
+together. Defaults off viewport height.
+
+### U10 · Windows did not avoid each other — FIXED
+See U1 for the solver. A title bar may never be covered: `_raiseBuriedTitles` brings
+any window whose title strip is under another to the top. The player-state and target
+blocks are HARD reserved regions no window may enter.
+
+### U11 · World-anchored text unreadable and clipped mid-word — FIXED
+Every world-anchored string is now the reference's filled label chip with dark text
+(§4) rather than light ink on nothing, which fixes both a bright planet and a white
+hull at once. Occlusion is a WHOLE-LABEL test — if the rectangle is taken the string is
+dropped, never clipped. The subsystem ring labels, the rejection reason and the arc and
+range-ring captions all go through it, and duplicate captions (an arc and its range
+ring both saying `LANCE 6.80 KM`) are suppressed.
+
+### U12 · Column collisions — FIXED
+`STARBOARD NACELLEENGINE` and `BALANCEDF1` were both fixed offsets. Columns are now
+measured, and the target block's four right-hand columns are laid out from the RIGHT
+edge with the name taking what is left, so nothing can be pushed into anything else.
+
+Root cause of one of them was a real bug: `ctx.restore()` reverts `letterSpacing`, so
+after any clip or hatch the painter's cached tracking was wrong and `measure` returned
+a width for one tracking while `fillText` drew at another. `Painter._forgetTrack` is
+called after every restore, and `Painter.text` now takes `maxW` so clipping and drawing
+can never disagree about tracking.
+
+### U13 · HULL and SALVAGE shared one line; the legend was ambiguous — FIXED
+They have a line and a number each. The legend now states three encodings separately —
+dim ink is out of arc, a strike is destroyed, the cyan dot means a whole part still
+comes out — and the dot is legended rather than unexplained.
+
+### U14 · Cargo cost was stated as volume but never as a cost — FIXED
+The HOLD header prints `FITTED MASS ×4.14 · ACCEL −72% · TURN −51% · BURN ×4.14` and
+says plainly that hold mass joins fitted mass when installed. These are read off the
+sim; a falling top speed would have been invented.
+
+### U15 · Orphaned `ARRIVAL IF YOU GO NOW` label — FIXED
+It prints the actual ETA at best burn, the reward is labelled `PAYS`, and the modifier
+caption sits above the divider at `C.inkDim`.
+
+### U16 · The arc dial spent 90x90 px drawing nothing — FIXED
+Collapsed to a single `ARC 0% — NO MOUNTS BEAR` line until at least one mount bears.
+
+---
+
 ## Deferred / accepted
 
 ### A1 · Frame rate is unverified — ACCEPTED (environmental)

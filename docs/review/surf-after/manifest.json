@@ -1,0 +1,72 @@
+[
+  {
+    "id": "close",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.1442,
+      "contrast": 0.2502,
+      "clippedPct": 0,
+      "nearBlackPct": 72.53
+    },
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/surf-after/close.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 48.099999999278225,
+      "stepMs": 0.8000000007450581,
+      "renderMs": 33.399999998509884,
+      "steps": 6,
+      "calls": 131,
+      "triangles": 72627,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 71,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "three-quarter",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0644,
+      "contrast": 0.1373,
+      "clippedPct": 0,
+      "nearBlackPct": 70.17
+    },
+    "description": "Mid tactical range, raking key. The everyday playing view. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/surf-after/three-quarter.png",
+    "stats": {
+      "fps": 4,
+      "cpuMs": 28.099999999976717,
+      "stepMs": 1.2999999970197678,
+      "renderMs": 12.200000002980232,
+      "steps": 6,
+      "calls": 102,
+      "triangles": 87533,
+      "points": 7000,
+      "lines": 0,
+      "programs": 55,
+      "geometries": 56,
+      "textures": 65
+    },
+    "consoleErrors": [
+      "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "[error] [game] stream \"cruiser-geometry\" failed to load: TypeError: Failed to fetch dynamically imported module: http://127.0.0.1:5179/assets/cruiser-Bzwvt0JS.js",
+      "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "[error] [game] stream \"hardpoints\" failed to load: TypeError: Failed to fetch dynamically imported module: http://127.0.0.1:5179/assets/hardpoints-B0cdl6tm.js",
+      "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "[error] [game] stream \"modules\" failed to load: TypeError: Failed to fetch dynamically imported module: http://127.0.0.1:5179/assets/modules-By3SrRdZ.js",
+      "[error] Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "[error] [game] stream \"faction-ships\" failed to load: TypeError: Failed to fetch dynamically imported module: http://127.0.0.1:5179/assets/ships-Bgk6oGyp.js"
+    ],
+    "pageErrors": []
+  }
+]
