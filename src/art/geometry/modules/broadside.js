@@ -69,8 +69,8 @@ function buildCannonBank(ctx) {
   b.add('hull', G.panelledSlab({ width: 112, height: 48, depth: 210, chamfer: 14, detail: D }),
     { pos: [-38, -48, 0] });
   // The outer casemate face, skewed in plan so it agrees with the gun steps.
-  b.add('plating', G.panelledSlab({ width: 74, height: 44, depth: 150, chamfer: 12, detail: D }),
-    { pos: [-104, -60, -4], rot: [0, 0.40, 0] });
+  b.add('plating', G.panelledSlab({ width: 92, height: 46, depth: 168, chamfer: 12, detail: D }),
+    { pos: [-100, -60, -4], rot: [0, 0.40, 0] });
   b.graft([0, -4, 0], [-HALF_PI, 0, 0], 34);
 
   // The two brackets that carry it. Coalition shows its structure.
@@ -104,9 +104,15 @@ function buildCannonBank(ctx) {
   // the difference a player sees from ahead or astern, scores nothing from abeam.
   // Coalition steps where Concord runs a continuous line, so the fix that reads
   // from every angle is the one already in the faction's vocabulary.
+  // THE BARRELS COME OUT OF THE CASEMATE, not off the end of it. Each root used to
+  // sit three metres outboard of the face it was supposed to be mounted in, which is
+  // invisible in a shaded render and reads in PLAN as four bars floating beside the
+  // ship (tools/silhouette.mjs, top view - and the old rasteriser hid it by stamping
+  // an edge-on facet's whole bounding box). Every root is now buried 14 m inside the
+  // face, which is also how a casemate works: the gun is IN the box.
   const rows = full
-    ? [[-66, 70, -120], [-22, 90, -128], [22, 110, -136], [66, 130, -144]]
-    : [[-52, 80, -124], [36, 120, -140]];
+    ? [[-66, 70, -106], [-22, 90, -114], [22, 110, -122], [66, 130, -130]]
+    : [[-52, 80, -110], [36, 120, -126]];
   for (const [z, len, x] of rows) {
     b.add('greeble', aimed(barrel({ length: len, radius: 10, detail: D }),
       [-1, -0.27, 0], [x, -58, z]));
@@ -165,12 +171,25 @@ function buildBeamArray(ctx) {
   }), { pos: [-4, 22, 0], rot: OUTBOARD });
   b.graft([0, -4, 0], [-HALF_PI, 0, 0], 34);
 
+  // THE EMITTER HOUSING, and it is the difference between three rods and a hairbrush.
+  //
+  // The fairing tapers from 224 m fore-aft at its root to 110 m at its outboard end,
+  // and the two outer rods sit at z = -74 and +76 - i.e. OUTSIDE the taper by the
+  // time it reaches them. So they left the fairing through thin air, and in plan the
+  // module was a wedge with two detached sticks beside it. Round-one review made the
+  // general form of this complaint about the whole module vocabulary: "fair every
+  // primitive into structure ... the lance needs a recoil cradle and a mount collar".
+  // This is that collar: a 208 m transverse block across the fairing's outboard end
+  // that all three rods are seated in, so the mechanism emerges from a housing.
+  b.add('plating', G.panelledSlab({ width: 44, height: 76, depth: 208, chamfer: 12, detail: D }),
+    { pos: [-178, 20, 0] });
+
   // Three emitter rods, staggered fore-aft and in height so they never read as a
   // grille. The middle one is longest.
   const rods = full ? [[-74, 12, 168], [2, 36, 216], [76, 12, 168]] : [[2, 36, 216]];
   for (const [z, y, len] of rods) {
     b.add('greeble', G.hexStrut({ length: len, radius: 11, radiusEnd: 7, axis: 'z', detail: D }),
-      { pos: [-162, y, z], rot: OUTBOARD });
+      { pos: [-186, y, z], rot: OUTBOARD });
     b.glow([-162 - len - 8, y, z], 13, OUTBOARD);
   }
 

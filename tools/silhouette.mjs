@@ -158,9 +158,26 @@ function rasterise(tris, view, win = null) {
     if (x1 < x0 || y1 < y0) continue;
     const d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
     if (Math.abs(d) < 1e-9) {
-      // Degenerate in projection — an edge-on plate. Stamp its bounding line so a
-      // radiator fin seen edge-on still joins the thing it is bolted to.
-      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) mask[y * RES + x] = 1;
+      // Degenerate in projection — an edge-on plate. Stamp the SEGMENT it collapses
+      // to, so a radiator fin seen edge-on still joins the thing it is bolted to.
+      //
+      // This used to stamp the triangle's BOUNDING BOX, and that was a measurable
+      // error rather than a conservative choice: a cap face lying in the XY plane
+      // collapses to a line when viewed from the side, but its bounding box is the
+      // whole cross-section, so every slab in the ship was quietly painting a solid
+      // rectangle across whatever void it happened to span. Measured on the cruiser
+      // it cost 1.3 percentage points of enclosed background in both ortho views —
+      // which is a fifth of R2.6's entire budget, invented by the instrument.
+      const x2 = Math.max(x1 - x0, 1), y2 = Math.max(y1 - y0, 1);
+      const steps = Math.max(x2, y2) * 2;
+      for (const [px, py, qx, qy] of [[ax, ay, bx, by], [bx, by, cx, cy], [cx, cy, ax, ay]]) {
+        for (let k = 0; k <= steps; k++) {
+          const t = k / steps;
+          const x = Math.round(px + (qx - px) * t);
+          const y = Math.round(py + (qy - py) * t);
+          if (x >= 0 && x < RES && y >= 0 && y < RES) mask[y * RES + x] = 1;
+        }
+      }
       continue;
     }
     for (let y = y0; y <= y1; y++) {
@@ -203,6 +220,76 @@ function components(mask) {
   }
   out.sort((a, b) => b.count - a.count);
   return out;
+}
+
+/**
+ * ENCLOSED BACKGROUND — R2.6's hole budget, measured rather than argued.
+ *
+ * Flood the background in from the border; whatever background is left is enclosed
+ * by the hull, i.e. it is a HOLE and not a concavity. That distinction is the whole
+ * rule: a notch open at one end is a dent in the outline and reads as one, and only
+ * a void you can see stars through does what §2 asks for.
+ *
+ * Reported as a fraction of the silhouette's BOUNDING BOX, which is how the
+ * reference measurements in ship-language.md were taken, plus the narrowest clear
+ * span of each hole in metres so R2.7's 87 m max-zoom threshold is checkable.
+ */
+function enclosed(r) {
+  const { mask } = r;
+  const seen = new Uint8Array(mask.length);
+  const stack = new Int32Array(mask.length);
+  let sp = 0;
+  const push = (i) => { if (!mask[i] && !seen[i]) { seen[i] = 1; stack[sp++] = i; } };
+  for (let x = 0; x < RES; x++) { push(x); push((RES - 1) * RES + x); }
+  for (let y = 0; y < RES; y++) { push(y * RES); push(y * RES + RES - 1); }
+  while (sp) {
+    const p = stack[--sp];
+    const x = p % RES, y = (p / RES) | 0;
+    if (x > 0) push(p - 1);
+    if (x < RES - 1) push(p + 1);
+    if (y > 0) push(p - RES);
+    if (y < RES - 1) push(p + RES);
+  }
+  const holes = [];
+  let total = 0;
+  for (let i = 0; i < mask.length; i++) {
+    if (mask[i] || seen[i]) continue;
+    sp = 0; seen[i] = 1; stack[sp++] = i;
+    let count = 0, best = 0;
+    const cells = [];
+    while (sp) {
+      const p = stack[--sp];
+      count++; cells.push(p);
+      const x = p % RES, y = (p / RES) | 0;
+      if (x > 0) push(p - 1);
+      if (x < RES - 1) push(p + 1);
+      if (y > 0) push(p - RES);
+      if (y < RES - 1) push(p + RES);
+    }
+    // Narrowest clear span: for each cell take min(horizontal run, vertical run) and
+    // keep the best cell. A slot 8 px wide and 200 px long scores 8, which is right.
+    for (const p of cells) {
+      const x = p % RES, y = (p / RES) | 0;
+      let a = 0; for (let k = x; k >= 0 && !mask[y * RES + k]; k--) a++;
+      let b = 0; for (let k = x + 1; k < RES && !mask[y * RES + k]; k++) b++;
+      let c = 0; for (let k = y; k >= 0 && !mask[k * RES + x]; k--) c++;
+      let d = 0; for (let k = y + 1; k < RES && !mask[k * RES + x]; k++) d++;
+      const run = Math.min(a + b, c + d);
+      if (run > best) best = run;
+    }
+    total += count;
+    holes.push({ count, spanM: best * r.metresPerPx });
+  }
+  holes.sort((a, b) => b.count - a.count);
+  let x0 = RES, x1 = -1, y0 = RES, y1 = -1;
+  for (let i = 0; i < mask.length; i++) {
+    if (!mask[i]) continue;
+    const x = i % RES, y = (i / RES) | 0;
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  const bbox = Math.max(1, (x1 - x0 + 1) * (y1 - y0 + 1));
+  return { fraction: total / bbox, holes, widest: holes.length ? Math.max(...holes.map((h) => h.spanM)) : 0 };
 }
 
 function iou(a, b) {
@@ -332,6 +419,125 @@ for (const [name, fit] of Object.entries(LOADOUTS)) {
 // ---------------------------------------------------------------------------
 // LOD COHERENCE
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// R2.6 — THE HOLE BUDGET, in BOTH ortho views
+// ---------------------------------------------------------------------------
+//
+// This measurement is here because round-one review found the plan silhouette at
+// 0.65% enclosed background against the project's own 6-12% floor and the review
+// loop had no number that could have caught it: everything measured the side view.
+// A hull can be a perfectly good shape in profile and a slug from above, and the
+// tactical camera spends most of its life at 25-40 degrees of elevation, i.e. much
+// closer to plan than to profile.
+
+console.log('\nENCLOSED BACKGROUND  (R2.6: 6-12% of the bounding box, BOTH views;'
+  + '\nR2.7: a void reads at max zoom only if its narrowest clear span is >= 87 m)\n');
+
+const R26 = { lo: 0.06, hi: 0.12 };
+const R27_SPAN_M = 87;
+
+function holeRow(label, roots, gate) {
+  const tris = triangles(roots);
+  const bits = [];
+  for (const view of ['side', 'top']) {
+    const e = enclosed(rasterise(tris, view));
+    const bad = gate && (e.fraction < R26.lo || e.fraction > R26.hi);
+    if (bad) failed = true;
+    bits.push(`${view} ${(e.fraction * 100).toFixed(2)}%${bad ? '!' : ' '}`
+      + ` widest span ${e.widest.toFixed(0)} m${e.widest < R27_SPAN_M ? ' (LOD0/1 only)' : ''}`);
+  }
+  console.log(`  ${label.padEnd(18)} ${bits.join('   ')}`);
+}
+
+holeRow('cruiser LOD0', cruiserWith({}, 0), true);
+holeRow('cruiser LOD2', cruiserWith({}, 2), false);
+
+// ---------------------------------------------------------------------------
+// LOD2 IDENTITY — the gate that replaced IoU
+// ---------------------------------------------------------------------------
+//
+// D51 passed the old LOD2 proxy at IoU 0.764 while that proxy had closed the ventral
+// bay into a solid rectangle, deleted the superstructure and straightened the cutter
+// yoke into a spike. IoU could not see any of it, and the reason is structural
+// rather than a badly chosen threshold: FILLING A HOLE ADDS THE SAME PIXELS TO THE
+// INTERSECTION AND TO THE UNION, so closing the ship's one identifying void moves
+// the ratio by less than the noise between two adjacent thresholds.
+//
+// IoU is still printed below, because a level that shrinks or drifts is a real
+// defect and IoU catches that. But the gate is now four direct questions about the
+// LOD2 mask, one per identity feature, each phrased so that the only way to pass is
+// to have the feature.
+
+console.log('\nLOD2 IDENTITY  (four features that make this ship this ship, checked in the'
+  + '\nLOD2 mask itself, because IoU cannot see a hole being filled in)\n');
+
+{
+  const t2 = triangles(cruiserWith({}, 2));
+  const sideR = rasterise(t2, 'side');
+  const topR = rasterise(t2, 'top');
+  const sideH = enclosed(sideR);
+  const topH = enclosed(topR);
+  const [A, B] = VIEWS.side;
+  // Mask row/col helpers in world metres, so the assertions read as geometry.
+  const worldY = (py) => sideR.window.v1 - (py / (RES - 1)) * (sideR.window.v1 - sideR.window.v0);
+  const worldZ = (px) => sideR.window.u0 + (px / (RES - 1)) * (sideR.window.u1 - sideR.window.u0);
+  const solid = (px, py) => sideR.mask[Math.round(py) * RES + Math.round(px)] === 1;
+  const pxZ = (z) => ((z - sideR.window.u0) / (sideR.window.u1 - sideR.window.u0)) * (RES - 1);
+  const pyY = (y) => ((sideR.window.v1 - y) / (sideR.window.v1 - sideR.window.v0)) * (RES - 1);
+
+  // 1. THE BAY IS A THROUGH-VOID. A hole below the keel, in profile, with >= 87 m of
+  //    clear span, AND a hole in plan - two open faces, which is what makes stars
+  //    pass through it as the camera orbits instead of it being a dark patch.
+  const bay = sideH.holes.find((h) => h.spanM >= R27_SPAN_M);
+  const bayPlan = topH.holes.some((h) => h.spanM >= 40);
+  // 2. THE SUPERSTRUCTURE IS A STEPPED STACK. Walk the mask's top edge over the
+  //    island and count how many distinct heights it holds: a stack has at least
+  //    three plateaux (hull deck, base, house), a wedge has none.
+  let plateaux = 0, lastTop = null;
+  for (let z = -420; z <= -120; z += 12) {
+    const px = pxZ(z);
+    let py = 0;
+    while (py < RES && !solid(px, py)) py++;
+    const yTop = worldY(py);
+    if (lastTop === null || Math.abs(yTop - lastTop) > 22) { plateaux++; lastTop = yTop; }
+  }
+  // 3. THE YOKE HOOKS. Its lowest point must sit forward of the bay AND the outline
+  //    must come back UP again ahead of it - down-then-up is a hook, monotone down
+  //    is a spike, and the spike is what the last proxy shipped.
+  const depthAt = (z) => {
+    const px = pxZ(z);
+    let py = RES - 1;
+    while (py >= 0 && !solid(px, py)) py--;
+    return py < 0 ? 0 : worldY(py);
+  };
+  const knuckleY = depthAt(556);
+  const tipY = depthAt(664);
+  const hooks = knuckleY < -150 && tipY > knuckleY + 20;
+  // 4. THE STERN STEPS. Half-beam in plan must drop by >= 15% between the transom
+  //    and the waist, which is the step the whole aft read is built on.
+  const halfBeamAt = (z) => {
+    const px = Math.round(pxZ(z));
+    let lo = 0, hi = RES - 1;
+    while (lo < RES && !topR.mask[lo * RES + px]) lo++;
+    while (hi >= 0 && !topR.mask[hi * RES + px]) hi--;
+    return hi < lo ? 0 : (hi - lo) * 0.5;
+  };
+  const steps = halfBeamAt(-680) > halfBeamAt(-470) * 1.15;
+
+  const checks = [
+    ['bay is a through-void', bay && bayPlan, bay ? `profile span ${bay.spanM.toFixed(0)} m, plan hole ${bayPlan}` : 'no profile hole >= 87 m'],
+    ['island is a stepped stack', plateaux >= 3, `${plateaux} plateaux over the island`],
+    ['cutter yoke hooks', hooks, `knuckle y ${knuckleY.toFixed(0)} m, tip y ${tipY.toFixed(0)} m`],
+    ['stern block steps in', steps, `transom ${halfBeamAt(-680).toFixed(0)} px vs waist ${halfBeamAt(-470).toFixed(0)} px`],
+  ];
+  for (const [name, ok, detail] of checks) {
+    if (!ok) failed = true;
+    console.log(`  ${name.padEnd(26)} ${ok ? 'present' : 'MISSING!'}   ${detail}`);
+  }
+  void worldZ;
+  void A; void B;
+}
 
 console.log(`\nLOD COHERENCE  (IoU of each level's side mask against LOD0's, in LOD0's own`
   + `\nraster window so a level that shrinks is penalised; floor ${LOD_IOU_FLOOR})\n`);

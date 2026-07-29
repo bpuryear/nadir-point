@@ -139,5 +139,50 @@ for (const hp of ['bow', 'dorsal', 'ventral', 'port', 'engine']) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// M7 — SILHOUETTE TAGS ARE A CONTRACT, AND THIS IS THE GATE
+// ---------------------------------------------------------------------------
+//
+// ship-language.md §6 M7: "Two modules on the same hardpoint must not share their
+// full tag set; the refit screen and the audit should both be able to fail on that."
+// It has been declared since the contracts file was written and never enforced, and
+// an unenforced contract is a comment. Round-one blind review found ten of the
+// twenty-four modules "visually interchangeable when fitted ... every one reads as
+// the hull with a long thin tube pointing forward", which is exactly the failure the
+// tag set exists to name: the tags ARE the designer's own claim about what shape
+// this thing is, so two modules that make the same claim are the same module.
+//
+// The measurement above is the outline; this is the intent. They fail differently
+// and they are both worth having - the outline audit passes two tubes of different
+// lengths, and this one does not.
+const TAG_MIN_DIFF = 2;
+let tagFailed = false;
+
+console.log('\nM7 — SILHOUETTE TAG SETS  (two modules on one mount may not make the same'
+  + `\nclaim about their shape; at least ${TAG_MIN_DIFF} tags must differ)\n`);
+
+for (const hp of ['bow', 'dorsal', 'ventral', 'port', 'engine']) {
+  const defs = modulesForHardpoint(hp);
+  const bad = [];
+  for (let i = 0; i < defs.length; i++) {
+    for (let j = i + 1; j < defs.length; j++) {
+      const a = new Set(defs[i].silhouetteTags ?? []);
+      const b = new Set(defs[j].silhouetteTags ?? []);
+      if (!a.size || !b.size) { bad.push([defs[i].id, defs[j].id, 'a module with no tags']); continue; }
+      let shared = 0;
+      for (const t of a) if (b.has(t)) shared++;
+      const diff = (a.size - shared) + (b.size - shared);
+      if (diff < TAG_MIN_DIFF) bad.push([defs[i].id, defs[j].id, `${diff} tag(s) differ`]);
+    }
+  }
+  if (bad.length) {
+    tagFailed = true;
+    for (const [x, y, why] of bad) console.log(`  *** ${x} / ${y}: ${why}`);
+  } else {
+    console.log(`  ${hp.toUpperCase().padEnd(8)} ${defs.length} modules, every tag set distinct`);
+  }
+}
+
 console.log(`\n${sepFailed ? '*** MODULE SEPARATION FAILED ***' : 'every module on every mount is separable from every other on that mount'}`);
-process.exit(report.ok && !sepFailed ? 0 : 1);
+if (tagFailed) console.log('*** M7 TAG CONTRACT FAILED ***');
+process.exit(report.ok && !sepFailed && !tagFailed ? 0 : 1);

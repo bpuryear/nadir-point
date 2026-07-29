@@ -321,7 +321,7 @@ const BRIDGE_X = -18;
  * evenly spaced frames are what made the first pass read as a road bridge.
  */
 const BAY = {
-  z0: -200, z1: 200,
+  z0: -230, z1: 215,
 
   /**
    * THE RAILS STAND CLEAR OF THE FLANK, and this is the single change that fixes the
@@ -358,14 +358,14 @@ const BAY = {
                                    // the diagonal that was quietly holding it.
 
   /**
-   * `[z, thickness, rake]`. Bays of 140 / 60 / 110 / 90 m — and the unevenness is now
+   * `[z, thickness, rake]`. Bays of 155 / 60 / 110 / 120 m — and the unevenness is now
    * unmistakable rather than technically true. The previous 96 / 62 / 104 / 58 was
    * unequal on paper and read as four equal windows in the render, because 96 vs 104
    * and 58 vs 62 are inside the eye's tolerance. A load path is where the load is,
    * and the loads on this thing are the reactor bulkhead forward and the tow track
    * aft, so the frames bunch where the load bunches.
    */
-  frames: [[200, 24, 0], [60, 13, 0], [0, 20, 0], [-110, 11, 0], [-200, 18, 0.22]],
+  frames: [[215, 24, 0], [60, 13, 0], [0, 20, 0], [-110, 11, 0], [-230, 18, 0.22]],
 };
 
 /**
@@ -887,8 +887,8 @@ export function hullParts({ rng, lod = 0 }) {
   // rather than as part of the ship's shell.
   //
   // IT HANGS LOWER THAN IT DID, and the reason is measurable rather than aesthetic.
-  // At y -128 the slot between keel and track was 33 m of background; at y -152 it is
-  // 56 m, over 190 m of length, and R2.6's hole budget is counted in area. It is also
+  // At y -128 the slot between keel and track was 33 m of background; at y -162 it is
+  // 65 m, over 190 m of length, and R2.6's hole budget is counted in area. It is also
   // the difference between a moulding and running gear.
   //
   // THE DOT GRID IS GONE. Round-one review: "a proud rectangular box carries a
@@ -901,19 +901,19 @@ export function hullParts({ rng, lod = 0 }) {
   // run, which is a thing with a job rather than a bump pattern.
   for (const s of [-1, 1]) {
     B.add('core', 'dark', G.panelledSlab({ width: 30, height: 34, depth: 210, detail: D }),
-      { pos: [s * 36, -152, 305] });
+      { pos: [s * 36, -162, 318] });
   }
   B.add('core', 'plating', G.panelledSlab({ width: 44, height: 20, depth: 210, detail: D }),
-    { pos: [0, -138, 305] });
+    { pos: [0, -148, 318] });
   if (mid) {
-    B.add('core', 'greeble', G.pipeRun({ length: 168, radius: 9, sides: 6, axis: 'z', flanges: 2, detail: D }),
-      { pos: [-14, -148, 220] });
+    B.add('core', 'greeble', G.pipeRun({ length: 168, radius: 9, sides: 6, axis: 'z', flanges: 1, detail: D }),
+      { pos: [-14, -158, 236] });
   }
   // The single stanchion that picks the track up near its forward end, and the slot it
   // closes: keel above, track below, bulkhead aft, stanchion forward - four sides, so
   // it is a hole rather than a shadow under an overhang.
-  B.add('core', 'plating', G.panelledSlab({ width: 44, height: 62, depth: 30, detail: D }),
-    { pos: [0, -118, 396] });
+  B.add('core', 'plating', G.panelledSlab({ width: 44, height: 78, depth: 30, detail: D }),
+    { pos: [0, -122, 408] });
 
   // =========================================================================
   // 3b. THE THREE FEATURES THAT SAY "1400 METRES"
@@ -1096,7 +1096,7 @@ function buildBay(B, D, full, rng) {
     // profile, which is a bad trade for a truss member nobody can name. In a 60 m bay
     // it does the same structural work and costs a void that was never going to read.
     if (full) {
-      const [za, zb] = s < 0 ? [-110, -200] : [0, 60];
+      const [za, zb] = s < 0 ? [-110, -230] : [0, 60];
       B.add('core', 'greeble', beam(
         [s * railX, BAY.chordTop, za], [s * railX, BAY.chordBot, zb], 10,
         { caps: false, detail: D },
@@ -1142,7 +1142,9 @@ function buildBay(B, D, full, rng) {
   // parallel. The pivots are at DIFFERENT z port and starboard - symmetric grapples
   // read as landing gear, and this ship is not landing anywhere.
   if (full) {
-    const pivots = [[-1, 112], [-1, -38], [1, 64], [1, -96]];
+    // THREE arms, two port and one starboard. Four in two matched pairs read as
+    // landing gear however the pivots are offset; an odd count cannot.
+    const pivots = [[-1, 112], [-1, -38], [1, -96]];
     for (const [s, z] of pivots) {
       B.add('core', 'greeble', beam([s * (BAY.railIn + 4), -104, z], [s * (BAY.railOut - 6), -118, z - 94], 11,
         { caps: false, detail: D }));
@@ -1183,10 +1185,12 @@ function buildYoke(B, D, full) {
     // The cutting head glows only while cutting; the disc is here so the VFX stream
     // has a surface to drive.
     B.addRaw('core', 'engineGlow', glowDisc(7), { pos: [y.tip[0], y.tip[1], y.tip[2] + 2] });
-    if (full) {
-      // Machinery at the knuckle. Machinery is allowed to look busy because machinery
-      // IS busy - this is one of the four justifications a dense band may claim (§3).
-      B.add('core', 'greeble', G.panelledSlab({ width: 30, height: 26, depth: 40, detail: D }),
+    if (full && key === 'port') {
+      // Machinery at the knuckle, PORT ONLY. Machinery is allowed to look busy because
+      // machinery IS busy - one of the four justifications a dense band may claim (§3)
+      // - but §3 also forbids the same band appearing at mirrored x, and a matched
+      // pair of cutting heads is what the whole yoke exists not to be.
+      B.add('core', 'greeble', G.panelledSlab({ width: 34, height: 28, depth: 44, detail: D }),
         { pos: [y.knuckle[0] * 1.06, y.knuckle[1] + 14, y.knuckle[2]] });
     }
   }
@@ -1280,7 +1284,7 @@ function buildStern(B, D, full, rng) {
   for (const [s, z, chord, span, rake] of FINS) {
     B.add('engine', 'radiator', G.radiatorFin({
       chord, span, thickness: 13, sweep: -chord * 0.42, tipChord: chord * 0.6,
-      rim: 9, detail: D,
+      rim: span > 120 ? 9 : 0, detail: D,
     }), { pos: [s * 116, 60, z], rot: [0, 0, rake] });
     B.add('engine', 'greeble', G.panelledSlab({
       width: 30, height: 22, depth: chord * 1.15, detail: D,
@@ -1508,9 +1512,18 @@ export function buildCruiser(ctx) {
     const merged = new Map();
     for (const b of buckets) {
       const group = lod === 0 ? b.group : 'core';
-      const key = `${group}/${b.surface}${b.uv ? '' : '#raw'}`;
+      // PAST LOD0, `greeble` FOLDS INTO `plating`. This is the draw call that pays
+      // for `dark`, and the trade is stated rather than absorbed: the two-value
+      // albedo split is a large-area read that has to survive to every range, and
+      // greeble-versus-plating is a roughness and detail-scale difference on parts
+      // that are under three pixels once the hull is 353 px wide. One surface for
+      // small hardware, one for the ship's second value. LOD1 and LOD2 therefore
+      // cost exactly what they cost before `dark` existed, and the benchmark's
+      // camera sits at 7.2 km, which is LOD1.
+      const surface = lod === 0 || b.surface !== 'greeble' ? b.surface : 'plating';
+      const key = `${group}/${surface}${b.uv ? '' : '#raw'}`;
       let e = merged.get(key);
-      if (!e) { e = { group, surface: b.surface, uv: b.uv, parts: [] }; merged.set(key, e); }
+      if (!e) { e = { group, surface, uv: b.uv, parts: [] }; merged.set(key, e); }
       for (const p of b.parts) e.parts.push(p);
     }
 

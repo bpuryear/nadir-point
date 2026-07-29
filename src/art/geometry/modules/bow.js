@@ -170,7 +170,13 @@ function buildBreachingProw(ctx) {
   // also the better read: teeth clustered at a point are a drill, teeth down an edge
   // are a cutter, and this ship cuts.
   if (full) {
-    const teeth = [[-34, 150], [14, 218], [-8, 286]];
+    // NONE OF THEM REACHES THE TIP. The forward tooth used to sit at z = 286, i.e.
+    // at the ram's own forwardmost station, and a 62 m wedge starting there ends up
+    // 52 m PAST the thing it is welded to - in profile a detached splinter ahead of
+    // the bow. (The previous rasteriser welded it by stamping an edge-on facet's
+    // bounding box; tools/silhouette.mjs no longer does that, and this is one of
+    // three real detachments the honest version found on its first run.)
+    const teeth = [[-34, 140], [14, 200], [-8, 252]];
     for (const [x, z] of teeth) {
       const t = (z - 10) / 275.6;                    // fraction along the ram
       b.add('greeble', G.taperedWedge({
