@@ -129,8 +129,10 @@ export const CRUISER_ANCHORS = {
   bow: [0, 32, 420],        // the foredeck, ahead of the armour spine, on the sheer
   dorsal: [0, 94, -40],     // top of the raised dorsal armour spine, over the shoulder
   ventral: [0, -78, 0],     // roof of the salvage bay throat; the module hangs down
-  port: [-156, 46, 130],    // top face of the port sponson shelf
-  starboard: [156, 46, 10], // 120 m further aft than port, on purpose
+  port: [-158, 46, 60],     // top face of the port sponson shelf, and the sponson
+                            // sits on the salvage cradle's second transverse frame
+  starboard: [158, 46, -110], // 170 m further aft than port, on purpose, and on the
+                              // cradle's fourth frame
   engine: [0, 0, -624],     // end plate of the empty main drive well
 };
 
