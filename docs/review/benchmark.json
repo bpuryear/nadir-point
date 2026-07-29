@@ -12,17 +12,17 @@
   },
   "peak": {
     "calls": 231,
-    "triangles": 75901,
+    "triangles": 75897,
     "programs": 53
   },
   "counters": {
-    "fps": 94.9060623668408,
-    "cpuMs": 1.5,
-    "stepMs": 0.19999998807907104,
+    "fps": 105.97880423915224,
+    "cpuMs": 9.500000011921657,
+    "stepMs": 0.10000002384185791,
     "renderMs": 1.100000023841858,
     "steps": 1,
     "calls": 231,
-    "triangles": 75901,
+    "triangles": 75897,
     "points": 7000,
     "lines": 0,
     "programs": 53,
@@ -30,12 +30,12 @@
     "textures": 147
   },
   "frameMs": {
-    "mean": 9.791904761961527,
-    "median": 9.600000023841858,
-    "p95": 11.900000035762787,
-    "p99": 12.799999952316284,
-    "min": 1.199999988079071,
-    "max": 50
+    "mean": 9.201428571343422,
+    "median": 9.200000047683716,
+    "p95": 10.300000011920929,
+    "p99": 10.800000011920929,
+    "min": 1.0999999642372131,
+    "max": 51.10000002384186
   },
   "sceneCounts": {
     "capitalShips": 1,
@@ -46,8 +46,8 @@
     "postChain": "medium"
   },
   "fpsClaim": {
-    "mean": 102.12517628691465,
-    "low1pct": 78.1250002910383
+    "mean": 108.67877658849211,
+    "low1pct": 92.59259249038985
   },
   "fpsNote": "Measured on hardware rasterisation. These are real frame rates at the stated resolution.",
   "pass": true
