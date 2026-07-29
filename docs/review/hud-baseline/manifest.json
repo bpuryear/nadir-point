@@ -1,0 +1,98 @@
+[
+  {
+    "id": "close",
+    "ok": false,
+    "warnings": [
+      "FRAME IS FLAT OR EMPTY (contrast < 0.02)",
+      "FRAME IS ESSENTIALLY BLACK (>97% near-black)"
+    ],
+    "frame": {
+      "meanLuma": 0.0104,
+      "contrast": 0.0125,
+      "clippedPct": 0,
+      "nearBlackPct": 99.32
+    },
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/hud-baseline/close.png",
+    "stats": {
+      "fps": 62.96733569460842,
+      "cpuMs": 5.999999988079253,
+      "stepMs": 0.19999998807907104,
+      "renderMs": 1.0999999642372131,
+      "steps": 1,
+      "calls": 135,
+      "triangles": 72553,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 72,
+      "textures": 78
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "wide",
+    "ok": false,
+    "warnings": [
+      "FRAME IS FLAT OR EMPTY (contrast < 0.02)",
+      "FRAME IS ESSENTIALLY BLACK (>97% near-black)"
+    ],
+    "frame": {
+      "meanLuma": 0.0104,
+      "contrast": 0.0121,
+      "clippedPct": 0,
+      "nearBlackPct": 99.34
+    },
+    "description": "Maximum tactical zoom. Cruiser a bright speck against the gas giant. The shot that sells the game, and it only sells anything if the giant is actually in frame: the camera yaw is SOLVED from the celestial's own direction rather than guessed at 1.7 rad, because a max-zoom frame with no large object and no small object cannot answer 'how big is this'. HUD suppressed, like the other look-review frames.",
+    "hud": false,
+    "file": "docs/review/hud-baseline/wide.png",
+    "stats": {
+      "fps": 64.8075412381282,
+      "cpuMs": 5.300000000000182,
+      "stepMs": 0.09999996423721313,
+      "renderMs": 0.9000000357627869,
+      "steps": 1,
+      "calls": 102,
+      "triangles": 66133,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 64,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "engagement",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.032,
+      "contrast": 0.0829,
+      "clippedPct": 0,
+      "nearBlackPct": 85.4
+    },
+    "description": "Cruiser under way with hostiles on the plane. Tests scale cues and the fight read.",
+    "hud": true,
+    "file": "docs/review/hud-baseline/engagement.png",
+    "stats": {
+      "fps": 60.724779629233886,
+      "cpuMs": 8.999999988079253,
+      "stepMs": 0,
+      "renderMs": 1,
+      "steps": 0,
+      "calls": 117,
+      "triangles": 93253,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 61,
+      "textures": 75
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

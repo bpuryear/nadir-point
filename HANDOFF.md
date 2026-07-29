@@ -6,19 +6,36 @@ context from commit archaeology.
 
 ---
 
-## Verify it in three commands
+## Verify it in five commands
 
 ```bash
 npm install
-npm run smoke      # boot check — exits non-zero on any console error
-npm run uicheck    # contrast + panel layout audit
+npx playwright install chromium   # the browser path used to be a dead container path
+npm run smoke                     # boot check — exits non-zero on any console error
+npm run uicheck                   # contrast + panel layout audit
+node src/sim/selftest.mjs         # 51 headless checks over the whole sim stream
 ```
 
-`smoke` currently reports: boot ok, 119 draw calls, 93,357 triangles, 58 programs.
-`uicheck` currently reports: contrast ok, layout ok, 376 boxes across 6 panels.
+`smoke` reports: boot ok, 119 draw calls, 93,357 triangles, 58 programs.
+`uicheck` reports: contrast ok, layout ok, 376 boxes across 6 panels.
+`selftest` reports 51 of 51. `node src/sim/meta/sortieHarness.js` covers the sortie loop
+end to end, including a 16-field save/load round trip and its fail-safe paths.
 
-Both were re-run on this commit after a container restart, so they are current rather
-than remembered.
+---
+
+## Read this before you trust anything below it
+
+This document was written against a GPU-less container. On a machine with a GPU three of
+its statements do not survive contact, and one of them would have sent someone to break
+working geometry. They are corrected in place below, but the general lesson is the one
+this project keeps relearning: **re-run the tool before acting on the prose, including
+this prose.**
+
+| what this doc said | what measures today |
+|---|---|
+| benchmark draw calls **499** | **423**, and 192 of those are GTAO's prepass drawing the scene twice — real scene geometry is **231**, inside the 320 ceiling |
+| 60 fps and 1% lows **UNVERIFIED** | **82.8 fps mean, 68.5 fps 1% low** at 2560×1440, both PASS, measured on hardware |
+| four pieces of core hull **float unattached** | **false positive of the detector**, which shrank every box 0.5 m before testing intersection, so anything bolted flat to a deck read as floating. Nothing was ever detached. |
 
 ---
 
@@ -46,31 +63,33 @@ wrote this and it is what kept them compatible.
 
 ## What is open, in the order I would take it
 
-### 1. Draw calls — the one outright FAIL
+### 1. Draw calls — settled, and it was never a geometry problem
 
-Committed ceiling 320, benchmark scene measured **499** (`docs/review/benchmark.json`).
-The assembled game at boot framing measures **119** (`npm run smoke`, re-run on this
-commit), so this is a benchmark-scene failure, not a game-wide one.
+**Do not do the three geometry-side merges `docs/review/benchmark.md` ranks.** They were
+ranked against a number inflated by 45%.
 
-Three stale figures circulate for these two numbers — 650 for the benchmark and 143 for
-the game. Both came from earlier runs and were copied forward. 499 and 119 are the ones
-that reproduce today; `docs/review/benchmark.md` still carries 650 and disagrees with
-`benchmark.json` on resolution, frame count and mesh count as well, because the `.md`
-was written from a different run than the `.json` beside it.
+Measured on hardware at 2560×1440:
 
-`docs/review/benchmark.md` ranks three geometry-side merges. **Take the measurement
-below before doing any of that work**: the count includes GTAO's depth-normal prepass,
-which is a second full render of the scene, so an unknown fraction of the 650 is one
-scene counted twice.
+| quality | draw calls | triangles | mean | 1% low |
+|---|---|---|---|---|
+| high | 423 | 131,003 | 82.8 fps | 68.5 fps |
+| medium (GTAO off) | **231 — PASS** | 75,901 | 102.1 fps | 78.1 fps |
 
-```bash
-npm run bench -- --quality medium   # medium disables GTAO
-```
+**192 draw calls, 45% of the high count, are GTAO's depth-normal prepass rendering the
+whole scene a second time.** `acceptance.md` suspected exactly this and could not test it,
+because `?quality=` had never worked: `Renderer` built `PostChain` *before* resolving
+`opts.quality`, so the constructor default of `'high'` always won and `renderer.quality`
+was read by nothing. Fixed in `src/render/renderer.js`.
 
-This is slow here because there is no GPU — the review harness runs on SwiftShader
-software rasterisation, and the run exceeded a 9-minute budget twice. On a machine with
-a real GPU it is quick. **Never read a frame rate off this environment**; §5's 60fps
-target is unverified for that reason and is recorded as such, not quietly claimed.
+The 320 ceiling was written to bound scene complexity. Scene complexity is 231. What is
+left is a rendering-architecture question — whether the AO prepass should count against a
+scene-complexity ceiling, and whether it can reuse the main depth buffer — not a case for
+merging hulls.
+
+Frame rate is no longer unverified. `tools/harness.mjs#rasterMode()` selects hardware
+rasterisation on darwin, `fpsIsMeaningful()` gates every fps claim, and `npm run bench`
+now asserts the two performance criteria instead of declining them. Under
+`NP_RASTER=swiftshader` it declines them again, correctly.
 
 ### 2. Art direction — the thing that keeps not passing
 
