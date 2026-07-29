@@ -67,6 +67,44 @@ const HEAT_PER_SHOT = {
   missile: 0.004,
 };
 
+/**
+ * WHAT A COMMITTED BROADSIDE COSTS THERMALLY.
+ *
+ * These live here rather than in `sim/salvo.js` because `ShipThermal` is the only thing
+ * that reads them. Putting them in the salvo controller would mean `heat.js` importing
+ * `salvo.js`, and `salvo.js` already imports `condition.js` which `heat.js` imports too;
+ * this tree has just finished paying for one invisible import cycle (see the header of
+ * `core/ammo.js`) and does not need a second.
+ *
+ * MEASURED, so that nobody has to take the paragraph above on trust: `sim/salvo.js`
+ * imports NOTHING from this file. `heatMul` is applied inside `onShot` below, which the
+ * controller reaches through `combat.js#_fire`, and the surcharge window is opened
+ * through `beginSalvoSurcharge()`. Both are behaviour, not constants, so the controller
+ * never needs the table and there is no edge between the two files in either direction.
+ * `tools/ripple.mjs` imports the table directly to print it.
+ *
+ * The arithmetic, against the real constants in this file and the real Heavy Broadside
+ * (`broadside.js` port_broadside_battery, damage 340, cannon):
+ *
+ *   perShot   = HEAT_PER_SHOT.cannon 0.030 x clamp(340/45, 0.4, 2.2) = 0.066
+ *   balanced  = 0.066 x (0.75 + 0.35 x 1.10) x 1.15 = 0.0855/shot = 0.342 for four guns
+ *               shed over the 5.0 s cooldown at 0.085 x (0.4 + 0.65 x 0.82) = 0.078/s
+ *               -> 0.39 shed against 0.34 added. Sustainable.
+ *   assault   = weapons factor 2.0 -> 0.110/shot = 0.440 per salvo against a 2.5 s
+ *               window -> net positive. The fourth broadside cooks the battery.
+ *
+ * That gap IS the alpha-versus-sustain decision, and it falls out of two numbers
+ * because `update()` below already couples radiator budget to reactor load.
+ */
+export const SALVO_THERMAL = {
+  /** A committed salvo runs the guns harder than trickle fire. Heat per shot x this. */
+  heatMul: 1.15,
+  /** Fraction of the radiator budget a salvo eats while the surcharge runs. */
+  radiatorSurcharge: 0.18,
+  /** Seconds the surcharge lasts, from the moment the ripple is armed. */
+  surchargeTime: 3.0,
+};
+
 /** Thermal weight of each power channel. Actual shares sum to 1, so load is 0.3..1.0. */
 const CHANNEL_HEAT = { weapons: 1.0, shields: 0.6, engines: 0.5, sensors: 0.3 };
 
@@ -125,9 +163,24 @@ export class ShipThermal {
     this.ext = THERMAL.extIdle;
     this.rate = 0;
     this._prevPeak = 0;
-    /** Reused report object. A read API that allocates every frame is a defect. */
+    /**
+     * Seconds of salvo radiator surcharge left. Written by `sim/salvo.js` through
+     * `beginSalvoSurcharge()` when a ripple is armed, decremented here. This is the
+     * only piece of state the ripple adds anywhere, it lives in this stream's own
+     * object rather than on `Ship`, and it decays to zero on its own — a controller
+     * torn down mid-salvo by a refit cannot leave the radiators permanently derated.
+     */
+    this.surchargeTimer = 0;
+    /**
+     * Reused report object. A read API that allocates every frame is a defect.
+     * `softCap` and `surcharge` are declared HERE, not first assigned in
+     * `thermalReport`: a property added to an object after construction forces a hidden
+     * class transition on the first read, which is exactly the cost this object exists
+     * to avoid.
+     */
     this._report = { state: 'NOMINAL', ext: 0, extMax: THERMAL.extMax, load: 0, radiate: 0,
-      peak: 0, mean: 0, rate: 0, tripped: 0, coolant: 0, coolantMax: 0, mounts: [] };
+      peak: 0, mean: 0, rate: 0, tripped: 0, coolant: 0, coolantMax: 0,
+      softCap: THERMAL.softCap, surcharge: 0, mounts: [] };
   }
 
   /**
@@ -157,6 +210,16 @@ export class ShipThermal {
     // runs hot. One line, and it makes the reactor a thermal target as well as a power one.
     const plantHealth = 0.7 + 0.3 * (ship.kindHealth ? ship.kindHealth('reactor') : 1);
     this.radiate = Math.max(0.25, Math.min(0.95, 1.25 - this.load)) * plantHealth;
+
+    // A committed broadside dumps its waste heat faster than the loops can carry it
+    // away, so for a few seconds afterwards EVERY mount cools more slowly - including
+    // the ones that did not fire. That is what makes a second salvo a decision rather
+    // than a repeat.
+    if (this.surchargeTimer > 0) {
+      this.surchargeTimer -= dt;
+      this.radiate *= 1 - SALVO_THERMAL.radiatorSurcharge;
+      if (this.surchargeTimer < 0) this.surchargeTimer = 0;
+    }
 
     let peak = 0;
     let sum = 0;
@@ -214,13 +277,27 @@ export class ShipThermal {
   /**
    * Add heat from one shot and trip the mount if it cooks.
    * Called from the fire site in combat.js, once per shot, no allocation.
+   *
+   * @param {Object} mount
+   * @param {number} [powerFactorWeapons]
+   * @param {boolean} [salvo]  true when the shot is part of a committed ripple, which
+   *                           costs `SALVO_THERMAL.heatMul` more per shot than the same
+   *                           gun firing itself on AUTO.
    */
-  onShot(mount, powerFactorWeapons = 1) {
+  onShot(mount, powerFactorWeapons = 1, salvo = false) {
     const th = mount.thermal;
     if (!th) return;
     // More power through the gun is more shots AND more heat per shot. Both directions.
-    th.heat += th.perShot * (0.75 + 0.35 * powerFactorWeapons);
+    th.heat += th.perShot * (0.75 + 0.35 * powerFactorWeapons) * (salvo ? SALVO_THERMAL.heatMul : 1);
     if (th.heat >= THERMAL.tripAt && !th.tripped) this.trip(mount);
+  }
+
+  /**
+   * Start (or restart) the radiator surcharge. Called once per armed ripple.
+   * Idempotent by construction: re-arming refreshes the window, it does not stack.
+   */
+  beginSalvoSurcharge() {
+    this.surchargeTimer = SALVO_THERMAL.surchargeTime;
   }
 
   /** Cook a mount. Reuses the existing `online` offline path, so the HUD already shows it. */
@@ -303,6 +380,8 @@ export function thermalReport(ship) {
   r.coolant = ship.stores?.coolant ?? 0;
   r.coolantMax = ship.stores?.coolantMax ?? 0;
   r.softCap = THERMAL.softCap;
+  /** Seconds of salvo radiator surcharge left; 0 when none. See SALVO_THERMAL. */
+  r.surcharge = t.surchargeTimer;
 
   const mounts = r.mounts;
   mounts.length = 0;

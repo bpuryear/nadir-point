@@ -13,6 +13,47 @@ import { scratch } from '../core/world.js';
  * The ship then takes as many seconds as its mass demands to actually comply, which
  * is the point: acknowledgement is instant, execution is heavy.
  */
+
+/**
+ * THE THREE ARMAMENT VERBS, AND WHERE THEIR KEYS CAME FROM.
+ *
+ *   R          SALVO. Ripple the engaged flank - whichever side the target is on.
+ *              Shift+R arms guns that do not bear YET, betting the hull will have
+ *              turned by their turn in the wave.
+ *   , and .    SIDE-SELECT. Ripple port, ripple starboard, explicitly. The keys read
+ *              as < and > on every keyboard layout this game will see, which is the
+ *              only mnemonic in the set that needs no learning.
+ *   L (held)   CHARGE AND RELEASE. Winds up every CHARGE mount; letting go fires.
+ *
+ * Middle-click also salvos. `_onPointerUp` dispatched only buttons 0 and 2, so a
+ * button-1 click that moved less than 6 px was being swallowed entirely; MMB-DRAG
+ * still pans and is untouched.
+ *
+ * ALL FOUR KEYS COME OFF `ui/index.js:105#FREE_KEYS` — `I L N O R T U Y , .` — which is
+ * the list W1-E derived by grepping the two files that own bindings, not a design
+ * document. `docs/design/firing-feel.md:420,425` assigns M-hold to `fire.charge` and
+ * justifies it on "the tactical view ... is a separate screen context". BOTH HALVES ARE
+ * FALSE, re-checked against the code on this commit:
+ *
+ *   - M is claimed at `ui/index.js:321` from a listener registered in the CAPTURE phase
+ *     (`ui/index.js:376`) that calls `stopPropagation`. A second handler here would
+ *     never fire at all, so M-hold would be a dead binding, not a contested one.
+ *   - `Controls` is one flat `_onKeyDown` with no screen or context scoping of any kind.
+ *     There is no "tactical view" to be separate from; MMB-drag pans in the only view
+ *     there is, which is why MMB-CLICK — a distinct gesture — is what got the verb.
+ *
+ * ONE OVERLAP THE PUBLISHED LIST DOES NOT MENTION, measured rather than assumed:
+ * `ui/refit.js:345` also answers `keyr`, for REPAIR MOUNT. It is reachable only through
+ * `ui/index.js:317`, which consults it exclusively while `screen === 'refit'` and then
+ * stops propagation — so R repairs while the refit screen is open and salvos while it
+ * is not, and the two can never both fire. That is a real division of one key between
+ * two verbs by screen state, and it lives in W1-E's file, not this one. Anyone moving
+ * either binding should read both sites; `FREE_KEYS` alone will not tell them.
+ */
+const SALVO_KEY = 'keyr';
+const SALVO_PORT_KEY = 'comma';
+const SALVO_STARBOARD_KEY = 'period';
+const CHARGE_KEY = 'keyl';
 export class Controls {
   constructor(world, { tactical, cinematic, domElement }) {
     this.world = world;
@@ -36,8 +77,27 @@ export class Controls {
     this._drag = null;
     this._resumeScaleIndex = 1;
     this._lastOrderAt = 0;
+    /** Last polled state of the hold-to-charge key. See `update`. */
+    this._chargeHeld = false;
 
     this._bind();
+
+    /*
+     * ATTACH BEFORE THE ENGINE STARTS, NOT ON THE FIRST RENDER FRAME.
+     *
+     * `bootGame` constructs this object at `game.js:262`, after `world.register('combat')`
+     * at `:199` and after `world.player` is set at `:192`, and only starts the loop once
+     * it returns — so this runs strictly before the first `fixedUpdate`. Attaching from
+     * `update()` alone would not: `update` is a RENDER callback, so between the first
+     * simulation step and the first frame the player's SALVO battery would fire one
+     * uncommanded burst, spend its cooldown and be unschedulable when the player finally
+     * pressed the key. Measured in `tools/ripple.mjs`, where the fixture settles for 120
+     * steps before commanding anything: unattached, the first wave came back 6 slots
+     * instead of 10 and the worst-case sweep dropped from 20 slots to 14.
+     *
+     * `update()` repeats it because a hull swap or a respawn replaces `world.player`.
+     */
+    this._armSalvo();
   }
 
   _bind() {
@@ -118,6 +178,8 @@ export class Controls {
 
     if (e.button === 0) this._leftClick();
     else if (e.button === 2) this._rightClick();
+    // MMB-click salvos. A middle click that moved was a pan, and returns above.
+    else if (e.button === 1) this._salvo('auto', false);
   };
 
   _onWheel = (e) => {
@@ -231,6 +293,67 @@ export class Controls {
   }
 
   /**
+   * PUT THE PLAYER'S HULL UNDER SALVO COMMAND.
+   *
+   * THIS FILE IS WHERE THE ATTACH BELONGS AND THE REASON IS NOT ORGANISATIONAL.
+   * Attaching a controller is what withholds a SALVO mount from firing itself
+   * (`combat.js#_updateShipWeapons`), and `DEFAULT_FIRE_MODE` (`ship.js:36-45`) puts
+   * every cannon, rail and missile in the game into SALVO. So attaching to a hull that
+   * nothing can command DISARMS it. The only honest place to declare "something can
+   * command this hull" is inside the object that owns the keys, which is this one.
+   *
+   * Measured consequence of getting it wrong: an earlier revision attached from
+   * `combat.fixedUpdate` on `ship.isPlayer`. `src/sim/selftest.mjs` drives
+   * `CombatSystem` directly against a `{ player: true }` cruiser with no input layer,
+   * so its cannon was held with nothing to release it and the harness fell from 54/54
+   * to 49/54.
+   *
+   * Idempotent, and re-run every frame from `update()` so a hull swap or a respawn
+   * does not leave the new ship uncommanded — `attachSalvo` is a `WeakMap` get on the
+   * already-attached path, which is the whole cost.
+   */
+  _armSalvo() {
+    const player = this.world.player;
+    if (!player || player.dead) return false;
+    return this.world.systems?.combat?.armSalvo?.(player) === true;
+  }
+
+  /**
+   * COMMIT A RIPPLE.
+   *
+   * Armed synchronously with the press, like every other order in this file: `arm()`
+   * only SCHEDULES - not one round leaves a barrel until the combat system's next
+   * fixed step - so nothing here runs simulation outside the step. The charge key is
+   * different and goes through an intent flag instead; see `update()`.
+   *
+   * A refusal is never silent. "I pressed fire and nothing happened" is the single
+   * worst thing a committed-fire verb can do, so the reason is printed from the
+   * published `bearingReport` fields rather than guessed at.
+   *
+   * @param {'port'|'starboard'|'all'|'auto'} side
+   * @param {boolean} immediate  arm guns that do not bear yet (the Shift variant)
+   */
+  _salvo(side, immediate) {
+    const player = this.world.player;
+    const combat = this.world.systems?.combat;
+    if (!player || player.dead || !combat?.fireSalvo) return 0;
+    this._armSalvo();
+
+    const slots = combat.fireSalvo(player, side, immediate ? { immediate: true } : undefined);
+    if (slots > 0) {
+      this._feedback('salvo', { side, slots, immediate });
+      return slots;
+    }
+
+    const rep = combat.bearingReport(player, player.target ?? null);
+    const why = rep.total === 0 ? 'NO ARMAMENT FITTED'
+      : rep.salvoIn > 0.05 ? `BATTERY COOLING — ${rep.salvoIn.toFixed(1)}s`
+        : 'NO MOUNTS BEAR';
+    this.bus.emit(EV.NOTIFY, { text: why, kind: 'order:salvo-refused', transient: true });
+    return 0;
+  }
+
+  /**
    * Order acknowledgement. Emitted synchronously with the input so the UI can put a
    * marker on screen this frame - the acceptance criterion is 100 ms and this path
    * costs microseconds. Execution then takes as long as the hull's mass demands.
@@ -275,6 +398,17 @@ export class Controls {
         this.world.selection.clear();
         this.bus.emit(EV.SELECTION_CHANGED, { selection: [] });
         break;
+      // --- armament. See the header block for where these four keys came from. ---
+      case SALVO_KEY:
+        this._salvo('auto', this.keys.has('shiftleft') || this.keys.has('shiftright'));
+        break;
+      case SALVO_PORT_KEY:
+        this._salvo('port', this.keys.has('shiftleft') || this.keys.has('shiftright'));
+        break;
+      case SALVO_STARBOARD_KEY:
+        this._salvo('starboard', this.keys.has('shiftleft') || this.keys.has('shiftright'));
+        break;
+
       case 'keyz': {
         // Nearest cuttable section, one key. Salvage is the loop; make it cheap.
         const near = this.world.systems.salvage?.findNearestSection();
@@ -329,6 +463,26 @@ export class Controls {
     if (k.has('keyq')) yaw += 1;
     if (k.has('keye')) yaw -= 1;
     if (yaw) this.tactical.keyYaw(yaw, dt);
+
+    // The player's hull is under salvo command for as long as this object is alive to
+    // command it. Idempotent; see `_armSalvo` for why it lives here and not in combat.
+    this._armSalvo();
+
+    /*
+     * HOLD TO CHARGE, POLLED.
+     *
+     * Not keydown/keyup, for two reasons that both bite in practice: `_onKeyDown`
+     * returns early on `e.repeat` (line 247 above), and a window blur calls
+     * `this.keys.clear()` without ever delivering a keyup - so an alt-tab mid-charge
+     * would leave a mount wound up and traverse-locked for the rest of the run.
+     * Polling the set makes both cases release the charge, and the flag is consumed on
+     * the transition inside the fixed step rather than fired from this render callback.
+     */
+    const wantsCharge = k.has(CHARGE_KEY);
+    if (wantsCharge !== this._chargeHeld) {
+      this._chargeHeld = wantsCharge;
+      this.world.systems?.combat?.setChargeIntent?.(this.world.player, wantsCharge);
+    }
 
     this._updateHover();
   }

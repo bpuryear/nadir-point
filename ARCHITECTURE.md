@@ -135,7 +135,7 @@ reason. A table that names imaginary files is not a contract.
 | Materials | `src/art/materials/**`, `src/art/textures/**`, `src/art/palette.js` |
 | Lighting & post | `src/render/**`, `src/world/lighting/**` |
 | Physics | `src/sim/physics.js` |
-| Combat | `src/sim/combat.js`, `src/sim/power.js`, `src/sim/heat.js`, `src/sim/stores.js` |
+| Combat | `src/sim/combat.js`, `src/sim/salvo.js`, `src/sim/power.js`, `src/sim/heat.js`, `src/sim/stores.js`, `tools/ripple.mjs` |
 | Salvage | `src/sim/salvage.js`, `src/sim/subparts.js`, `src/sim/condition.js` |
 | Progression | `src/sim/meta/**` |
 | Ship & refit | `src/sim/ship.js`, `src/sim/refit.js`, `src/sim/strikecraft.js` |

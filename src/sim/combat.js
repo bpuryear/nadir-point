@@ -4,6 +4,7 @@ import { scratch } from '../core/world.js';
 import { interceptPoint, raySphere } from './physics.js';
 import { fireRateMul, damageMul, misfeedChance, MISFEED_STALL } from './condition.js';
 import { THERMAL } from './heat.js';
+import { attachSalvo, salvoOf, hasSalvo, salvoPreview, CHARGE } from './salvo.js';
 
 /**
  * Combat resolution.
@@ -100,6 +101,20 @@ export class CombatSystem {
     this.activeBeams.length = 0;
     for (const ship of this.world.ships) {
       if (ship.dead) continue;
+      // THE RIPPLE RUNS FIRST, inside the same loop, so the ordering is explicit and
+      // the system stays at order 40 — ahead of ships at order 60, which is what
+      // `physics.js:279-280` requires of the recoil kick.
+      //
+      // THIS TICKS A CONTROLLER; IT NEVER CREATES ONE. `salvoOf` is the non-creating
+      // accessor and the distinction is load-bearing. A mount whose `fireMode` is not
+      // AUTO is withheld from the automatic path below the moment a controller exists,
+      // and `DEFAULT_FIRE_MODE` (`ship.js:36-45`) puts every cannon, rail and missile
+      // in the game into SALVO — NPCs included. Attaching here on `ship.isPlayer` would
+      // therefore disarm any player hull that has no input layer: measured, it takes
+      // `src/sim/selftest.mjs` from 54/54 to 49/54, starting at "kinetic fire consumes
+      // finite rounds  0 rounds spent". `src/input/controls.js` attaches, because it
+      // owns the keys that release it. See `salvo.js#attachSalvo`.
+      salvoOf(ship)?.fixedUpdate(dt);
       this._updateShipWeapons(ship, dt);
     }
     this._updateProjectiles(dt);
@@ -108,6 +123,8 @@ export class CombatSystem {
   _updateShipWeapons(ship, dt) {
     const target = ship.target;
     const hasTarget = target && !target.dead;
+    /** True when something on this hull can release a mount the salvo controller holds. */
+    const commanded = hasSalvo(ship);
 
     for (const mount of ship.weapons) {
       if (!mount.online || !mount.usable) continue;
@@ -139,6 +156,23 @@ export class CombatSystem {
       if (!lead) continue;
 
       const onTarget = mount.trackTowards(ship.heading, lead, dt);
+
+      /*
+       * A MOUNT THE SALVO CONTROLLER OWNS STILL TRACKS. IT JUST DOES NOT FIRE ITSELF.
+       *
+       * The armament spec puts this test at the top of the loop, before `trackTowards`.
+       * That is wrong and it is not a small wrongness: a SALVO mount would then never
+       * traverse at all, so it would sit at traverse 0 for the whole fight, its
+       * `worldForward` would point along the arc centre forever, and the frozen-traverse
+       * tell — a gun visibly stuck while its neighbours slew — would be indistinguishable
+       * from every other gun on the ship. Tracking is also what makes committing cheap:
+       * the battery is already on the target when the player presses.
+       *
+       * `commanded` is the second half of the rule. Without it, `fireMode !== 'AUTO'`
+       * would silently disarm every NPC cannon in the game.
+       */
+      if (commanded && mount.fireMode !== 'AUTO') continue;
+
       if (!mount.canBear(ship.position, ship.heading, lead)) continue;
       if (!onTarget) continue;
 
@@ -212,20 +246,38 @@ export class CombatSystem {
    * ruins the fire solution, which means a mount held past its soft cap stops being a
    * precision instrument - it still does damage, it just stops hitting what you aimed
    * at. That is the interlock that makes overheating cost you SALVAGE, not just DPS.
+   *
+   * @param {Object} [shot]  per-shot extras, supplied only by `sim/salvo.js`:
+   *        `origin`  Vector3 world position of the SPECIFIC muzzle that fired. Without
+   *                  it every shot in a burst leaves from `mount.worldPosition`, the
+   *                  centre of a casemate whose barrels span two hundred metres.
+   *        `emitter` index into `moduleDef.muzzles`; rides out on `EV.WEAPON_FIRED`.
+   *        `charge`  0..1 wind-up of a CHARGE mount. Scales damage from `CHARGE.dmgFloor`
+   *                  and subsystem accuracy from `CHARGE.accFloor` up to full.
+   *        `salvo`   true when the shot is part of a committed ripple; costs more heat.
+   *        The controller OWNS and REUSES this object — read it, never retain it.
    */
-  _fire(ship, mount, aimPoint, targetShip, powerFactor = 1) {
+  _fire(ship, mount, aimPoint, targetShip, powerFactor = 1, shot = null) {
     const def = mount.def;
-    ship.thermal?.onShot(mount, powerFactor);
+    ship.thermal?.onShot(mount, powerFactor, shot?.salvo === true);
     const stress = mount.thermal ? mount.thermal.stress : 0;
-    const damage = def.damage * damageMul(mount.condition);
+
+    // An under-charged lance throws a weaker, sloppier shot rather than nothing at all.
+    const q = shot?.charge ?? 1;
+    const chargeDmg = q >= 1 ? 1 : CHARGE.dmgFloor + (1 - CHARGE.dmgFloor) * q;
+    const chargeAcc = q >= 1 ? 1 : CHARGE.accFloor + (1 - CHARGE.accFloor) * q;
+
+    const damage = def.damage * damageMul(mount.condition) * chargeDmg;
+    const from = shot?.origin ?? mount.worldPosition;
 
     this.bus.emit(EV.WEAPON_FIRED, {
-      ship, mount, origin: mount.worldPosition, aimPoint, type: def.type,
+      ship, mount, origin: from, aimPoint, type: def.type,
       heat: mount.thermal ? mount.thermal.heat : 0,
+      emitter: shot ? shot.emitter : undefined,
     });
 
     if (HITSCAN.has(def.type)) {
-      this._resolveHitscan(ship, mount, aimPoint, targetShip, damage, stress);
+      this._resolveHitscan(ship, mount, aimPoint, targetShip, damage, stress, from, chargeAcc);
       return;
     }
 
@@ -233,7 +285,7 @@ export class CombatSystem {
     const i = p.spawn();
     if (i < 0) return;
 
-    const dir = scratch.v3.copy(aimPoint).sub(mount.worldPosition).normalize();
+    const dir = scratch.v3.copy(aimPoint).sub(from).normalize();
     // Dispersion: cheap weapons scatter, precision weapons do not, and a mount held
     // above its thermal soft cap scatters like a cheap one however good it is.
     const spread = (def.spread ?? 0.004) * (1 + stress * 2.4);
@@ -242,9 +294,9 @@ export class CombatSystem {
     dir.z += this.rng.signed() * spread;
     dir.normalize();
 
-    p.px[i] = mount.worldPosition.x;
-    p.py[i] = mount.worldPosition.y;
-    p.pz[i] = mount.worldPosition.z;
+    p.px[i] = from.x;
+    p.py[i] = from.y;
+    p.pz[i] = from.z;
     p.vx[i] = dir.x * def.projectileSpeed + ship.velocity.x;
     p.vy[i] = dir.y * def.projectileSpeed + ship.velocity.y;
     p.vz[i] = dir.z * def.projectileSpeed + ship.velocity.z;
@@ -253,15 +305,15 @@ export class CombatSystem {
     p.kind[i] = PROJECTILE_KINDS.indexOf(def.type === 'missile' ? 'missile' : def.type === 'rail' ? 'railslug' : def.type === 'flak' ? 'flak' : def.type === 'pd' ? 'pdslug' : 'slug');
     p.faction[i] = this.factionId(ship.faction);
     p.tracking[i] = def.type === 'missile' ? (def.tracking ?? 1.2) : 0;
-    p.accuracy[i] = (def.subsystemAccuracy ?? 0.65) * (1 - stress * 0.6);
+    p.accuracy[i] = (def.subsystemAccuracy ?? 0.65) * (1 - stress * 0.6) * chargeAcc;
     p.targetRef[i] = targetShip ?? null;
     p.subsystemRef[i] = ship.targetSubsystem ?? null;
     p.partRef[i] = ship.targetPart ?? null;
     p.sourceRef[i] = ship;
   }
 
-  _resolveHitscan(ship, mount, aimPoint, targetShip, damage, stress) {
-    const origin = mount.worldPosition;
+  _resolveHitscan(ship, mount, aimPoint, targetShip, damage, stress, from = null, chargeAcc = 1) {
+    const origin = from ?? mount.worldPosition;
     const dir = scratch.v3.copy(aimPoint).sub(origin);
     const maxDist = Math.min(dir.length(), mount.def.range);
     dir.normalize();
@@ -288,7 +340,7 @@ export class CombatSystem {
         partId: ship.targetPart ?? null,
         point: end,
         source: ship,
-        accuracy: (mount.def.subsystemAccuracy ?? 0.92) * (1 - stress * 0.6),
+        accuracy: (mount.def.subsystemAccuracy ?? 0.92) * (1 - stress * 0.6) * chargeAcc,
         rng: this.rng,
       });
       this.bus.emit(EV.PROJECTILE_IMPACT, { point: end.clone(), target: hitShip, type: mount.def.type, source: ship });
@@ -392,7 +444,19 @@ export class CombatSystem {
    */
   bearingReport(fromShip, target) {
     const point = target?.worldPosition ?? target?.position ?? target;
-    if (!point) return { bearing: 0, total: 0, minError: Infinity };
+    // THE NO-TARGET RETURN CARRIES THE SAME KEYS AS THE REAL ONE. It used to be three
+    // fields, and a consumer that reads `report.salvoIn` with no target selected would
+    // have got `undefined` and compared it against a number — silently false, forever.
+    // Two shapes out of one function is how a readout ends up lying only sometimes.
+    if (!point) {
+      // `total` counts commandable mounts, skipping PD, exactly as the loop below does.
+      let n = 0;
+      for (const m of fromShip?.weapons ?? []) if (m.def.type !== 'pd') n++;
+      return {
+        bearing: 0, ready: 0, hot: 0, dry: 0, total: n,
+        minError: Infinity, salvoReady: 0, salvoIn: 0, side: null,
+      };
+    }
     let bearing = 0;
     let total = 0;
     let minError = Infinity;
@@ -415,10 +479,91 @@ export class CombatSystem {
         minError = Math.min(minError, m.arcError(fromShip.heading, point));
       }
     }
+    /*
+     * THE SALVO PREVIEW, published here so the HUD needs no second traversal.
+     *
+     *   salvoReady  slots the ripple WOULD schedule on the engaged flank right now,
+     *               including the dead and frozen ones — they are part of the wave
+     *   salvoIn     seconds until that count could become non-zero. 0 means "press it"
+     *   side        'port' | 'starboard' | 'all' | null; which flank `salvoReady` counted
+     *
+     * Zero and null on any hull with no salvo controller, which is every NPC. Reading
+     * them costs one WeakMap lookup on that path, so the AI's per-step call to this
+     * function does not pay for a second walk of the weapon list.
+     */
+    let salvoReady = 0;
+    let salvoIn = 0;
+    let side = null;
+    if (hasSalvo(fromShip)) {
+      const pv = salvoPreview(fromShip, 'auto');
+      salvoReady = pv.slots;
+      salvoIn = pv.wait;
+      side = pv.side;
+    }
+
     // `bearing` is how many mounts can SEE it; `ready` is how many can actually shoot
     // it right now. The gap between those two numbers is the stores and heat systems
     // showing up in the one readout the player already watches.
-    return { bearing, ready, hot, dry, total, minError: bearing > 0 ? 0 : minError };
+    return {
+      bearing, ready, hot, dry, total, minError: bearing > 0 ? 0 : minError,
+      salvoReady, salvoIn, side,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // THE SALVO COMMAND SURFACE
+  //
+  // `src/input/controls.js` calls these and nothing else. The controller itself lives
+  // in `sim/salvo.js` and is reached through a WeakMap, so no other stream needs a
+  // reference to it and `sim/ship.js` gains no field.
+  //
+  // `armSalvo` MUST be called before any of the rest will do anything. That is not
+  // ceremony: attaching is what withholds a SALVO mount from the automatic path, so it
+  // has to be an act by something that can also release it. See `salvo.js#attachSalvo`.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Put this hull under salvo command. Idempotent; returns true once it is.
+   *
+   * Called by the input layer for the player and by nothing else. An NPC that is
+   * attached stops firing its cannons, because nothing will ever press the key.
+   */
+  armSalvo(ship) {
+    if (!ship || ship.dead) return false;
+    return !!attachSalvo(ship, this);
+  }
+
+  /**
+   * Commit a ripple.
+   *
+   * @param {import('./ship.js').Ship} ship
+   * @param {'port'|'starboard'|'all'|'auto'} [side]
+   * @param {{immediate?: boolean}} [opts]
+   * @returns {number} slots scheduled; 0 when nothing could fire
+   */
+  fireSalvo(ship, side = 'auto', opts = undefined) {
+    if (!ship || ship.dead) return 0;
+    return salvoOf(ship)?.arm(side, opts) ?? 0;
+  }
+
+  /** Begin the wind-up on every CHARGE mount. Returns how many started. */
+  beginCharge(ship) {
+    if (!ship || ship.dead) return 0;
+    return salvoOf(ship)?.beginCharge() ?? 0;
+  }
+
+  /** Let go. Returns how many mounts actually fired; the rest aborted. */
+  releaseCharge(ship) {
+    return salvoOf(ship)?.releaseCharge() ?? 0;
+  }
+
+  /**
+   * Poll the hold-to-charge key. Safe to call every frame from a render system: it
+   * writes an intent flag and the edge is consumed inside the fixed step.
+   */
+  setChargeIntent(ship, held) {
+    if (!ship || ship.dead) return;
+    salvoOf(ship)?.wantCharge(held);
   }
 
   /** For the tactical overlay: every arc on a ship, as world-space wedge descriptions. */
