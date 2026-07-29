@@ -14,7 +14,7 @@ Last updated: after the fleet-and-modules measurement pass (pass 8).
 | 60 fps at 1440p on an Apple laptop | **UNVERIFIED** | No GPU in this environment. See below. |
 | 1% lows above 50 fps | **UNVERIFIED** | Same. |
 | Benchmark scene: 200+ debris, 12 combat ships, 1 capital, full post chain | **PASS** | `src/probes/benchmark.js`: 930 instanced objects, 12 combat ships actively engaging, 1 fully-fitted capital, full post chain. |
-| Draw calls under a committed ceiling, measured and reported | **FAIL** | Committed 320, measured **650** in the benchmark scene. Reported as a miss with diagnosis in `docs/review/benchmark.md`. The assembled game at normal play framing measures 143. |
+| Draw calls under a committed ceiling, measured and reported | **FAIL** | Committed 320, measured **499** in the benchmark scene (`docs/review/benchmark.json`, the machine-written record). Reported as a miss with diagnosis in `docs/review/benchmark.md`. The assembled game at boot framing measures **119** (`npm run smoke`). This row previously said 650 and 143; both were earlier runs copied forward, and 650 also disagreed with line 101 of this same file. `benchmark.md` still carries the stale figures and disagrees with `benchmark.json` beside it on resolution, frame count and mesh count too — the `.md` was written from a different run than the `.json`. Trust the `.json`. |
 
 ### Why frame rate is unverified, stated plainly
 
@@ -80,9 +80,16 @@ measurement now are, and the tools that settle them are committed
 | | count |
 |---|---|
 | PASS | 9 |
-| PARTIAL | 5 |
+| PARTIAL | 3 |
 | FAIL | 1 |
-| UNVERIFIED | 4 |
+| UNVERIFIED | 6 |
+
+Nineteen rows. This table previously read 5 PARTIAL and 4 UNVERIFIED, which counted to
+19 but matched no actual row set — the body has always had three PARTIALs (rows 46, 57,
+73) and six UNVERIFIEDs (14, 15, 56, 58, 72, 74). PASS counts the one split verdict,
+"PASS (design), UNVERIFIED (hands)" at row 66, as a pass. The wrong split had been
+copied outward into other documents, which is why it is worth stating how it is counted
+rather than just fixing the numbers.
 
 The two that moved this pass are both in Lighting, and they moved for the same reason
 the Silhouette pair did before them: they stopped being opinions. Both were sitting at
@@ -105,6 +112,14 @@ One outright failure remains:
    of the scene**, so a meaningful fraction of the 499 is one scene counted twice. That
    should be measured (`--quality medium` disables GTAO) before anyone re-merges a hull
    to chase it.
+
+   **Still unmeasured.** `npm run bench -- --quality medium` was attempted twice on this
+   commit and killed by its timeout both times — the review environment has no GPU and
+   the benchmark scene at 2560×1440 through SwiftShader takes longer than any budget
+   worth holding a session open for. It is a fast run on a machine with a GPU. Until
+   someone does it, nobody knows how much of the 499 is one scene counted twice, and the
+   three geometry merges are being ranked against a number that may be substantially
+   inflated.
 
 ### An honest overall statement
 

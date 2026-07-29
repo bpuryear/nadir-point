@@ -1198,3 +1198,125 @@ split is actually near 60/30/10 on the hull mask. If it is, this is an exposure 
 and belongs to the deferred lighting work. If it is not, the dense and medium tiers need
 restoring around machinery, joints between masses, and recesses — the places §3 of the
 ship-language spec says they belong.
+
+---
+
+## Cohesion audit — after the container restart
+
+An independent audit was run over the whole tree at the stopping point, specifically to
+find what two killed workflows had left inconsistent. It also re-ran the evidence behind
+every PASS in `acceptance.md`. Findings that are not already recorded above:
+
+### D-INT1 now has a number · STILL OPEN
+`node tools/surface.mjs docs/review/look-surface/close.png` gives a calm/medium/dense
+split of **78.1 / 20.3 / 1.6** against the brief's 60/30/10.
+
+That settles the caveat the entry above left open, and it settles it against the
+exposure theory: the hull genuinely is too calm, this is not lighting washing plating
+out, and it belongs to the art pass rather than to the deferred lighting work. It clears
+the tool's own printed thresholds (calm ≥ 60, medium ≤ 28, dense ≤ 12), which is worth
+noting because it means **the tool would not have caught this** — its thresholds are
+looser than the brief it is checking. The dense and medium tiers need restoring around
+machinery, joints between masses, and recesses.
+
+### D57 · Four pieces of the core hull float unattached · OPEN
+`node tools/probe.mjs cruiser` logs `DETACHED GEOMETRY` at **all three LODs**, in the
+bridge and sensor-mast region — roughly x −51..16, y 177..366, z −281..−170. At LOD0 the
+offenders are `core/hull#3`, `core/hull#4`, `core/greeble#0` and `core/greeble#1`.
+
+**Not a regression from the interrupted art work.** The identical bounding boxes appear
+at commit `5ea20d8`, before those commits, with only the part index shifted by one as a
+part was inserted ahead of them. So it cannot be reverted away and predates the restart.
+
+This is the same class as D49, which was found and closed for *modules* by
+`tools/silhouette.mjs` — and never checked for the core hull. The check exists; it was
+pointed at one half of the problem. That is the finding, more than the four pieces.
+
+### D58 · The progression layer's `game.js` seam was dead, and the boot report said so backwards · FIXED
+`STREAM_MODULES` in `src/game.js` had no glob matching `./sim/meta/`, so
+`optional('./sim/meta/index.js', 'progression')` could never resolve and returned null
+every boot. The layer ran anyway, via a documented backstop in `SalvageSystem`'s
+constructor that exists *because* the glob entry was missing.
+
+The dead seam was harmless. The boot report was not: it announced
+`missing: progression` for a layer that was fully installed and running. A status line
+that reports a live system as missing is worse than no status line, and this project has
+already lost a wave to believing that the progression layer was not wired.
+
+Fixed by adding the glob. Both installers are idempotent (`installProgression` returns
+early if `world.systems.economy` exists), so whichever seam runs first wins.
+
+The structural cause is worth recording separately: `ARCHITECTURE.md`'s ownership table
+assigns **no owner to `src/sim/meta/**`**, so the stream that wrote it had no legitimate
+place to wire itself and documented a workaround instead.
+
+### D59 · `src/world/lighting/pois.js` never runs in the assembled game · OPEN
+227 lines that author art-directed versions of `giant-orbit`, `graveyard` and
+`near-star`. The only importer in the tree is `src/probes/poi_common.js`, so
+`world.systems.pois` is absent at runtime and `src/world/system.js` registers its own
+generic versions of all three instead.
+
+`src/world/system.js:521-527` states that those three POIs "are owned by
+`world/lighting/pois.js` and are left exactly as that stream authored them. We only fill
+the gaps." That is false at runtime — `system.js` fills all of it.
+
+**Deliberately not fixed at the stopping point:** wiring it changes what three POIs look
+like, which is a visual change that wants a capture pass behind it.
+
+### D60 · `docs/design/controls.md` §6.1 specifies a handling model the code does not implement · OPEN
+No `player_cruiser` ship class is registered, so `src/game.js:128` always falls through
+to `synthesisePlayerClass`, whose numbers are not the spec's:
+
+| | live | `controls.md` §6.1 |
+|---|---|---|
+| mass | 62,000 | 620,000 |
+| maxSpeed | 140 | 180 |
+| accel | 14 | 6.0 |
+| turnRate | 0.22 | 0.085 |
+
+`turnFalloff`, `turnExp`, `turnRateFloorK`, `accelRetro`, `accelLateral` and
+`maxLateralSpeed` appear nowhere in `src/`; `physics.js:91` implements a plain
+`1 - 0.62·s²` with no floor clamp.
+
+The ship flies well and the measured 14.9 s / 9.9 s figures in `acceptance.md` are real.
+But they were measured on the fallback, not on the documented model, and `game.js:293`
+claims "Numbers match the feel tuning in `docs/design/controls.md`." Either the spec is
+the intent and the code should implement it, or the code is the intent and the spec is
+stale — but the comment asserting they agree should not survive either way.
+
+Related, and a genuine bug rather than drift: `src/world/travel.js:51` sets
+`combatArrivalSpeed: 180`, mirroring the spec's maxSpeed, and hands the cruiser over at
+that speed on the final leg — **28% above the live hull's own 140 m/s ceiling**.
+
+### D61 · Two PASS rows in `acceptance.md` do not reproduce · OPEN
+Both are recorded in full in `acceptance.md` itself and in `HANDOFF.md`: the lighting
+key-direction row cites a key intensity of 14.0 that the code contradicts (11.5, after a
+later global ×0.82 re-solve documented at `palette.js:817`) and a hull-mask p05 of 0.168
+that the committed tool gives as 0.097 on the committed frame; and the loadout row's
+verdict holds but every number in it is stale.
+
+The loadout row also shows a structural weakness worth fixing generally:
+`src/probes/loadouts.js:365` prints PASS/FAIL **into a PNG with no process exit code**,
+so nothing gates it. That is exactly the setup that produced this project's one
+acknowledged false PASS.
+
+### D62 · Duplicate defect IDs in this file · OPEN
+D49, D50 and D51 each appear **twice**, under two sections both headed "Pass 10" — at
+lines 793 / 832 / 845 and again at 886 / 910 / 927. Any cross-reference to "D51" is
+therefore ambiguous, and at least one document makes one. Renumber the second set.
+
+### D63 · The reserve-clamp self-test asserted against a precondition it never set · FIXED
+`src/sim/selftest.mjs` §6 drained the propellant tank to `reserve + 0.05` and then ran
+five seconds, expecting `stores.starved` and a clamped engine efficiency. It got
+`starved false, efficiency 0.802` and failed — but the sim was right and the test was
+wrong. The ship was still coasting toward the waypoint from the previous assertion, and
+coasting costs nothing: `stores.js#_spend` returns early below 1e-4 of delta-v, so no
+draw was ever refused and the clamp had nothing to engage on.
+
+Fixed by reversing the course before the run, which forces a real burn. The assertion
+now exercises what it claims to: propellant pinned at the 40.0 floor, `starved` true,
+engine efficiency 0.361 — clamped, and above zero, so you can still limp.
+
+`node src/sim/selftest.mjs` is 50 PASS / 0 FAIL, exit 0. It was exiting 1 before this,
+which is worth noting on its own: a self-test that has been red for a while stops being
+read, and this one is the only gate on the determinism rule.

@@ -36,6 +36,14 @@ const STREAM_MODULES = {
   ...import.meta.glob('./world/*/index.js'),
   ...import.meta.glob('./world/index.js'),
   ...import.meta.glob('./sim/ai/index.js'),
+  // The progression layer. Without this entry `optional('./sim/meta/index.js')` can
+  // never resolve, so the seam below it was dead and the boot report announced
+  // `missing: progression` for a layer that was in fact installed — by a backstop in
+  // SalvageSystem's constructor, which exists only because this line was absent
+  // (see the WIRING NOTE in sim/meta/index.js). A status line that reports a live
+  // system as missing is worse than no status line. The installer is idempotent, so
+  // whichever seam runs first wins and the other is a no-op.
+  ...import.meta.glob('./sim/meta/index.js'),
   ...import.meta.glob('./vfx/index.js'),
   ...import.meta.glob('./ui/index.js'),
   ...import.meta.glob('./audio/index.js'),

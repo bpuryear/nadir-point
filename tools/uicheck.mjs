@@ -118,7 +118,13 @@ async function checkContrast() {
 // ---------------------------------------------------------------------------
 
 async function checkFrame(screen) {
-  const port = 5400 + Math.floor(Math.random() * 200);
+  // A fixed start, not a guess. This line used to pick a random port and hand it
+  // straight to startServer, which is the one thing harness.mjs exists to prevent:
+  // guessing a port can collide with a server nobody is reading from, and the poll
+  // then succeeds against THAT server, testing a stale bundle. startServer probes
+  // upward from here for a genuinely bindable port. It was also the only Math.random
+  // left in the repo, against a rule ARCHITECTURE.md states unqualified.
+  const port = 5400;
   let server;
   let browser;
   try {

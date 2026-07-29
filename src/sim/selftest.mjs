@@ -335,6 +335,12 @@ function testStores() {
   // Drain to the reserve floor and confirm the clamp, and that it is only a clamp.
   const tank = player.stores.tank();
   tank.current = tank.reserve + 0.05;
+  // DEMAND delta-v, do not just let time pass. The previous version drained the tank
+  // and ran five seconds while the ship was still coasting toward the waypoint above.
+  // Coasting costs nothing — `_spend` returns early below 1e-4 of dv — so no draw was
+  // ever refused, `starved` stayed false, and the assertion below failed against a
+  // sim that was behaving correctly. Reversing the course forces a real burn.
+  player.orderMove(new THREE.Vector3(-6000, 0, -6000));
   run(world, 5, [combat]);
   console.log(`   at reserve: propellant ${fmt(tank.current, 2)} (floor ${tank.reserve}), `
     + `starved ${player.stores.starved}, engine efficiency ${fmt(player.body.engineEfficiency)}`);
@@ -659,10 +665,19 @@ function testDeterminism() {
 
   // A seeded run is only reproducible if nothing in the stream reaches for the global
   // generator. This is cheap to check and impossible to argue with.
+  // Scan for what actually breaks determinism — CALLING the global generator, or
+  // aliasing it so it can be called later. The previous version tested for the bare
+  // identifier and then stripped two hard-coded strings to get a pass, one of which
+  // (`Math.random === undefined`) was cut to fit a single no-op line in strikecraft.js.
+  // An allowlist shaped like one line of code is not a check, and prose about the rule
+  // in a comment or a log string should never have had to be smuggled past it.
+  const CALL = /Math\.random\s*\(/;
+  const ALIAS = /[=:]\s*Math\.random\b\s*[^(]/;
   const files = readdirSync(new URL('.', import.meta.url)).filter((f) => f.endsWith('.js'));
-  const offenders = files.filter((f) => /Math\.random/.test(
-    readFileSync(new URL(f, import.meta.url), 'utf8').replace(/never from Math\.random|Math\.random === undefined/g, ''),
-  ));
+  const offenders = files.filter((f) => {
+    const src = readFileSync(new URL(f, import.meta.url), 'utf8');
+    return CALL.test(src) || ALIAS.test(src);
+  });
   console.log(`   scanned ${files.length} files in src/sim for Math.random: ${offenders.length ? offenders.join(', ') : 'none'}`);
   check('no Math.random anywhere in src/sim', offenders.length === 0, offenders.join(', '));
 }
