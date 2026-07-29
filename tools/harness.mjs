@@ -1,5 +1,6 @@
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import net from 'node:net';
 import path from 'node:path';
@@ -84,8 +85,16 @@ const CHROME_CANDIDATES = [
   '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
 ];
 
+/**
+ * An explicit path is only honoured if it EXISTS. The original list was a single
+ * container path; on any other machine it resolved to a file that is not there and
+ * playwright failed to launch rather than falling back to the chromium it ships with.
+ * Returning undefined hands the choice to playwright, which is the correct default.
+ */
 function chromePath() {
-  for (const c of CHROME_CANDIDATES) if (c) return c;
+  for (const c of CHROME_CANDIDATES) {
+    if (c && existsSync(c)) return c;
+  }
   return undefined;
 }
 
@@ -103,6 +112,41 @@ const SWIFTSHADER_ARGS = [
   '--disable-dev-shm-usage',
   '--hide-scrollbars',
 ];
+
+/**
+ * Hardware rasterisation. On a machine with a real GPU this is both far faster and the
+ * only configuration a frame rate may be read from. ANGLE targets Metal on darwin and
+ * the platform default elsewhere.
+ *
+ * The distinction matters beyond speed: every "UNVERIFIED" performance row in
+ * docs/review/acceptance.md is unverified because the environment that wrote it had no
+ * GPU. A number measured under SWIFTSHADER_ARGS is not a frame rate and must never be
+ * recorded as one.
+ */
+const HARDWARE_ARGS = [
+  '--use-gl=angle',
+  ...(process.platform === 'darwin' ? ['--use-angle=metal'] : []),
+  '--ignore-gpu-blocklist',
+  '--enable-gpu',
+  '--enable-webgl',
+  '--hide-scrollbars',
+];
+
+/**
+ * 'hardware' | 'swiftshader'. Defaults to hardware on darwin, where this project is
+ * actually played, and to swiftshader elsewhere, which is what the headless review
+ * container needs. Override with NP_RASTER.
+ */
+export function rasterMode() {
+  const forced = process.env.NP_RASTER;
+  if (forced === 'hardware' || forced === 'swiftshader') return forced;
+  return process.platform === 'darwin' ? 'hardware' : 'swiftshader';
+}
+
+/** True when a frame rate read in this process would mean something. */
+export function fpsIsMeaningful() {
+  return rasterMode() === 'hardware';
+}
 
 export async function startServer({ port = 5173, mode = 'dev', build = false } = {}) {
   if (build || mode === 'preview') {
@@ -185,7 +229,7 @@ export { killAllServers };
 export async function launchBrowser() {
   return chromium.launch({
     executablePath: chromePath(),
-    args: SWIFTSHADER_ARGS,
+    args: rasterMode() === 'hardware' ? HARDWARE_ARGS : SWIFTSHADER_ARGS,
   });
 }
 

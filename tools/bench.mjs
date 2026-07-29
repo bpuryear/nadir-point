@@ -18,7 +18,7 @@
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { startServer, stopServer, launchBrowser, openGame, ROOT } from './harness.mjs';
+import { startServer, stopServer, launchBrowser, openGame, ROOT, rasterMode, fpsIsMeaningful } from './harness.mjs';
 
 function arg(name, fallback = null) {
   const i = process.argv.indexOf(`--${name}`);
@@ -118,15 +118,35 @@ try {
   lines.push(`  ----  ${'textures'.padEnd(22)} ${String(b.textures).padStart(10)}`);
   console.log(lines.join('\n'));
 
-  console.log('\nSOFTWARE-RASTERISER TIMINGS (NOT a frame rate on target hardware)');
-  console.log(`  mean frame     ${result.frameMs.mean.toFixed(1)} ms`);
-  console.log(`  median frame   ${result.frameMs.median.toFixed(1)} ms`);
-  console.log(`  p95 frame      ${result.frameMs.p95.toFixed(1)} ms`);
-  console.log(`  p99 frame      ${result.frameMs.p99.toFixed(1)} ms`);
+  // Whether a frame rate may be read off these numbers is a property of the RASTERISER,
+  // not of the tool. The original version hard-coded the software-rasteriser disclaimer,
+  // so a run on a real GPU printed real timings under a banner saying they were not real.
+  const hardware = fpsIsMeaningful();
+  const fpsMean = 1000 / result.frameMs.mean;
+  const fpsLow = 1000 / result.frameMs.p99;   // p99 frame time is the 1% low
+
+  if (hardware) {
+    console.log(`\nFRAME TIMINGS (real GPU, ${rasterMode()} rasterisation — these ARE frame rates)`);
+  } else {
+    console.log('\nSOFTWARE-RASTERISER TIMINGS (NOT a frame rate on target hardware)');
+  }
+  console.log(`  mean frame     ${result.frameMs.mean.toFixed(1)} ms${hardware ? `   ${fpsMean.toFixed(1)} fps` : ''}`);
+  console.log(`  median frame   ${result.frameMs.median.toFixed(1)} ms${hardware ? `   ${(1000 / result.frameMs.median).toFixed(1)} fps` : ''}`);
+  console.log(`  p95 frame      ${result.frameMs.p95.toFixed(1)} ms${hardware ? `   ${(1000 / result.frameMs.p95).toFixed(1)} fps` : ''}`);
+  console.log(`  p99 frame      ${result.frameMs.p99.toFixed(1)} ms${hardware ? `   ${fpsLow.toFixed(1)} fps  (1% low)` : ''}`);
   console.log(`  sim step cost  ${result.stepMs?.toFixed?.(2) ?? '?'} ms  <- this one IS meaningful, it is CPU only`);
-  console.log('\n  These are SwiftShader numbers. This environment has no GPU.');
-  console.log('  The 60 fps @ 1440p / 1% low > 50 target was NOT measured here and is NOT claimed.');
-  console.log('  Run this on the target machine with a real GPU to validate that criterion.');
+
+  if (hardware) {
+    const meanOk = fpsMean >= 60;
+    const lowOk = fpsLow >= 50;
+    console.log(`\n  ${meanOk ? 'PASS' : 'FAIL'}  60 fps @ ${width}x${height}        measured ${fpsMean.toFixed(1)} fps mean`);
+    console.log(`  ${lowOk ? 'PASS' : 'FAIL'}  1% lows above 50 fps        measured ${fpsLow.toFixed(1)} fps at p99`);
+    if (!meanOk || !lowOk) failed = true;
+  } else {
+    console.log('\n  These are SwiftShader numbers. This environment has no GPU.');
+    console.log('  The 60 fps @ 1440p / 1% low > 50 target was NOT measured here and is NOT claimed.');
+    console.log('  Run this on the target machine with a real GPU to validate that criterion.');
+  }
 
   const errs = [...pageErrors, ...consoleErrors.filter((e) => e.startsWith('[error]'))];
   if (errs.length) {
@@ -137,14 +157,20 @@ try {
 
   const payload = {
     scene, width, height, frames, quality,
-    measuredAt: 'software-rasteriser (SwiftShader), no GPU present',
+    measuredAt: fpsIsMeaningful()
+      ? `hardware rasterisation (${rasterMode()}) on ${process.platform}`
+      : 'software-rasteriser (SwiftShader), no GPU present',
     budgets: { drawCalls: BUDGET.drawCalls, triangles: BUDGET.triangles, programs: BUDGET.programs },
     peak: result.peak,
     counters: b,
     frameMs: result.frameMs,
     sceneCounts: result.sceneCounts,
-    fpsClaim: null,
-    fpsNote: 'Frame rate not measurable in this environment. No fps figure is asserted.',
+    fpsClaim: fpsIsMeaningful()
+      ? { mean: 1000 / result.frameMs.mean, low1pct: 1000 / result.frameMs.p99 }
+      : null,
+    fpsNote: fpsIsMeaningful()
+      ? 'Measured on hardware rasterisation. These are real frame rates at the stated resolution.'
+      : 'Frame rate not measurable in this environment. No fps figure is asserted.',
     pass: !failed,
   };
   await fs.mkdir(path.dirname(path.resolve(ROOT, outJson)), { recursive: true });

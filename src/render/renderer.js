@@ -50,11 +50,23 @@ export class Renderer {
 
     this.farCamera = new THREE.PerspectiveCamera(CAMERA.fov, 1, 1, FAR_SCENE.radius * 4);
 
-    this.post = new PostChain(this);
+    /*
+     * Quality is resolved BEFORE the post chain is built, because PostChain's second
+     * constructor argument defaults to 'high'.
+     *
+     * It used to be assigned after this line, so `new PostChain(this)` always took that
+     * default and `opts.quality` was stored on the renderer and read by nothing. The
+     * `?quality=` query parameter — which main.js and probe.js both parse and forward —
+     * therefore had no effect on GTAO, godrays, bloom or SMAA for the whole life of the
+     * project. That is why `npm run bench -- --quality medium` returned draw-call counts
+     * identical to `high` (423 both ways), and why acceptance.md's standing question of
+     * how much of the count is GTAO's depth-normal prepass could never be answered.
+     */
+    this.quality = opts.quality ?? 'high';
+    this.post = new PostChain(this, this.quality);
 
     this._size = new THREE.Vector2(1, 1);
     this._resizeObserver = null;
-    this.quality = opts.quality ?? 'high';
 
     this.setSize(canvas.clientWidth || 1280, canvas.clientHeight || 720);
   }
