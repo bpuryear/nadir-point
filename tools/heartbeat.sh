@@ -68,11 +68,20 @@ while true; do
   done
   age=$oldest_live_age
 
-  # --- self-heal: sweep vite servers old enough to be orphans ---
-  orph=$(ps -eo pid,etimes,args | awk '$2 > 3600 && $0 ~ /vite (preview )?--port/' | wc -l)
+  # --- self-heal: sweep genuinely orphaned vite servers ---
+  #
+  # The test is PARENTAGE, not age. A vite server whose PPID is 1 has been reparented to
+  # init because the harness that spawned it is gone, so nobody is reading from it and it
+  # is only holding a port. That is true at one minute as much as at one hour.
+  #
+  # Age was the original filter and it was a proxy for the wrong thing: it left young
+  # orphans accumulating (18 of them at one point) while a legitimately busy server that
+  # happened to be old was equally at risk. Parentage is exact in both directions —
+  # a server with a live parent is never touched, whatever its age.
+  orph=$(ps -eo pid,ppid,args | awk '$2 == 1 && $0 ~ /vite (preview )?--port/' | wc -l)
   if [ "$orph" -gt 0 ]; then
-    ps -eo pid,etimes,args | awk '$2 > 3600 && $0 ~ /vite (preview )?--port/ {print $1}' | xargs -r kill -9 2>/dev/null
-    echo "SWEPT $orph orphaned vite server(s) older than 1h - the failure mode that stalled the last run"
+    ps -eo pid,ppid,args | awk '$2 == 1 && $0 ~ /vite (preview )?--port/ {print $1}' | xargs -r kill -9 2>/dev/null
+    echo "SWEPT $orph vite server(s) reparented to init - abandoned by a dead harness"
   fi
 
   # A per-port "is it held" check lived here and was removed. It matched ":5179"

@@ -224,7 +224,7 @@ function buildJumpDrive(ctx) {
     { pos: [0, 0, -70], rot: AFT });
 
   // The ring. A real band with a hole through it - you can see stars inside it.
-  b.add('plating', ringBand({ outer: 320, inner: 262, z0: -26, z1: 26, sides: 10, detail: D }),
+  b.add('plating', ringBand({ outer: 320, inner: 262, z0: -26, z1: 26, sides: 8, detail: D }),
     { pos: [0, 0, -276] });
 
   // Three pylons from the plug out to the ring. Unequal, as always.
@@ -243,9 +243,38 @@ function buildJumpDrive(ctx) {
     b.glowDir([ca * (r - 34), sa * (r - 34), -276], 38, [-ca, -sa, 0]);
   }
 
+  // MACHINERY ON THE CIRCUMFERENCE, AND IT IS NOT DISTRIBUTED EVENLY.
+  //
+  // Round-one blind review: "the ring, reads as a wagon wheel ... the ring needs a
+  // thickened root and asymmetric machinery on its circumference". A torus with
+  // evenly spaced spokes is a wheel in every culture that has ever had wheels, and
+  // three identical pylons at 17, 143 and 252 degrees are still three spokes.
+  //
+  // So: one 90-degree arc of the ring carries a heavy field-coil housing that steps
+  // 34 m proud of the band, a second, much smaller one sits 150 degrees away, and
+  // there is nothing at all on the remaining two thirds. The ring now has a TOP and
+  // a BOTTOM - which a wheel does not - and the housings are at neither the pylons
+  // nor halfway between them, so nothing on it divides into equal parts.
+  for (const [a0, arc, depth, thick] of [[0.95, 1.55, 46, 34], [3.55, 0.62, 30, 20]]) {
+    const steps = b.full ? 3 : 2;
+    for (let i = 0; i < steps; i++) {
+      const a = a0 + (arc * i) / (steps - 1 || 1);
+      const ca = Math.cos(a), sa = Math.sin(a);
+      b.add('hull', G.panelledSlab({
+        width: thick, height: 62 - i * 8, depth, detail: D,
+      }), { pos: [ca * (291 + thick * 0.4), sa * (291 + thick * 0.4), -276], rot: [0, 0, a] });
+    }
+  }
+  // The spindle root, thickened: a collar where the spine leaves the plug, because a
+  // 32 m spar coming out of a flat plate is a pin, and a pin is what makes the whole
+  // assembly read as a wheel on an axle rather than as a machine.
+  b.add('plating', G.hexStrut({
+    length: 40, radius: 62, radiusEnd: 44, axis: 'z', caps: false, detail: D,
+  }), { pos: [0, 0, -68], rot: AFT });
+
   if (full) {
     // Two conduits hanging off the spindle at angles that agree with nothing.
-    for (const a of [1.4, 3.8]) {
+    for (const a of [1.4]) {
       b.add('greeble', aimed(G.cappedConduit({ length: 66, radius: 12, axis: 'z', detail: D }),
         [Math.cos(a), Math.sin(a), -0.4], [Math.cos(a) * 34, Math.sin(a) * 34, -164]));
     }
