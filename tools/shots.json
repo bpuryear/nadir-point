@@ -1,63 +1,64 @@
 [
-  {
-    "id": "close",
-    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity. HUD suppressed: this is a look-review frame.",
-    "settle": 28,
-    "settleAfterSetup": 40,
-    "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 2.35; t.pitchOffset = t._pitchTarget = 0.18; t.zoomT = t._zoomTTarget = 0.02;",
-    "hud": false
-  },
-  {
-    "id": "three-quarter",
-    "description": "Mid tactical range, raking key. The everyday playing view. HUD suppressed: this is a look-review frame.",
-    "settle": 28,
-    "settleAfterSetup": 40,
-    "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 0.9; t.pitchOffset = t._pitchTarget = 0.30; t.zoomT = t._zoomTTarget = 0.26;",
-    "hud": false
-  },
-  {
-    "id": "wide",
-    "description": "Maximum tactical zoom. Cruiser a bright speck against the gas giant. The shot that sells the game.",
-    "settle": 28,
-    "settleAfterSetup": 40,
-    "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 1.7; t.pitchOffset = t._pitchTarget = 0.22; t.zoomT = t._zoomTTarget = 0.86;"
-  },
-  {
-    "id": "cinematic",
-    "description": "Chase camera. Tests the cinematic framing and the sense of mass.",
-    "settle": 28,
-    "settleAfterSetup": 40,
-    "setup": "N.world.player.orderMove(new N.THREE.Vector3(9000, 0, 5000)); N.world.systems.cinematic.enter(N.world.player);"
-  },
-  {
-    "id": "engagement",
-    "description": "Cruiser under way with hostiles on the plane. Tests scale cues and the fight read.",
-    "settle": 28,
-    "settleAfterSetup": 40,
-    "setup": "const w = N.world; const t = w.systems.tactical; t.mode='LOCKED'; t.lockTarget = w.player; t.yaw = t._yawTarget = 0.4; t.pitchOffset = t._pitchTarget = 0.42; t.zoomT = t._zoomTTarget = 0.48; const foe = w.ships.find(s => s !== w.player && !s.dead); if (foe) { w.player.orderAttack(foe); foe.orderAttack(w.player); }"
-  },
-  {
-    "id": "hud-close",
-    "description": "Close pose WITH the interface up. The occlusion frame: diff it against `close` to measure what share of the hull the chrome is standing on.",
-    "settle": 28,
-    "settleAfterSetup": 40,
-    "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 2.35; t.pitchOffset = t._pitchTarget = 0.18; t.zoomT = t._zoomTTarget = 0.02;",
-    "hud": true
-  },
-  {
-    "id": "hud-three-quarter",
-    "description": "The everyday playing view WITH the interface up. This is the frame the HUD-occludes-the-ship finding was measured on.",
-    "settle": 28,
-    "settleAfterSetup": 40,
-    "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 0.9; t.pitchOffset = t._pitchTarget = 0.30; t.zoomT = t._zoomTTarget = 0.26;",
-    "hud": true
-  },
-  {
-    "id": "hud-engagement",
-    "description": "Fight, interface up, hostiles on the plane. Tests the target block and the world-anchored label chips over a lit backdrop.",
-    "settle": 28,
-    "settleAfterSetup": 40,
-    "setup": "const w = N.world; const t = w.systems.tactical; t.mode='LOCKED'; t.lockTarget = w.player; t.yaw = t._yawTarget = 0.4; t.pitchOffset = t._pitchTarget = 0.42; t.zoomT = t._zoomTTarget = 0.48; const foe = w.ships.find(s => s !== w.player && !s.dead); if (foe) { w.player.orderAttack(foe); foe.orderAttack(w.player); }",
-    "hud": true
-  }
+ {
+  "id": "close",
+  "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity. HUD suppressed: this is a look-review frame.",
+  "settle": 28,
+  "settleAfterSetup": 40,
+  "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 2.35; t.pitchOffset = t._pitchTarget = 0.18; t.zoomT = t._zoomTTarget = 0.02;",
+  "hud": false
+ },
+ {
+  "id": "three-quarter",
+  "description": "Mid tactical range, raking key. The everyday playing view. HUD suppressed: this is a look-review frame.",
+  "settle": 28,
+  "settleAfterSetup": 40,
+  "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 0.9; t.pitchOffset = t._pitchTarget = 0.30; t.zoomT = t._zoomTTarget = 0.26;",
+  "hud": false
+ },
+ {
+  "id": "wide",
+  "description": "Maximum tactical zoom. Cruiser a bright speck against the gas giant. The shot that sells the game, and it only sells anything if the giant is actually in frame: the camera yaw is SOLVED from the celestial's own direction rather than guessed at 1.7 rad, because a max-zoom frame with no large object and no small object cannot answer 'how big is this'. HUD suppressed, like the other look-review frames.",
+  "settle": 28,
+  "settleAfterSetup": 40,
+  "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; const g = N.world.systems.celestials?.parts?.giant?.object; let yaw = 1.7; if (g) { const p = g.position; const h = Math.hypot(p.x, p.z) || 1; yaw = Math.atan2(-p.x / h, -p.z / h); } t.yaw = t._yawTarget = yaw; t.pitchOffset = t._pitchTarget = 0.16; t.zoomT = t._zoomTTarget = 0.86;",
+  "hud": false
+ },
+ {
+  "id": "cinematic",
+  "description": "Chase camera. Tests the cinematic framing and the sense of mass.",
+  "settle": 28,
+  "settleAfterSetup": 40,
+  "setup": "N.world.player.orderMove(new N.THREE.Vector3(9000, 0, 5000)); N.world.systems.cinematic.enter(N.world.player);"
+ },
+ {
+  "id": "engagement",
+  "description": "Cruiser under way with hostiles on the plane. Tests scale cues and the fight read.",
+  "settle": 28,
+  "settleAfterSetup": 40,
+  "setup": "const w = N.world; const t = w.systems.tactical; t.mode='LOCKED'; t.lockTarget = w.player; t.yaw = t._yawTarget = 0.4; t.pitchOffset = t._pitchTarget = 0.42; t.zoomT = t._zoomTTarget = 0.48; const foe = w.ships.find(s => s !== w.player && !s.dead); if (foe) { w.player.orderAttack(foe); foe.orderAttack(w.player); }"
+ },
+ {
+  "id": "hud-close",
+  "description": "Close pose WITH the interface up. The occlusion frame: diff it against `close` to measure what share of the hull the chrome is standing on.",
+  "settle": 28,
+  "settleAfterSetup": 40,
+  "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 2.35; t.pitchOffset = t._pitchTarget = 0.18; t.zoomT = t._zoomTTarget = 0.02;",
+  "hud": true
+ },
+ {
+  "id": "hud-three-quarter",
+  "description": "The everyday playing view WITH the interface up. This is the frame the HUD-occludes-the-ship finding was measured on.",
+  "settle": 28,
+  "settleAfterSetup": 40,
+  "setup": "const t = N.world.systems.tactical; t.mode='LOCKED'; t.lockTarget = N.world.player; t.yaw = t._yawTarget = 0.9; t.pitchOffset = t._pitchTarget = 0.30; t.zoomT = t._zoomTTarget = 0.26;",
+  "hud": true
+ },
+ {
+  "id": "hud-engagement",
+  "description": "Fight, interface up, hostiles on the plane. Tests the target block and the world-anchored label chips over a lit backdrop.",
+  "settle": 28,
+  "settleAfterSetup": 40,
+  "setup": "const w = N.world; const t = w.systems.tactical; t.mode='LOCKED'; t.lockTarget = w.player; t.yaw = t._yawTarget = 0.4; t.pitchOffset = t._pitchTarget = 0.42; t.zoomT = t._zoomTTarget = 0.48; const foe = w.ships.find(s => s !== w.player && !s.dead); if (foe) { w.player.orderAttack(foe); foe.orderAttack(w.player); }",
+  "hud": true
+ }
 ]

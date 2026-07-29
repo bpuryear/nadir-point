@@ -412,7 +412,23 @@ const MN_HULL = new Lines([
 ]);
 
 const MN_GUN_Z = 42;
-const MN_GUN_Y = 40;
+/**
+ * THE GUN HOUSE STANDS HIGHER THAN IT DID, and the gallery rails stand wider.
+ *
+ * Measured with both hulls normalised to 200 m, monitor against destroyer was the
+ * closest pair in the Coalition at 9.4 m of mean outline divergence - under two
+ * pixels at the review scale, on two ships that are supposed to be a gun-with-a-raft
+ * and a bar-with-a-hole-in-it. The class idea was right and the geometry was not
+ * committing to it: a 44 m house on a 34 m hull is a deckhouse, not "the largest
+ * single mass on the ship is its gun".
+ *
+ * 56 m of house with its roof at y = +80 on a hull whose deck is at +16 makes the
+ * gun five times the freeboard, and the gallery rails at x = +-48 put the after
+ * third of the ship WIDER than the hull it is bolted to. In plan the Sledge is now
+ * an H and the Bulwark is a bar; in profile the Sledge is a tower on a plank.
+ */
+const MN_GUN_Y = 64;
+const MN_RAIL_X = 40;
 
 function monitorParts({ lod }) {
   const D = G.detailForLod(lod);
@@ -423,7 +439,7 @@ function monitorParts({ lod }) {
     B.add('core', 'hull', MN_HULL.loftPick([-118, 46, 128]));
     // The gun house and the barrels ARE the class, so they are what the far LOD
     // spends its triangles on.
-    B.add('core', 'hull', G.panelledSlab({ width: 68, height: 44, depth: 92, detail: D }),
+    B.add('core', 'hull', G.panelledSlab({ width: 74, height: 56, depth: 92, detail: D }),
       { pos: [0, MN_GUN_Y, MN_GUN_Z] });
     for (const s of [-1, 1]) {
       B.add('core', 'hull', G.pipeRun({ length: 190, radius: 6.5, sides: 4, axis: 'z', detail: D }),
@@ -431,8 +447,8 @@ function monitorParts({ lod }) {
     }
     // The open stern frame: two rails with the bells between them.
     for (const s of [-1, 1]) {
-      B.add('core', 'hull', G.panelledSlab({ width: 10, height: 26, depth: 120, detail: D }),
-        { pos: [s * 26, 6, -96] });
+      B.add('core', 'hull', G.panelledSlab({ width: 15, height: 22, depth: 132, detail: D }),
+        { pos: [s * MN_RAIL_X, -6, -96] });
     }
     return { buckets: B.list() };
   }
@@ -453,7 +469,7 @@ function monitorParts({ lod }) {
   // --- 2. THE GUN. Barbette, house, two 190 m barrels. ---------------------
   B.add('core', 'dark', G.pipeRun({ length: 18, radius: 30, sides: 8, axis: 'y', caps: false, detail: D }),
     { pos: [0, 12, MN_GUN_Z] });
-  B.add('core', 'hull', G.panelledSlab({ width: 68, height: 44, depth: 92, chamfer: 10, detail: D }),
+  B.add('core', 'hull', G.panelledSlab({ width: 74, height: 56, depth: 92, chamfer: 10, detail: D }),
     { pos: [0, MN_GUN_Y, MN_GUN_Z] });
   // The mantlet: a stepped block on the front face, so the house is not one prism.
   B.add('core', 'plating', G.panelledSlab({ width: 52, height: 30, depth: 26, chamfer: 6, detail: D }),
@@ -476,22 +492,27 @@ function monitorParts({ lod }) {
   }
 
   // --- 3. the low deckhouse, right aft, offset to starboard ----------------
-  B.add('core', 'hull', G.panelledSlab({ width: 30, height: 24, depth: 54, chamfer: 6, detail: D }),
-    { pos: [5, 22, -104] });
+  B.add('core', 'hull', G.panelledSlab({ width: 26, height: 15, depth: 46, chamfer: 5, detail: D }),
+    { pos: [5, 16, -108] });
   if (full) {
-    B.add('core', 'emissive', glowSlot(20, 2.6), { pos: [5, 26, -76.6] });
+    B.add('core', 'emissive', glowSlot(18, 2.2), { pos: [5, 19, -85.6] });
   }
+  // THE MAST STANDS ON THE GUN HOUSE, not on the after deckhouse. Aft of the barbette
+  // this class is meant to be a bare skeleton, and a 30 m mast back there was the
+  // tallest thing over the whole after half - which put the Sledge's profile within
+  // two pixels of the Bulwark's exactly where the two are supposed to be least alike.
+  // Amidships it also does what a director should do: it sits over the gun.
   B.add('core', 'greeble', G.antennaMast({
-    height: 34, radius: 2.2, tipRadius: 1.0, spars: full ? 2 : 1, sparSpan: 11, detail: D,
-  }), { pos: [5, 32, -124] });
+    height: 30, radius: 2.0, tipRadius: 1.0, spars: full ? 2 : 1, sparSpan: 10, detail: D,
+  }), { pos: [4, MN_GUN_Y + 28, MN_GUN_Z - 30] });
 
   // --- 4. THE OPEN MACHINERY GALLERY. The stern is a skeleton. -------------
   // Two rails carry everything; the bells hang between them with sky above and
   // below. This is where the class earns its 6-12% negative space, and it is the
   // clearest statement of "external structure" anywhere in the navy.
   for (const s of [-1, 1]) {
-    B.add('engine', 'hull', G.panelledSlab({ width: 10, height: 26, depth: 120, chamfer: 3, detail: D }),
-      { pos: [s * 26, 6, -96] });
+    B.add('engine', 'hull', G.panelledSlab({ width: 15, height: 22, depth: 132, chamfer: 3, detail: D }),
+      { pos: [s * MN_RAIL_X, -6, -96] });
   }
   for (const [x, y] of full ? [[-13, 12], [13, 12], [-13, -8], [13, -8]] : [[-13, 4], [13, 4]]) {
     B.add('engine', 'greeble', G.thrusterBell({

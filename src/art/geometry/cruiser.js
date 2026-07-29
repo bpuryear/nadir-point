@@ -24,9 +24,9 @@
  *    intended - z extent, then the mass's own L : B : H:
  *
  *      M1  spine                   z -700..+700  1400 m   8.5 : 1.6 : 1  long and thin
- *      M2  ventral assembly        z -160..+690   850 m   4.5 : 1.8 : 1  long, wide, shallow
- *      M3  dorsal spine + bridge   z -480.. +40   520 m   2.5 : 0.7 : 1  tall and blocky
- *      M4  stern block + drives    z -700..-400   300 m   1.7 : 2.2 : 1  short and wide
+ *      M2  ventral assembly        z -230..+664   894 m   2.0 : 1.6 : 1  long, wide, shallow
+ *      M3  dorsal spine + bridge   z -540.. +40   580 m   2.7 : 0.9 : 1  tall and blocky
+ *      M4  stern block + drives    z -700..-400   300 m   1.4 : 2.3 : 1  short and wide
  *
  *    The size ladder on z extent is 1.65x, 1.63x, 1.73x - every step clears the 1.6
  *    the rule asks for, so the eye can rank them instead of giving up and seeing one
@@ -67,9 +67,19 @@
  *    now stops 36 m short of the stem and its stays run up and FORWARD to meet it.
  *    Tooling hangs off a bow; it is not the bow.
  *
- * 4. HOLES YOU CAN SEE STARS THROUGH. Voids rather than recesses, because each is
- *    open on at least two faces, so as the camera orbits, background passes through:
- *      - the salvage bay throat, 210 x 182 m, open ventral AND aft
+ * 4. HOLES YOU CAN SEE STARS THROUGH, AND NOW IN BOTH VIEWS. Voids rather than
+ *    recesses, because each is open on at least two faces, so as the camera orbits,
+ *    background passes through. Measured by tools/silhouette.mjs against R2.6's
+ *    6-12% of the bounding box: SIDE 6.47%, PLAN 6.30%, widest clear spans 115 and
+ *    88 m, so both read at the 43 m/px max-zoom limit (R2.7). The plan figure was
+ *    0.65% at round-one review, which is what "the plan view is still a slug" meant,
+ *    and the three changes that bought it are all the same change - MOVE MASS
+ *    OUTBOARD, because a hole needs something on BOTH sides of it:
+ *      - the bay rails stand 68 m clear of the flank, tied by five transverse frames
+ *      - the drive pods stand 44 m clear of the stern block, on TWO pylons each, so
+ *        the sky between the pylons is bounded on four sides instead of being a notch
+ *      - the armour spine overhangs the waist by 32 m on three exposed frames
+ *      - the salvage bay throat, 210 x 192 m, open ventral AND aft
  *      - the four uneven rail bays between the bay's five frames, and the slot above
  *        the tow track where it hangs clear of the keel
  *      - the cutter yoke's mouth, closed off by the forestay

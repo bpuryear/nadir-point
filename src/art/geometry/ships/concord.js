@@ -283,6 +283,33 @@ function frigateParts({ lod }) {
       { pos: [0, 24, -8], rot: [0.30, 0, 0] });
   }
 
+  // --- 2b. THE OUTRIGGER, AND THERE IS ONLY ONE OF IT ----------------------
+  //
+  // Round-one blind review: "Destroyer, escort, frigate and corvette are four sizes
+  // of the same swept arrowhead ... give each Concord class one non-scalable
+  // structural idea the others do not have." Measured with both hulls normalised to
+  // 200 m, corvette against frigate was the closest pair in the navy at 8.9 m of
+  // mean outline divergence, i.e. under two pixels at the review scale.
+  //
+  // This is the frigate's idea: a SINGLE auxiliary nacelle on a cantilevered pylon,
+  // starboard only, carrying the sensor tender's power plant. It is non-scalable
+  // because it is asymmetric - you cannot get it by making a corvette bigger - and
+  // it is the only bilaterally unequal hull in either navy, which also means the
+  // Meridian is the one class you can tell which way up and which way round it is
+  // from a single glance at a plan contact.
+  B.add('core', 'hull', G.taperedWedge({
+    length: 124, width0: 12, height0: 12, width1: 7, height1: 8, shear: 2.0, chamfer: 2.6, detail: D,
+  }), { pos: [37, -11, -66] });
+  B.add('core', 'plating', G.panelledSlab({ width: 20, height: 4.4, depth: 13, chamfer: 1.6, detail: D }),
+    { pos: [26, -8, -30] });
+  if (full) {
+    B.add('core', 'plating', G.panelledSlab({ width: 18, height: 3.6, depth: 11, chamfer: 1.4, detail: D }),
+      { pos: [26, -8, 14] });
+    B.add('core', 'greeble', G.hexStrut({ length: 15, radius: 1.6, axis: 'x', detail: D }),
+      { pos: [26, -13, -8] });
+  }
+  B.add('engine', 'emissive', glowSlot(5.0, 3.4), { pos: [37, -9.6, -67.4], rot: [0, PI, 0] });
+
   // --- 3. ventral strakes, swept FORWARD -----------------------------------
   for (const s of [-1, 1]) {
     B.add('core', 'plating', bladePlate(s > 0 ? MR_STRAKE : mirrorOutline(MR_STRAKE), 2.6), { pos: [0, -8.0, 0] });

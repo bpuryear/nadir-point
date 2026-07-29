@@ -148,5 +148,66 @@ for (const p of pairs.slice(0, 10)) {
 }
 console.log(`  ${bad.length ? `*** ${bad.length} PAIR(S) TOO CLOSE ***` : 'every pair separated'}`);
 
+// ---------------------------------------------------------------------------
+// INTRA-FACTION DIVERGENCE, AND A HIGHER BAR FOR IT
+// ---------------------------------------------------------------------------
+//
+// Round-one blind review, on docs/probes/ships.png: "Concord fails class-vs-class
+// silhouette distinguishability. Destroyer, escort, frigate and corvette are four
+// sizes of the same swept arrowhead ... The faction split is excellent; the
+// intra-faction split is not." The audit above passed every one of those pairs,
+// and both things were true at once, because the whole-fleet gate is set at ONE
+// PIXEL at the 30 px read - which is the floor for "these are not literally the
+// same shape", not for "a player can tell these apart in a fleet".
+//
+// The distinction that matters: a Coalition hull next to a Concord hull is
+// separated by design philosophy before it is separated by outline - slab armour
+// and external structure against swept continuous surfaces - so a one-pixel
+// outline gap there is backed up by everything else in the frame. Two Concord
+// hulls have none of that backing. They share faction hue, faction material,
+// faction surface treatment and faction plate language, so the OUTLINE IS THE
+// ONLY CHANNEL LEFT, and it has to carry the whole load on its own.
+//
+// So the bar inside a faction is half a pixel more of mean and twice the peak, and
+// it is reported per faction so a regression names a navy rather than a fleet.
+// Strike craft are excluded HERE and only here. The fleet-wide table above keeps
+// them, because a 200 m-normalised fighter against a 200 m-normalised frigate is a
+// comparison the silhouette sheet genuinely makes. But an 18 m fighter is never the
+// contact a player mistakes for a 480 m destroyer in a fleet - the thing this gate
+// exists to prevent - and holding a four-part fighter to a warship's outline budget
+// buys nothing that a reviewer would ever see.
+const INTRA = { mean: CLASS_DIVERGENCE.mean * 1.5, max: CLASS_DIVERGENCE.max * 2 };
+let intraFailed = false;
+
+console.log('\nINTRA-FACTION DIVERGENCE  (two hulls of the same navy share hue, material and'
+  + '\nplate language, so the outline is the only channel left and the bar is raised)');
+console.log(`  mean >= ${(INTRA.mean * REF).toFixed(1)} m    max >= ${(INTRA.max * REF).toFixed(1)} m   at the 200 m reference length\n`);
+
+for (const faction of ['coalition', 'concord']) {
+  const own = sigs.filter((x) => x.faction === faction && !x.id.endsWith('strikecraft'));
+  const rows2 = [];
+  for (let i = 0; i < own.length; i++) {
+    for (let j = i + 1; j < own.length; j++) {
+      const d = silhouetteDivergence(own[i].sig, own[j].sig, REF);
+      rows2.push({
+        pair: `${own[i].id.replace(faction + '_', '')} / ${own[j].id.replace(faction + '_', '')}`,
+        mean: +d.mean.toFixed(1), max: +d.max.toFixed(1),
+        ok: d.mean >= INTRA.mean * REF && d.max >= INTRA.max * REF,
+      });
+    }
+  }
+  rows2.sort((x, y) => x.mean - y.mean);
+  const bad2 = rows2.filter((r) => !r.ok);
+  if (bad2.length) { intraFailed = true; failed = true; }
+  console.log(`  ${faction.toUpperCase()}  ${rows2.length} pairs, three closest:`);
+  for (const r of rows2.slice(0, 3)) {
+    console.log(`    ${r.pair.padEnd(34)} mean ${String(r.mean).padStart(5)}  max ${String(r.max).padStart(5)}  ${r.ok ? 'ok' : 'TOO CLOSE'}`);
+  }
+  for (const r of bad2.slice(3)) {
+    console.log(`    ${r.pair.padEnd(34)} mean ${String(r.mean).padStart(5)}  max ${String(r.max).padStart(5)}  TOO CLOSE`);
+  }
+}
+if (intraFailed) console.log('  *** INTRA-FACTION SEPARATION FAILED ***');
+
 console.log(`\n${rows.length} classes   ${failed ? '*** AUDIT FAILED ***' : 'ALL CLASSES WITHIN BUDGET AND ON LINE'}`);
 process.exit(failed ? 1 : 0);

@@ -30,10 +30,15 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
  */
 const LIVE_SERVERS = new Set();
 
+function killServer(proc) {
+  // Spawned detached, so the pid is a process-group leader. Killing the NEGATIVE pid
+  // takes the group, which is the only way to be sure nothing vite spawned survives.
+  try { process.kill(-proc.pid, 'SIGKILL'); } catch { /* group already gone */ }
+  try { proc.kill('SIGKILL'); } catch { /* already gone */ }
+}
+
 function killAllServers() {
-  for (const proc of LIVE_SERVERS) {
-    try { proc.kill('SIGKILL'); } catch { /* already gone */ }
-  }
+  for (const proc of LIVE_SERVERS) killServer(proc);
   LIVE_SERVERS.clear();
 }
 
@@ -105,7 +110,7 @@ export async function startServer({ port = 5173, mode = 'dev', build = false } =
     // the dev server's HMR full-reloads the page mid-settle whenever another stream
     // writes to the tree, which the harness would otherwise report as a boot failure.
     await new Promise((resolve, reject) => {
-      const b = spawn('npx', ['vite', 'build', '--logLevel', 'error'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+      const b = spawn(path.join(ROOT, 'node_modules', '.bin', 'vite'), ['build', '--logLevel', 'error'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
       let err = '';
       b.stderr.on('data', (d) => { err += d.toString(); });
       b.stdout.on('data', (d) => { err += d.toString(); });
@@ -122,11 +127,24 @@ export async function startServer({ port = 5173, mode = 'dev', build = false } =
     console.warn(`[harness] port ${port} is in use; using ${actualPort} instead`);
   }
 
-  const cmd = mode === 'dev'
-    ? ['npx', ['vite', '--port', String(actualPort), '--host', '127.0.0.1', '--strictPort']]
-    : ['npx', ['vite', 'preview', '--port', String(actualPort), '--host', '127.0.0.1', '--strictPort']];
+  /*
+   * Spawn the vite binary DIRECTLY, never through npx.
+   *
+   * `spawn('npx', ['vite', ...])` makes npx the direct child and vite a GRANDCHILD, so
+   * proc.kill() kills npx and leaves vite running. The evidence was unmistakable once
+   * looked for: every orphan had PPID 1, reparented to init after its real parent died.
+   * That is why the cleanup handlers added earlier looked correct and swept nothing —
+   * they were faithfully killing a process that was not holding the port.
+   *
+   * `detached: true` plus killing the negative pid takes out the whole process group,
+   * so anything vite itself spawns goes with it.
+   */
+  const viteBin = path.join(ROOT, 'node_modules', '.bin', 'vite');
+  const args = mode === 'dev'
+    ? ['--port', String(actualPort), '--host', '127.0.0.1', '--strictPort']
+    : ['preview', '--port', String(actualPort), '--host', '127.0.0.1', '--strictPort'];
 
-  const proc = spawn(cmd[0], cmd[1], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  const proc = spawn(viteBin, args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   LIVE_SERVERS.add(proc);
   let out = '';
   let exited = null;
@@ -148,16 +166,16 @@ export async function startServer({ port = 5173, mode = 'dev', build = false } =
     } catch { /* not up yet */ }
     await new Promise((r) => setTimeout(r, 350));
   }
-  proc.kill('SIGKILL');
+  killServer(proc);
   LIVE_SERVERS.delete(proc);
   throw new Error(`[harness] server failed to start on ${actualPort} within 45s\n${out}`);
 }
 
 export async function stopServer(server) {
   if (!server?.proc) return;
-  server.proc.kill('SIGTERM');
+  try { process.kill(-server.proc.pid, 'SIGTERM'); } catch { /* gone */ }
   await new Promise((r) => setTimeout(r, 300));
-  try { server.proc.kill('SIGKILL'); } catch { /* already gone */ }
+  killServer(server.proc);
   LIVE_SERVERS.delete(server.proc);
 }
 
