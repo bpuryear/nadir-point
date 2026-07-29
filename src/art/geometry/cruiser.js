@@ -1083,7 +1083,7 @@ function buildBay(B, D, full, rng) {
         B.add('core', 'greeble', G.greebleBand({
           length: 88, width: 15, height: 11, boxes: 2, conduits: 1,
           rng: rng.fork(`bay:track:${s}:${z}`), detail: D,
-        }), { pos: [s * (BAY.railIn - 6), -70, z], rot: [0, 0, s * 0.4] });
+        }), { pos: [s * (BAY.railIn + 12), -64, z], rot: [0, 0, s * 0.4] });
       }
     }
   }

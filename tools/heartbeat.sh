@@ -84,7 +84,11 @@ while true; do
 
   if [ $(( now - last_beat )) -gt "$BEAT_SECONDS" ]; then
     if [ "$incomplete" -eq 1 ]; then
-      echo "heartbeat: agents working ($detail ), last write $((age/60))m ago"
+      # `age` is the OLDEST live workflow, not the newest write. Saying "last write"
+      # made a healthy run look stale: with one finished-with-error workflow sitting at
+      # 48m and two others writing continuously, the summary read "last write 48m ago".
+      # The per-workflow ages in $detail are the real signal.
+      echo "heartbeat: agents working ($detail ), stalest $((age/60))m"
     else
       echo "heartbeat: no agents outstanding"
     fi
