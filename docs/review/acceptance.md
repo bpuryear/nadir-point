@@ -11,10 +11,10 @@ Last updated: after the fleet-and-modules measurement pass (pass 8).
 
 | Criterion | State | Evidence |
 |---|---|---|
-| 60 fps at 1440p on an Apple laptop | **UNVERIFIED** | No GPU in this environment. See below. |
-| 1% lows above 50 fps | **UNVERIFIED** | Same. |
+| 60 fps at 1440p on an Apple laptop | **PASS** | Measured on hardware, darwin/ANGLE-Metal, benchmark scene at 2560×1440: **82.8 fps mean** at quality=high, 102.1 at medium. `tools/harness.mjs#rasterMode()` selects the rasteriser and `fpsIsMeaningful()` gates the claim, so this figure cannot be quoted off a SwiftShader run by accident — under `NP_RASTER=swiftshader` the tool declines to assert it again. |
+| 1% lows above 50 fps | **PASS** | Same run: p99 frame 14.6 ms = **68.5 fps** at high, 78.1 at medium. `npm run bench` now asserts both criteria and fails the budget on either. |
 | Benchmark scene: 200+ debris, 12 combat ships, 1 capital, full post chain | **PASS** | `src/probes/benchmark.js`: 930 instanced objects, 12 combat ships actively engaging, 1 fully-fitted capital, full post chain. |
-| Draw calls under a committed ceiling, measured and reported | **FAIL** | Committed 320, measured **499** in the benchmark scene (`docs/review/benchmark.json`, the machine-written record). Reported as a miss with diagnosis in `docs/review/benchmark.md`. The assembled game at boot framing measures **119** (`npm run smoke`). This row previously said 650 and 143; both were earlier runs copied forward, and 650 also disagreed with line 101 of this same file. `benchmark.md` still carries the stale figures and disagrees with `benchmark.json` beside it on resolution, frame count and mesh count too — the `.md` was written from a different run than the `.json`. Trust the `.json`. |
+| Draw calls under a committed ceiling, measured and reported | **PASS at medium, FAIL at high — and the gap is one specific pass** | Committed 320. Measured on hardware: **423 at quality=high, 231 at quality=medium**. The difference is **192 draw calls and 55,102 triangles, which is GTAO's depth-normal prepass rendering the whole scene a second time** — 45% of the high count. This row previously said 499, and 650 before that; both were earlier runs copied forward. The suspicion recorded here that "a meaningful fraction is one scene counted twice" was correct, and the reason nobody could confirm it is that `?quality=` had never worked: `Renderer` built `PostChain` before resolving `opts.quality`, so the constructor default of `'high'` always won and `renderer.quality` was read by nothing (fixed, `src/render/renderer.js`). **Do not do the three geometry-side merges `benchmark.md` ranks** — they were prioritised against a number inflated by nearly half, and the scene's own geometry is already inside the ceiling. What is open is a rendering-architecture question: whether an AO prepass should count against a ceiling written to bound scene complexity, and whether it can reuse the main depth buffer. The assembled game at boot framing measures **119** (`npm run smoke`). |
 
 ### Why frame rate is unverified, stated plainly
 
@@ -53,9 +53,9 @@ measurement now are, and the tools that settle them are committed
 
 | Criterion | State | Evidence |
 |---|---|---|
-| Cruiser reads as kilometres long in a wide shot | **UNVERIFIED** | The wide capture timed out under software rasterisation before it rendered. Needs a clean capture run. |
+| Cruiser reads as kilometres long in a wide shot | **FAIL** | It renders now, and it renders **essentially black** — `contrast 0.012`, 97%+ near-black, no gas giant, no star, no nebula. This row was UNVERIFIED only because under software rasterisation the capture timed out before producing a frame, so the failure had never been seen. `tools/widediag.mjs wide` locates it exactly: the shot's yaw solve is **correct** — the giant is dead centre horizontally at `ndc.x 0.00` — and pitch is what loses it. At `zoomT 0.86` the camera looks **58° below horizontal** against a **23° half-FOV**, putting the giant at `ndc.y 2.21`, 43.2° off-axis, with an angular radius of 39.6° sitting just above the top edge. The star is 109° off-axis. This is a design collision rather than a bug: **"maximum tactical zoom" and "the frame that sells the game" are the same control and want opposite things**, because the celestials sit near the plane the tactical camera pitches down onto. Homeworld's scale comes from looking *across* the plane at something enormous, not down at it. |
 | At least three independent scale cues in any wide frame | **PARTIAL** | Built and present: running lights at a single game-wide 40 m spacing — **which was not true until this pass**: the faction fleet was wearing them at 6 m while the cruiser wore them at 40, so the one cue whose whole job is to be a ruler was lying by a factor of 6.5 about every enemy in the frame (D28) — parallax debris at multiple altitudes, celestial bodies at true angular size, atmospheric perspective. Not yet confirmed in a rendered wide frame. |
-| Zooming close to max distance never breaks the sense of size | **UNVERIFIED** | Needs the close/wide capture pair. |
+| Zooming close to max distance never breaks the sense of size | **FAIL** | The `close` half of the pair also renders essentially black (`contrast 0.013`), and unlike `wide` the cause is *not* yet found. Ruled out by measurement rather than argument, all via `tools/widediag.mjs close`: the player is dead centre and on screen (`ndc [0,0]`) at **1203 m from a 1402 m hull**, so it should more than fill the frame; the key is **frontal, not behind** (dot with camera forward **+0.978**, the lit side); frustum culling removes **nothing** (0 of 47 meshes); and `cruiser:lod1`/`cruiser:lod2` are hidden by the LOD system exactly as they should be, leaving LOD0 live. Something narrower is at fault and the instrument to find it is committed. |
 
 ## Feel
 
@@ -79,10 +79,29 @@ measurement now are, and the tools that settle them are committed
 
 | | count |
 |---|---|
-| PASS | 9 |
-| PARTIAL | 3 |
-| FAIL | 1 |
-| UNVERIFIED | 6 |
+| PASS | 11 |
+| PARTIAL | 4 |
+| FAIL | 2 |
+| UNVERIFIED | 2 |
+
+**Nineteen rows, re-counted after the hardware pass.** Five rows moved, and every one of
+them moved because the environment changed rather than because the game did — the prior
+container had no GPU, so six rows were unverifiable by construction and two failures were
+invisible because their captures timed out before rendering.
+
+- Both performance rows moved UNVERIFIED → **PASS** (82.8 fps mean, 68.5 fps 1% low).
+- Draw calls moved FAIL → **split**: PASS at medium, FAIL at high, with the whole gap
+  attributed to one pass.
+- Both scale-capture rows moved UNVERIFIED → **FAIL**. That is not a regression. It is two
+  failures becoming visible for the first time, which is strictly better than not knowing.
+
+The lesson this file has recorded three times now — that every criterion which moved off
+PARTIAL moved because someone wrote a tool instead of a paragraph — held a fourth time,
+and this round it also cut the other way: `tools/probe.mjs cruiser`'s long-standing
+DETACHED GEOMETRY report was **the checker, not the geometry**. It shrank every bounding
+box by 0.5 m before testing intersection, so anything bolted flat to a deck read as
+floating; `core/hull#3` sits on `core/hull#2` with a measured separation of **0.000 m**.
+A tool can be wrong with just as much confidence as prose.
 
 Nineteen rows. This table previously read 5 PARTIAL and 4 UNVERIFIED, which counted to
 19 but matched no actual row set — the body has always had three PARTIALs (rows 46, 57,
