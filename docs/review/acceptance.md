@@ -53,9 +53,9 @@ measurement now are, and the tools that settle them are committed
 
 | Criterion | State | Evidence |
 |---|---|---|
-| Cruiser reads as kilometres long in a wide shot | **FAIL** | It renders now, and it renders **essentially black** — `contrast 0.012`, 97%+ near-black, no gas giant, no star, no nebula. This row was UNVERIFIED only because under software rasterisation the capture timed out before producing a frame, so the failure had never been seen. `tools/widediag.mjs wide` locates it exactly: the shot's yaw solve is **correct** — the giant is dead centre horizontally at `ndc.x 0.00` — and pitch is what loses it. At `zoomT 0.86` the camera looks **58° below horizontal** against a **23° half-FOV**, putting the giant at `ndc.y 2.21`, 43.2° off-axis, with an angular radius of 39.6° sitting just above the top edge. The star is 109° off-axis. This is a design collision rather than a bug: **"maximum tactical zoom" and "the frame that sells the game" are the same control and want opposite things**, because the celestials sit near the plane the tactical camera pitches down onto. Homeworld's scale comes from looking *across* the plane at something enormous, not down at it. |
+| Cruiser reads as kilometres long in a wide shot | **PARTIAL** | The frame renders — `luma 0.052, contrast 0.105`, zero capture guards — and it is now the strongest image the project has: the banded giant filling the frame with its ring plane, the cruiser crossing it in silhouette, asteroids and debris at three depths. It was black before, and it was black for a **design collision, not a bug**: at `zoomT 0.86` the tactical camera looks 58° below horizontal against a 23° half-FOV, so the giant sat at `ndc.y 2.21`, 43.2° off-axis, with a 39.6° angular radius just above the top edge. The yaw solve was always correct (`ndc.x 0.00`). Fixed by giving the cinematic frame its own framing rather than changing how the tactical camera feels. **Held at PARTIAL, and the distinction matters:** what the frame now sells is the scale of the *system*, not the length of the *ship*. At that distance the cruiser is a speck, its 40 m running-light spacing is far below a pixel, and nothing in frame is a ruler against the hull. That is a legitimate Homeworld composition and it is not what this row asks for. To close it honestly the wide frame needs something of **known size near the hull** — an escort, a wreck, a station — so the eye has a comparison, or the row should be re-worded to be about system scale and a separate row added for hull length. |
 | At least three independent scale cues in any wide frame | **PARTIAL** | Built and present: running lights at a single game-wide 40 m spacing — **which was not true until this pass**: the faction fleet was wearing them at 6 m while the cruiser wore them at 40, so the one cue whose whole job is to be a ruler was lying by a factor of 6.5 about every enemy in the frame (D28) — parallax debris at multiple altitudes, celestial bodies at true angular size, atmospheric perspective. Not yet confirmed in a rendered wide frame. |
-| Zooming close to max distance never breaks the sense of size | **FAIL** | The `close` half of the pair also renders essentially black (`contrast 0.013`), and unlike `wide` the cause is *not* yet found. Ruled out by measurement rather than argument, all via `tools/widediag.mjs close`: the player is dead centre and on screen (`ndc [0,0]`) at **1203 m from a 1402 m hull**, so it should more than fill the frame; the key is **frontal, not behind** (dot with camera forward **+0.978**, the lit side); frustum culling removes **nothing** (0 of 47 meshes); and `cruiser:lod1`/`cruiser:lod2` are hidden by the LOD system exactly as they should be, leaving LOD0 live. Something narrower is at fault and the instrument to find it is committed. |
+| Zooming close to max distance never breaks the sense of size | **PARTIAL** | Both ends of the pair render for the first time, so this is testable at all now. `close` went from `luma 0.010 / contrast 0.013 / 99.31% near-black` to **`luma 0.169 / contrast 0.262`, zero capture guards fired** — see D67. The pair holds: the hull fills the close frame with bridge tower, cargo pods and hull number legible, and the wide frame keeps it in scale against the giant. Held at PARTIAL rather than PASS for one honest reason: **"never breaks" is a claim about a continuous zoom, and what is measured is two endpoints.** Nothing samples the intermediate range, and the LOD switch between them is exactly where a size read would break. A tool that walked the zoom curve and measured apparent size against distance would close this properly. Two corrections worth recording: the earlier diagnosis that ruled out the key light (`dot +0.978`, "the lit side") was **measured at the wrong POI** — `widediag` hard-coded `capture=1` while the shot pins `poi=giant-orbit`, so it booted at the graveyard, where the key is on the shadow side at −0.864. And the cause was never in the frame at all: an unclamped varying in an *off-screen* engine plume. |
 
 ## Feel
 
@@ -80,9 +80,20 @@ measurement now are, and the tools that settle them are committed
 | | count |
 |---|---|
 | PASS | 11 |
-| PARTIAL | 4 |
-| FAIL | 2 |
+| PARTIAL | 6 |
+| FAIL | 0 |
 | UNVERIFIED | 2 |
+
+**No outright failures remain**, which is worth stating carefully rather than
+celebrating. Both former FAILs were the *same* defect — D67, one unclamped varying in an
+off-screen engine plume returning NaN into an additively-blended pass and taking the whole
+composite to black — and both moved to PARTIAL rather than PASS, because a frame that
+renders is a precondition for judging it, not a judgement.
+
+The two PARTIALs are honest about different things. The wide frame sells the scale of the
+*system* and not the length of the *ship*, which is a real distinction and not a
+technicality. The close/wide pair measures two endpoints of a zoom whose middle is where a
+size read would actually break.
 
 **Nineteen rows, re-counted after the hardware pass.** Five rows moved, and every one of
 them moved because the environment changed rather than because the game did — the prior
