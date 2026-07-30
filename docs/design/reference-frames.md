@@ -76,11 +76,38 @@ room and let the hull read *against* it.
 | # | Rule | Measurable target |
 |---|---|---|
 | R1 | **The field is lit and coloured.** Space is never black. | Background (non-hull, non-UI) pixels: median luma ≥ 0.10, and ≥ 40% of frame above luma 0.06. Today: 85% below 0.02. |
-| R2 | **One hue owns the field**, at real saturation. | Background chroma median ≥ 0.18 in a hue band ≤ 60° wide. |
+| R2 | **One hue owns the field**, at real saturation. | See the correction below — the flat 0.18 was wrong. Background chroma median ≥ **0.12 for a green-dominant field, ≥ 0.18 for red/blue/magenta-dominant**, in a hue band ≤ 60° wide. |
 | R3 | **The hull answers the field**, not matches it. | Mean hull hue ≥ 60° from mean background hue, OR (EVE Frontier case) hull is the value contrast at ≥ 0.25 luma above field median. |
 | R4 | **Drives are a primary read.** | Engine plume length ≥ 1.5 hull lengths at cruise; plume peak chroma ≥ 0.30. |
 | R5 | **Dark masses carry the warm accent.** | Emissive/accent pixels concentrated in the darkest tier, not sprayed evenly. |
 | R6 | **Hulls carry painted colour blocking**, not only value and wear. | Faction identity legible as *hue* at 2 hull-lengths, not only as outline. |
+
+### Correction to R2 — the original number was arithmetically impossible here
+
+**R2 was first written as a flat "chroma ≥ 0.18" for any field. That target cannot be met by
+a green-dominant field at R1's luminance, and the graveyard's authored field is green.**
+
+Luminance is `0.2126·R + 0.7152·G + 0.0722·B`. Green carries **71.5%** of it. So a field whose
+hue is green reaches R1's median luma of 0.10 at roughly `G ≈ 0.14` with R and B near zero,
+which caps its chroma at about **0.12–0.14**. Asking for 0.18 requires spreading the channels,
+which raises luminance past the point where the field still reads as *field* rather than as
+fog. A red-dominant field has the opposite problem in our favour: red carries only 21.3% of
+luminance, so it reaches luma 0.10 at `R ≈ 0.47` and has enormous chroma headroom.
+
+That is why every one of the owner's six references that goes saturated goes **red, orange,
+magenta or teal** — and why EVE Frontier, the darkest of them, is deep **red**. None of them
+is green-dominant. The physics of the luminance weights is quietly steering that choice.
+
+**So this is a real fork, not a tuning detail, and it belongs to the owner:**
+
+- **Keep the graveyard green** (`pois.js` authors it as "a sick derelict green", which is good
+  fiction) and accept chroma ~0.12–0.14 there, with R2 restated per-hue as above.
+- **Or re-hue the graveyard** toward rust/amber/red, which would hit 0.18 easily, match the
+  EVE Frontier reference most closely, and agree with the ship's own warm amber identity —
+  at the cost of the derelict-green idea.
+
+Recorded because the original R2 was mine, it was written without checking achievability, and
+a stream chasing it on a green field would have burned a wave on an impossible number.
 
 ---
 
