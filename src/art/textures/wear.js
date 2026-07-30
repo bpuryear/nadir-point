@@ -57,9 +57,32 @@ export function wear(opts = {}) {
   // --- edge wear ---
   const edgeWear = new Float32Array(n);
   if (panel) {
+    /**
+     * "NOT DOWN IN THE GROOVE" IS NOW TRUE. IT USED TO BE A COMMENT.
+     *
+     * The gate was `smoothstep(0.15, 0.45, panel.height)` and the height field's plate
+     * plane is 0.58, so a groove floor — plate minus the tier's groove depth, 0.509 on
+     * the 109 m armour tile and 0.438 on the 16 m machinery tile — sat at or above the
+     * upper edge of that ramp and took FULL edge wear. The layer whose job is to strip
+     * the coating off PROUD metal was therefore lerping the bottom of every seam
+     * towards `pal.bare` (Y 0.576), i.e. painting the plate joint back in at nearly the
+     * plate's own value.
+     *
+     * Measured by ablation on the generated albedo canvas, player / hull / tier 2,
+     * before this change: p05 0.382 against a plate median of 0.394 with the layer on,
+     * and 0.311 with `pal.wear.edge = 0`. Seven tenths of the authored groove was being
+     * refilled. On `hullDark` the seam was invisible outright — p01, p25 and p50 all
+     * read 0.146.
+     *
+     * The test is against the plate plane the panel generator publishes, so it cannot
+     * drift out of agreement with the tier's groove depth again: proud of `flat` is a
+     * lip and gets wear, below it is a groove and does not. The 0.010 upper edge is
+     * about a third of a strake-seam lip (0.025 on the armour tile), so a lip is fully
+     * worn well before its crest.
+     */
+    const flat = panel.flat ?? 0.58;
     for (let i = 0; i < n; i++) {
-      // Bright where the plate lip is (edge proximity) but not down in the groove.
-      const lip = panel.edge[i] * smoothstep(0.15, 0.45, panel.height[i]);
+      const lip = panel.edge[i] * smoothstep(-0.006, 0.010, panel.height[i] - flat);
       edgeWear[i] = saturate01(lip * (0.35 + breakup[i] * 1.5) * o.edge * amt * 1.9);
     }
   }

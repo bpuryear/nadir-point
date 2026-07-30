@@ -79,6 +79,23 @@ const H = {
 };
 
 /**
+ * THE PLATE HEIGHT, EXPORTED, BECAUSE TWO CALLERS WERE GUESSING IT.
+ *
+ * `wear.js` gated edge wear with `smoothstep(0.15, 0.45, panel.height)` and its own
+ * comment said that meant "not down in the groove". It did not. A groove floor is
+ * `H.flat - grooveDepth`, and `grooveDepth` is derived from the tile — 0.071 on the
+ * 109 m armour tile — so the floor sits at 0.509, which is ABOVE 0.45 and therefore
+ * took FULL edge wear. Measured by ablation on the generated albedo (player, hull,
+ * tier 2): with the wear layer on, the map's 5th percentile is 0.382 against a plate
+ * median of 0.394; with `pal.wear.edge = 0` it is 0.311. The layer was filling the
+ * albedo groove back in with bare metal to within 3% of the plate value.
+ *
+ * The only correct test is against the plate plane itself, so it is published rather
+ * than reconstructed: proud of `flat` is a lip, below it is a groove.
+ */
+export const PANEL_FLAT = H.flat;
+
+/**
  * ---------------------------------------------------------------------------
  * A SEAM IS A STEP, NOT A SCRIBED LINE, AND THE OLD ONE WAS SUB-PIXEL
  * ---------------------------------------------------------------------------
@@ -185,6 +202,11 @@ export const PANEL_DEFAULTS = {
    */
   roughPlateShare: 0.25,
   /**
+   * How much of the per-plate VALUE budget goes on the plate rather than the strake.
+   * The inverse split to roughness, and the note on `plate.val` says why.
+   */
+  valPlateShare: 0.70,
+  /**
    * Seam width, METRES — the flat dark floor of the groove, before the lip and the
    * chamfer either side. hullMaps.js sets this from the strake height so it scales
    * with the surface; the default here is only for direct callers.
@@ -288,6 +310,8 @@ export function panelLayout(rng, opts = {}) {
     // The strake's own roughness shift. This is the LOW-frequency three quarters of
     // the budget: a strake is painted, weathered and rubbed as one piece.
     const strakeRough = (sr.next() - 0.5) * 2;
+    // The strake's own VALUE shift, the minority share of the plate-value budget.
+    const strakeVal = (sr.next() - 0.5) * 2;
 
     const plates = [];
     for (let p = 0; p < nPlates; p++) {
@@ -325,6 +349,28 @@ export function panelLayout(rng, opts = {}) {
          * assumes, so +/-4% authored is +/-4% rendered.
          */
         tone: 1 + (sr.next() - 0.5) * 2 * o.toneSpread * 0.6,
+        /**
+         * THE PER-PLATE VALUE STEP, AS A SIGNED -1..1 WEIGHT AND NOTHING ELSE.
+         *
+         * `tone` above cannot carry this and that is not a style preference. `tone` is
+         * the parameter of a lerp between `base` and `alt`, so the value it can move a
+         * plate by is bounded by how far apart those two colours are — on the player
+         * hull `base` 0x716c63 and `baseAlt` 0x625e56 are 0.055 of sRGB value apart and
+         * `plateContrast` spends only 0.40 of that, i.e. +/-0.011. Measured on the
+         * generated map, the hull tier's albedo IQR was 0.0106 and 97.8% of its texels
+         * sat inside ONE 0.05-wide value bin; `plating`'s IQR was exactly 0.0000.
+         *
+         * A separate signed weight lets `hullMaps.js` author the step in units of
+         * VALUE, so "+/-0.05" means +/-0.05 whatever two colours the tier happens to
+         * lerp between. `tone` keeps doing what it is for: the small HUE step between
+         * two heats of the same paint.
+         *
+         * 0.70 of the budget on the plate and 0.30 on the strake. Roughness is split
+         * the other way (0.25/0.75) on purpose — a whole strake is painted and rubbed
+         * as one piece, so FINISH is coherent along it, but plate stock arrives from
+         * different heats and it is the individual plate that carries the value.
+         */
+        val: (sr.next() - 0.5) * 2 * o.valPlateShare + strakeVal * (1 - o.valPlateShare),
         // Mechanism 3 in the header: mostly the strake's shift, with a small residue
         // per plate so the boundary is not perfectly invisible either.
         rough: strakeRough * (1 - o.roughPlateShare) + (sr.next() - 0.5) * 2 * o.roughPlateShare,
@@ -386,6 +432,7 @@ export function panelField(rng, opts = {}) {
 
   const height = field(size, H.flat);
   const tone = field(size, 1);
+  const plateVal = field(size, 0);
   const roughVar = field(size, 0);
   const edge = field(size, 0);
 
@@ -591,6 +638,7 @@ export function panelField(rng, opts = {}) {
       height[i] = h;
       edge[i] = e;
       tone[i] = plate.tone * s.tone;
+      plateVal[i] = plate.val;
       roughVar[i] = plate.rough;
     }
   }
@@ -616,7 +664,12 @@ export function panelField(rng, opts = {}) {
     ao[i] = saturate01(0.62 + (height[i] - blurred[i]) * 2.4 + height[i] * 0.28);
   }
 
-  return { height, tone, roughVar, edge, ao, size, layout: lay.layout, strakes };
+  return {
+    height, tone, plateVal, roughVar, edge, ao, size, layout: lay.layout, strakes,
+    // The plate plane and the groove depth, in the height field's own units, so a
+    // caller can tell a proud lip from a groove floor without guessing. See PANEL_FLAT.
+    flat: H.flat, grooveH: grooveDepth,
+  };
 }
 
 /**
@@ -644,6 +697,7 @@ export function radiatorField(rng, opts = {}) {
 
   const height = field(size, H.flat);
   const tone = field(size, 1);
+  const plateVal = field(size, 0);
   const roughVar = field(size, 0);
   const edge = field(size, 0);
 
@@ -706,7 +760,12 @@ export function radiatorField(rng, opts = {}) {
     ao[i] = saturate01(0.58 + (height[i] - blurred[i]) * 2.6 + height[i] * 0.26);
   }
 
-  return { height, tone, roughVar, edge, ao, size, layout: { leaves: [] }, strakes: [] };
+  return {
+    height, tone, plateVal, roughVar, edge, ao, size, layout: { leaves: [] }, strakes: [],
+    // A radiator has no plate seam, so its "groove" is the channel valley: the depth
+    // the hull composer must not treat as a plate joint. Published for the same reason.
+    flat: H.flat, grooveH: channelD * 0.5,
+  };
 }
 
 /** One raised fastener head, wrapped. */

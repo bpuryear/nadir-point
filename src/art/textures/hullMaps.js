@@ -203,6 +203,29 @@ function busyField(fbm, calm) {
  * plate module >= 55 m, <= 26 repeats over 1400 m) is met at 109 m and 12.8.
  */
 /**
+ * ---------------------------------------------------------------------------
+ * PASS 12: THE TABLE ABOVE IS SUPERSEDED. FEWER, TALLER STRAKES.
+ * ---------------------------------------------------------------------------
+ * Once the plate layout carried real value (see the long note above the albedo loop),
+ * the seam PITCH stopped being a free parameter: at the `--frame ship` measurement
+ * scale of about 3.6 m per pixel, `plating`'s 8.7 m strake was a 2.4-pixel grating and
+ * `hullDark`'s 11.3 m strake a 3.2-pixel one, which is the frequency `tools/
+ * surface.mjs` classifies as medium and dense. A surface cannot be a calm reserve and
+ * a two-pixel grating at the same time.
+ *
+ *   tier      tileM   strakes   strake h   plate L   aspect   repeats / 1400 m
+ *   hull      109.2      4        27.3 m    109.2 m   4.0:1        12.8
+ *   plating    67.6      4        16.9 m     67.6 m   4.0:1        20.7
+ *   hullDark   83.2      4        20.8 m     83.2 m   4.0:1        16.8
+ *   greeble    16.1      3         5.4 m     10.7 m   2.0:1        86.8
+ *
+ * The dense tier is deliberately left fine: it is the tier that is SUPPOSED to be a
+ * few pixels of alternation, and it only ever appears inside the ten bands macro.js
+ * cuts. `seamM` also comes down from 9% of the strake height to 6%, because a groove
+ * that now carries 0.13 of value does not need 9% of the surface's area as well.
+ */
+
+/**
  * The second plate tone. A plate-to-plate variance is a VARIANCE: one step of value
  * on the same paint. It is also, because of the lerp described at length in
  * `hullMaps`, half of what the surface's rendered colour actually is - so its
@@ -237,10 +260,30 @@ const altOf = (hex) => shade(hex, 0.88);
 function variantSpec(pal, variant) {
   switch (variant) {
     case 'hullDark': return {
-      // `alt` was `pal.base`, so this variant rendered at the midpoint of the
-      // near-black and the hull — a mid grey. It is the ship's THIRD VALUE and it
-      // has to actually be dark.
-      base: pal.baseDark, alt: shade(pal.baseDark, 1.25), surface: pal.surface.hullDark,
+      /**
+       * `alt` was `pal.base`, so this variant rendered at the midpoint of the
+       * near-black and the hull — a mid grey. It is the ship's THIRD VALUE and it
+       * has to actually be dark.
+       *
+       * PASS 12: `alt` WENT 1.25x -> 0.80x, i.e. from a quarter of a stop ABOVE the
+       * declared near-black to a third of a stop below it. Because the surface's
+       * rendered colour is the MIDPOINT of `base` and `alt` (the long note further
+       * down), `shade(baseDark, 1.25)` meant this tier rendered 12.5% brighter than
+       * the near-black `palette.js` spends four hundred words declaring. A variance
+       * about a value should straddle it, not sit on one side of it.
+       *
+       * THE ART DIRECTION ASKED FOR A LIT TARGET <= 0.14 sRGB AND THAT IS NOT
+       * REACHABLE FROM THIS FILE. Measured by ablation on the `close` frame at
+       * 2560x1440: black this tier's albedo out entirely (`shade(baseDark, 0.04)`)
+       * and the 108 579 pixels that move still render p05 0.071 / p50 0.135 /
+       * p95 0.258. So a zero-albedo hullDark lands at 0.135 at the median and 0.258
+       * at the lit end; 0.14 is the floor, not a target, and the floor is fill, rim
+       * and the F0 = 0.04 dielectric specular under an I = 14 key — none of which is
+       * in a file this stream owns. Recorded as a request to the lighting stream with
+       * the number attached, rather than chased by authoring a paint blacker than any
+       * paint. `baseDark` is Y 0.0170 linear, already below a real black coating.
+       */
+      base: pal.baseDark, alt: shade(pal.baseDark, 0.80), surface: pal.surface.hullDark,
       /**
        * `wearMul` 1.15 -> 0.55, AND THIS IS WHY THE NEAR-BLACK TIER WAS NOT NEAR
        * BLACK IN A PICTURE.
@@ -263,8 +306,8 @@ function variantSpec(pal, variant) {
        * harder than the armour belt that takes the actual abuse is backwards.
        */
       greeble: 1.0, markings: false, wearMul: 0.55,
-      tileMul: 2.6, calmAdd: 0.06, contrastMul: 0.92, rivetMul: 0.7,
-      strakes: 6, plateAspect: 6.0, stepMul: 0.9, buttChance: 0.55,
+      tileMul: 3.2, calmAdd: 0.06, contrastMul: 0.92, rivetMul: 0.7,
+      strakes: 4, plateAspect: 5.0, stepMul: 0.9, buttChance: 0.55,
     };
     // MEDIUM. Directional, and it is the tier that has BUTTS - a plate break every
     // 52 m or so, which is the frequency at which a hull looks assembled.
@@ -273,8 +316,8 @@ function variantSpec(pal, variant) {
       // `hull` tier and deleted the belt/spine value split palette.js promises.
       base: pal.plating, alt: shade(pal.plating, 0.90), surface: pal.surface.plating,
       greeble: 0.34, markings: true, wearMul: 0.85,
-      tileMul: 2.0, calmAdd: 0.02, contrastMul: 1.0, rivetMul: 0.85,
-      strakes: 6, plateAspect: 6.0, stepMul: 1.15, buttChance: 0.62,
+      tileMul: 2.6, calmAdd: 0.02, contrastMul: 1.0, rivetMul: 0.85,
+      strakes: 4, plateAspect: 5.0, stepMul: 1.15, buttChance: 0.62,
     };
     // DENSE. Isotropic on purpose - machinery is - and the ONLY tier allowed to be.
     case 'greeble': return {
@@ -386,7 +429,7 @@ function variantSpec(pal, variant) {
        */
       greeble: 0.0, markings: true, wearMul: 0.7,
       tileMul: 4.2, calmAdd: 0.34, contrastMul: 1.05, rivetMul: 0.0,
-      strakes: 6, plateAspect: 6.0, stepMul: 0.0, buttChance: 0.20,
+      strakes: 4, plateAspect: 5.0, stepMul: 0.0, buttChance: 0.20,
     };
   }
 }
@@ -453,7 +496,7 @@ export function hullMaps(opts = {}) {
    * unusually tight or unusually eroded joints still gets them.
    */
   const strakeHeightM = tileM / strakeCount;
-  const seamM = Math.max(pal.panel.grooveM ?? 0.26, strakeHeightM * 0.09);
+  const seamM = Math.max(pal.panel.grooveM ?? 0.26, strakeHeightM * 0.06);
   const panelOpts = {
     ...pal.panel,
     size,
@@ -608,14 +651,101 @@ export function hullMaps(opts = {}) {
    * all three together so the relationship between them stays intact.
    */
   const contrast = (pal.panel.plateContrast ?? 0.45) * spec.contrastMul;
-  const seamK = 0.55 * contrast;
   const cavityK = 0.45 * contrast;
+
+  /**
+   * =========================================================================
+   * THE PLATE LAYOUT IS NOW IN THE ALBEDO, AND IT IS AUTHORED IN UNITS OF VALUE
+   * =========================================================================
+   * Blocker, art direction, stated with a measurement: "the big ventral wedge is
+   * 69 312 px of continuous hull with 92.5% of those pixels inside ONE 0.05-wide
+   * luminance bin, IQR 0.013 ... Homeworld's armour belt holds roughly 0.5 of
+   * luminance range across one continuous face — plate ~0.62, seam groove ~0.14,
+   * streak ~0.35 — and ALL OF IT IS IN THE ALBEDO."
+   *
+   * That is reproducible WITHOUT RENDERING ANYTHING, which is the useful part. The
+   * generated albedo canvases, player faction, at the exact options `cruiser.js#
+   * SURFACE` asks for, measured on this tree before this pass:
+   *
+   *   variant     IQR (sRGB)   % of texels in one 0.05 bin
+   *   hull            0.0106            97.8
+   *   plating         0.0000            97.6
+   *   hullDark        0.0036            91.6
+   *   greeble         0.0224            90.4
+   *
+   * The render's 92.5% is the TEXTURE's 91.6%. No lighting is involved and no
+   * lighting change can fix it.
+   *
+   * TWO MECHANISMS, BOTH ARITHMETIC.
+   *
+   * 1. EVERY VALUE EVENT IN THIS FILE WAS MULTIPLICATIVE. The seam was
+   *    `1 - edge * 0.55 * plateContrast`, i.e. a FRACTION of whatever the plate
+   *    happened to be. On the calm armour tier (plate 0.394) that is a 0.086 drop and
+   *    on the near-black tier (plate 0.146) the identical code is a 0.028 drop —
+   *    the tier that most needs a legible joint gets the least. The reference holds
+   *    plate-to-groove as an ABSOLUTE interval, so this file now authors one:
+   *    `SEAM_DROP_V` is sRGB VALUE, not a ratio, and the multiplier is solved per
+   *    texel to land it.
+   *
+   * 2. THE PER-PLATE STEP WAS BOUNDED BY THE base/alt GAP AND SPENT 40% OF IT.
+   *    `t = 0.5 + (t0 - 0.5) * contrast` picks a point between `base` and `alt`, so
+   *    the widest value swing available on the hull tier is |0x716c63 - 0x625e56| =
+   *    0.055 of sRGB value, of which `plateContrast` 0.40 spends +/-0.011. On
+   *    `plating`, where `alt` is `shade(base, 0.90)`, the swing rounds to zero bytes
+   *    and the measured IQR is literally 0.0000. `panelLines.js#plate.val` is a
+   *    separate signed weight so the step can be stated in value and mean it.
+   *
+   * THE TENSION WITH THE OLD +/-4% CAP IS REAL AND IS RESOLVED DELIBERATELY.
+   * `PANEL_DEFAULTS.toneSpread` carries a round-one review cap of "+/-4%" written
+   * against "some plates read a full step brighter than their neighbours in no
+   * discernible pattern". That finding was about SATURATION of the base/alt
+   * normalisation — plates jumping the WHOLE way to the alt colour, i.e. a hue step,
+   * at random. The cap stays on `tone`, which is the hue step, and it is still 0.035.
+   * What is added is a value step of at most +/-0.055 sRGB with 70% of it on the
+   * plate and 30% on the whole strake, which is the art direction's own stated
+   * "+/-0.04-0.06 so adjacent plates differ from each other".
+   *
+   * This costs no triangles, no draw calls and no new feature anywhere on the hull
+   * (ARCHITECTURE.md:24-26): it is the value of surfaces that were already there.
+   */
+  /** sRGB value the groove floor sits below the plate beside it. */
+  const SEAM_DROP_V = 0.13;
+  /** ...but never more than this share of the plate's own value, so a near-black
+   *  tier gets a groove that is dark rather than a groove that is clipped black. */
+  const SEAM_MAX_FRAC = 0.78;
+  /** Peak per-plate deviation, sRGB value. The art direction's +/-0.04-0.06. */
+  const PLATE_JITTER_V = 0.055;
+  /** ...capped the same way, so the step never eats a dark tier's whole value. */
+  const PLATE_JITTER_MAX_FRAC = 0.42;
+
+  const seamDropV = SEAM_DROP_V * spec.contrastMul;
+  const jitterV = PLATE_JITTER_V * spec.contrastMul;
+  /**
+   * The plate plane and the groove depth, published by the panel generator rather
+   * than guessed here. `below` is 0 on and above the plate and 1 at the groove floor,
+   * so the seam drop lands on the FLOOR and never on the proud lip — the lip is the
+   * light half of the pair and darkening it would flatten the step this whole
+   * generator exists to make.
+   */
+  const flatH = panel.flat ?? 0.58;
+  const grooveH = Math.max(1e-4, panel.grooveH ?? 0.05);
 
   const bytes = new Uint8ClampedArray(n * 4);
   for (let i = 0; i < n; i++) {
     const t0 = saturate01((panel.tone[i] - (1 - spread)) / (2 * spread));
     const t = 0.5 + (t0 - 0.5) * contrast;
     let r = lerp(br, ar, t), g = lerp(bg, ag, t), b = lerp(bb, ab, t);
+
+    // --- the per-plate value step -------------------------------------------
+    // Solved as a multiplier so the plate keeps its hue exactly and only its value
+    // moves. A plate from a different heat of steel is a lighter plate, not a
+    // differently coloured one.
+    const lum0 = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    if (lum0 > 1e-3) {
+      const jv = (panel.plateVal?.[i] ?? 0) * Math.min(jitterV, lum0 * PLATE_JITTER_MAX_FRAC);
+      const k = (lum0 + jv) / lum0;
+      r *= k; g *= k; b *= k;
+    }
 
     // Greeble is a different part with a different finish, not the same paint.
     const gm = greeb.mask[i];
@@ -639,15 +769,46 @@ export function hullMaps(opts = {}) {
     const pt = wr.pit[i];
     if (pt > 0.01) { r = lerp(r, dr * 0.7, pt); g = lerp(g, dg * 0.7, pt); b = lerp(b, db * 0.7, pt); }
 
-    // Seams are dark because there is a hole there; do not rely on AO alone,
-    // which under a hard key with almost no ambient contributes nothing.
-    const seamDark = 1 - panel.edge[i] * seamK * smoothstep(0.0, 0.35, 1 - panel.height[i]);
-    const cavity = (1 - cavityK) + cavityK * smoothstep(0.02, 0.5, panel.height[i]);
+    /**
+     * THE SEAM, AS AN ABSOLUTE DROP IN VALUE, APPLIED LAST.
+     *
+     * Last because it is a hole: grime runs into it and streaks run over the plate,
+     * but nothing makes the bottom of a joint as bright as the plate beside it. Do
+     * not rely on AO for this — under a hard key with almost no ambient the AO term
+     * multiplies an indirect contribution that is nearly zero.
+     *
+     * THE OLD GATE WAS INERT AND SO WAS THE CAVITY TERM. `smoothstep(0.0, 0.35,
+     * 1 - height)` returns 1.0 for any height below 0.65, and the plate plane is
+     * 0.58 — so on every texel of every tier it evaluated to exactly 1 and gated
+     * nothing. `smoothstep(0.02, 0.5, height)` returns 1.0 for any height above 0.5,
+     * and the deepest recessed plate this generator draws sits at 0.543, so `cavity`
+     * was exactly 1.0 everywhere as well. Two of the three terms in this line were
+     * no-ops; the file's own comment described what they were meant to do.
+     *
+     * `below` is measured against the published plate plane and the tier's own groove
+     * depth, so it is 0 on the plate, 0 on the proud lip, and 1 at the floor.
+     */
+    const below = saturate01((flatH - panel.height[i]) / grooveH);
+    const seam = panel.edge[i] * below;
+    if (seam > 0.004) {
+      const lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      if (lum > 1e-3) {
+        const drop = Math.min(seamDropV, lum * SEAM_MAX_FRAC) * seam;
+        const k = (lum - drop) / lum;
+        r *= k; g *= k; b *= k;
+      }
+    }
+    // A plate that steps SUNK of its neighbours sits in its neighbours' shadow. This
+    // is the recess half of the old `cavity` term, keyed to how far below the plate
+    // plane the texel actually is rather than to a threshold no height in this
+    // generator ever crosses. `1 - seam` keeps it off the groove floor, which has
+    // already had the seam drop and must not be darkened twice.
+    const cavity = 1 - cavityK * below * (1 - seam);
 
     const o4 = i * 4;
-    bytes[o4] = r * seamDark * cavity;
-    bytes[o4 + 1] = g * seamDark * cavity;
-    bytes[o4 + 2] = b * seamDark * cavity;
+    bytes[o4] = r * cavity;
+    bytes[o4 + 1] = g * cavity;
+    bytes[o4 + 2] = b * cavity;
     bytes[o4 + 3] = 255;
   }
   const albedoCanvas = bytesToCanvas(bytes, size);

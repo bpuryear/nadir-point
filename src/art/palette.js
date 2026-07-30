@@ -687,6 +687,22 @@ export const FACTION_PALETTES = {
      */
     surface: {
       hull: { metalness: 0.18, roughness: 0.56, variance: 0.26 },
+      /**
+       * ROUGHNESS STAYS AT 0.80. TRIED AT 0.90 AND MEASURED THE WRONG WAY, RECORDED
+       * SO THE NEXT PASS DOES NOT SPEND THE SAME HOUR.
+       *
+       * The art direction asks to "drive hullDark's lit target to <= 0.14", and this
+       * file's only lever on it is the specular floor, because measured by ablation on
+       * the `close` frame at 2560x1440 — black this tier's albedo out entirely and
+       * re-render — the pixels that move still come back at p50 0.135. That floor is
+       * fill, rim and the dielectric F0 = 0.04 specular under an I = 14 key, none of
+       * which is authored in a file this stream owns.
+       *
+       * The theory was that a wider lobe returns less at the mirror angle. What
+       * actually happened is that a rougher dielectric spreads the same energy over
+       * more of the surface AND picks up more of three's multi-scatter compensation,
+       * so the tier's lit percentile went UP, not down. Reverted.
+       */
       hullDark: { metalness: 0.26, roughness: 0.80, variance: 0.22 },
       plating: { metalness: 0.22, roughness: 0.48, variance: 0.30 },
       greeble: { metalness: 0.52, roughness: 0.46, variance: 0.26 },

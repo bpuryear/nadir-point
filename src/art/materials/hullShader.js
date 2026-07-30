@@ -86,7 +86,7 @@ import { MACRO_DEFAULT_M, MACRO_RELIEF_M } from '../textures/macro.js';
  */
 
 /** Bumped when the GLSL below changes, so a stale program cache cannot survive it. */
-const PATCH_VERSION = 'nadir/hull-macro/5';
+const PATCH_VERSION = 'nadir/hull-macro/6';
 
 const PARS_FRAGMENT = /* glsl */`
 varying vec3 vNadirObjPos;
@@ -94,7 +94,10 @@ varying vec3 vNadirObjNrm;
 uniform sampler2D nadirMacroMap;
 /** x: 1/macroM   y: albedo drift   z: soot amount   w: ink amount */
 uniform vec4 nadirMacro;
-/** x: warp uv frequency   y: warp amplitude (uv units)   z: roughness drift   w: unused */
+/**
+ * x: warp uv frequency   y: warp amplitude ALONG the seam (uv units)
+ * z: roughness drift     w: warp amplitude ACROSS the seam (uv units)
+ */
 uniform vec4 nadirWarp;
 /**
  * x: macro height range, METRES for a full 0..1 swing of the G channel
@@ -147,10 +150,28 @@ uniform vec3 nadirSootColor;
  * the ship, and it puts a warm rim on a white aperture - which is what a warm key on
  * a white ring does anyway.
  */
+/**
+ * THE HAZARD BAND WIDENED DOWNWARD, BECAUSE THE FILTER, NOT THE AUTHOR, DECIDES WHAT
+ * VALUE ARRIVES HERE.
+ *
+ * The atlas is 4.17 m per texel and a structural stripe is a few texels wide, so a
+ * hazard mark authored at its peak value reaches this function ATTENUATED. Measured
+ * by running these exact band functions over the generated atlas: hazard covered
+ * 0.143% of it at full resolution and 0.057% after one 2x2 mip drop, with the INK
+ * share rising 0.235% -> 0.402% over the same step. The marks were not disappearing,
+ * they were being RECLASSIFIED as bone paint, which is why the ship measured 0.61%
+ * saturated albedo against a 1.8-7.0% reference range.
+ *
+ * The floor moves 0.55 -> 0.46 and the knee 0.66 -> 0.60, and macro.js draws hazard
+ * at 0.80 instead of 0.72. Together a mark stays in the hazard family down to 72% of
+ * its authored peak instead of 92%. INK draws at 0.42 and can only filter DOWNWARD
+ * from there, so it cannot climb into the widened band; the ordering argument below
+ * is untouched.
+ */
 vec3 nadirMark(float a) {
   float amount = smoothstep(0.10, 0.30, a);
-  float sen = smoothstep(0.84, 0.94, a);
-  float haz = smoothstep(0.55, 0.66, a) * (1.0 - sen);
+  float sen = smoothstep(0.86, 0.95, a);
+  float haz = smoothstep(0.46, 0.60, a) * (1.0 - sen);
   return vec3(amount, haz, sen);
 }
 
@@ -170,14 +191,43 @@ float nadirNoise(vec2 p) {
 }
 
 /**
+ * ---------------------------------------------------------------------------
+ * THE WARP IS ANISOTROPIC NOW, AND THAT IS THE WHOLE FIX FOR "THE COURSES WANDER"
+ * ---------------------------------------------------------------------------
+ * Blocker, art direction: "warpPeriodM 68, warpAmpM 5.2 applies a +/-5.2 m lateral
+ * domain warp to the detail UVs on a 68 m period, and the plate courses visibly
+ * WANDER. Straight, parallel seams are the strongest single signal that a surface is
+ * manufactured metal."
+ *
+ * Correct, and it is visible the moment the plate layout carries any value at all —
+ * the previous shipped frame hid it by having almost no seam contrast to bend.
+ *
+ * The warp is NOT deleted, because the thing it was written for is real: vMapUv is
+ * metres / tileM, so a 1400 m hull is 12.8 repeats of one 109 m image and without a
+ * warp the eye locks onto the repeat. What was wrong was that it displaced BOTH axes
+ * equally, and the two axes of a plate tile are not the same kind of axis:
+ *
+ *   U runs ALONG the strake. Sliding the sample in U moves the BUTT JOINTS - the
+ *     short, subordinate, deliberately staggered breaks - along the hull. It cannot
+ *     bend a strake seam, because a strake seam is a line of constant V and shifting
+ *     it in U maps it onto itself. This is where the anti-repeat budget belongs and it
+ *     is now where nearly all of it is.
+ *   V runs ACROSS the strakes. Every metre of displacement in V is a metre the seam
+ *     line moves up or down, i.e. a bend. At 5.2 m on a 68 m period that is a slope of
+ *     0.3 - seventeen degrees of wander on a line that a yard rolled straight.
+ *
+ * So nadirWarp.y is the along-seam amplitude and nadirWarp.w the across-seam one,
+ * and the second is a tenth of the first: enough that two repeats never land on the
+ * same texel, far too little to read as a curve. See HULL_MACRO_DEFAULTS.
+ *
  * Two octaves. One alone is a smooth slide that the eye reads as a wobble; two give
- * the seam lines a believable local kink as well as the long drift.
+ * the butt line a believable local kink as well as the long drift.
  */
 vec2 nadirWarpOffset(vec2 uv) {
   vec2 q = uv * nadirWarp.x;
   vec2 a = vec2(nadirNoise(q), nadirNoise(q + 31.7)) - 0.5;
   vec2 b = vec2(nadirNoise(q * 2.17 + 11.3), nadirNoise(q * 2.17 + 57.1)) - 0.5;
-  return (a + b * 0.5) * nadirWarp.y;
+  return (a + b * 0.5) * vec2(nadirWarp.y, nadirWarp.w);
 }
 
 /**
@@ -306,6 +356,13 @@ const MAP_FRAGMENT = /* glsl */`
 	// Anything sunk below the neutral plane is a hole, and a hole is darker. Scaled by
 	// the same per-tier relief weight as everything else derived from the height, so a
 	// surface that opts out of relief does not pick up a stain instead.
+	//
+	// TRIED AT 0.80 AND REVERTED, RECORDED SO IT IS NOT TRIED AGAIN. Raising it to
+	// deepen the ten authored recesses moved the close frame by 0.001 of luminance at
+	// every percentile (p05 0.159 -> 0.158, p25 0.283 -> 0.282, dense 0.8% -> 0.7%),
+	// because nadirCavity is only non-zero inside those recesses and they are a small
+	// share of any frame's visible area. The dense tier is not reachable from this
+	// term; see the note in the stream report on what it does need.
 	diffuseColor.rgb *= 1.0 - nadirCavity * nadirRelief.y * 0.46;
 	// Soot, then marks. Marks go last because a hazard band that has been sooted
 	// over is a hazard band nobody can see.
@@ -411,9 +468,19 @@ export const HULL_MACRO_DEFAULTS = {
   roughDrift: 0.20,
   soot: 0.85,
   ink: 0.90,
-  /** Domain-warp period in metres and amplitude in metres. */
-  warpPeriodM: 68,
-  warpAmpM: 5.2,
+  /**
+   * Domain-warp period in metres, and TWO amplitudes in metres. See
+   * `nadirWarpOffset`: the along-seam figure slides butt joints and breaks the tile
+   * repeat, the across-seam figure bends the strake line and is therefore rationed.
+   *
+   * 0.42 m of lateral displacement on a 96 m period is a slope of 0.017 — one degree
+   * of wander over a 109 m armour plate, which is under half a screen pixel at the
+   * close framing and is invisible as a curve while still de-phasing the repeat.
+   * It was 5.2 m on 68 m, i.e. a slope of 0.3.
+   */
+  warpPeriodM: 96,
+  warpAmpM: 3.6,
+  warpAmpAcrossM: 0.42,
   /**
    * Metres of relief a full 0..1 swing of the macro height channel represents. 44 m
    * means the neutral plane is 0.5 and the channel can author a 14 m recess at 0.34
@@ -457,7 +524,14 @@ export function applyHullMacro(material, p = {}) {
   const uniforms = {
     nadirMacroMap: { value: o.macroTexture },
     nadirMacro: { value: new THREE.Vector4(1 / o.macroM, o.drift, o.soot, o.ink) },
-    nadirWarp: { value: new THREE.Vector4(tileM / o.warpPeriodM, o.warpAmpM / tileM, o.roughDrift, 0) },
+    nadirWarp: {
+      value: new THREE.Vector4(
+        tileM / o.warpPeriodM,
+        o.warpAmpM / tileM,
+        o.roughDrift,
+        (o.warpAmpAcrossM ?? o.warpAmpM) / tileM,
+      ),
+    },
     nadirRelief: {
       value: new THREE.Vector4(
         o.reliefM * (o.reliefScale ?? 1),
@@ -509,10 +583,22 @@ export function applyHullMacro(material, p = {}) {
       // How far below the neutral plane this texel sits, 0..1. Only the sunk half
       // counts: a proud frame is not a cavity.
       + '\tfloat nadirCavity = clamp( ( 0.5 - nadirMacroTexel.g ) * 2.4, 0.0, 1.0 );\n'
-      // Detail gain: 1.0 on open armour, up to 1 + nadirRelief.z inside a structure
-      // band, and slightly BELOW 1 on the calmest faces so the reserve is real.
+      /**
+       * Detail gain: 1.0 on open armour, up to 1 + nadirRelief.z inside a structure
+       * band, and slightly BELOW 1 on the calmest faces so the reserve is real.
+       *
+       * THE CALM FLOOR WENT 0.72 -> 0.90, AND IT IS A DIFFERENT ARGUMENT FROM THE
+       * PIVOT FIX BELOW. Fixing the pivot stopped this term from moving the surface's
+       * BRIGHTNESS; it still moves its CONTRAST, and 0.72 removes 28% of it. §3's calm
+       * reserve is a budget on how MANY features a surface carries — the calm tier
+       * answers it by having no greeble, no fasteners and one butt in five — and this
+       * term was additionally taking a third of the value off the features that
+       * survived, on the 60% of the ship that is calm. That is the exact quantity the
+       * art direction measures ("your hull holds 0.01-0.06 of value per face"), so the
+       * reserve keeps its meaning and stops paying for it in contrast.
+       */
       + '\tfloat nadirStruct = clamp( abs( nadirMacroTexel.g - 0.5 ) * 3.2, 0.0, 1.0 );\n'
-      + '\tfloat nadirDetail = mix( 0.72, 1.0 + nadirRelief.z, nadirStruct );\n'
+      + '\tfloat nadirDetail = mix( 0.90, 1.0 + nadirRelief.z, nadirStruct );\n'
       // vMapUv only exists under USE_MAP. Every hull-family material has one, but a
       // compile error here would take down the whole scene, so it is guarded.
       + '\t#ifdef USE_MAP\n'

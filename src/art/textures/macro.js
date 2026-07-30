@@ -230,6 +230,12 @@ const SHIP = {
    * how far outboard the flank apertures sit on the superstructure.
    */
   sensor: { bridgeZ: -130, arrayZ: 380, mastY: 96, apertureY: 40 },
+  /**
+   * THE GRAPPLE RAILS, not just the pivots. A grapple arm swings, so it runs on a
+   * track, and a track is functional edge structure a yard paints. Stated as the z
+   * span each side's rail covers, hung off the pivots already declared above.
+   */
+  grappleRail: { port: [-70, 140], stbd: [-128, 96], y: -50 },
 };
 
 /**
@@ -356,8 +362,39 @@ function sootWash(ctx, size, cx, cy, r, strength) {
  * be averaged towards. The full argument is in materials/hullShader.js#nadirMark.
  */
 const INK_V = 0.42;
-const HAZ_V = 0.72;
+/**
+ * HAZARD DRAWS AT 0.80, NOT 0.72, AND THE REASON IS THE FILTER, NOT THE PALETTE.
+ *
+ * The shader classifies the family from this value, and every hazard mark is a few
+ * atlas texels wide, so what the shader actually sees is this value ATTENUATED by
+ * bilinear filtering and by the mip chain. Measured on the generated atlas by running
+ * the shader's own band functions over the alpha channel: at full resolution the
+ * hazard family covers 0.143% of the atlas and after ONE 2x2 mip drop it covers
+ * 0.057%, while the INK share goes 0.235% -> 0.402%. Two thirds of the ship's amber
+ * was being reclassified as bone paint by the filter, which is precisely the measured
+ * finding "the saturated accent is 0.61% of ship area ... the amber identity is not
+ * actually on the ship".
+ *
+ * 0.80 keeps a filtered mark inside the hazard band down to 72% of its peak and is
+ * still clear of the SENSOR floor (0.86), so nothing crosses families.
+ */
+const HAZ_V = 0.80;
 const SENSOR_V = 1.0;
+
+/**
+ * THE NARROWEST HAZARD MARK THIS ATLAS CAN HOLD, IN METRES.
+ *
+ * A region is 384 texels over 1600 m, i.e. 4.17 m per texel, and a mark needs about
+ * two and a half texels of core before bilinear magnification stops eating its peak
+ * value. 11 m is 2.64 texels. Every hazard stroke below is floored at it.
+ *
+ * This is the third time this file has had to overrule a metre figure from
+ * ship-language.md for the same mechanical reason - §4(a) caps a structural stripe at
+ * "2-4 m", the previous pass took it to 7.5 m to survive the mip chain, and 7.5 m is
+ * 1.8 texels, which does not. The document is written for a hull you are standing
+ * next to. Recorded rather than quietly applied.
+ */
+const HAZ_MIN_M = 11;
 
 /**
  * ---------------------------------------------------------------------------
@@ -620,17 +657,19 @@ function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
    * 3.2 km and a rule that makes the mark invisible at the only distance anyone sees
    * it is not serving its own purpose. Recorded rather than quietly ignored.
    */
-  const edgeStripe = (a0, a1, b, widthM = 7.5) => {
+  const edgeStripe = (a0, a1, b, widthM = HAZ_MIN_M) => {
+    const w = Math.max(HAZ_MIN_M, widthM);
     const x0 = X(Math.min(a0, a1)), x1 = X(Math.max(a0, a1));
     ctx.fillStyle = V(HAZ_V);
-    ctx.fillRect(x0, Y(b) - ms(widthM) * 0.5, x1 - x0, Math.max(1, ms(widthM)));
+    ctx.fillRect(x0, Y(b) - ms(w) * 0.5, x1 - x0, Math.max(1, ms(w)));
   };
 
   /** The same, running along the OTHER axis (a vertical edge in this projection). */
-  const edgeStripeV = (a, b0, b1, widthM = 3.2) => {
+  const edgeStripeV = (a, b0, b1, widthM = HAZ_MIN_M) => {
+    const w = Math.max(HAZ_MIN_M, widthM);
     const y0 = Y(Math.max(b0, b1)), y1 = Y(Math.min(b0, b1));
     ctx.fillStyle = V(HAZ_V);
-    ctx.fillRect(X(a) - ms(widthM) * 0.5, y0, Math.max(1, ms(widthM)), y1 - y0);
+    ctx.fillRect(X(a) - ms(w) * 0.5, y0, Math.max(1, ms(w)), y1 - y0);
   };
 
   /**
@@ -643,20 +682,30 @@ function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
    * access big enough for a suited crew and a toolbox, and it is 4.7 x 3.3 px at the
    * default 3200 m camera - a mark, not a smear.
    */
-  const accessHatch = (a, b, wM = 14, hM = 10) => {
+  /**
+   * A 2.4 m OUTLINE IS 0.58 OF ONE ATLAS TEXEL AND IT NEVER RENDERED AS ORANGE.
+   *
+   * The outline was the right instinct and the wrong instrument. At 4.17 m/texel a
+   * 2.4 m stroke cannot carry the hazard value past bilinear filtering, so all five
+   * of these hatches were drawing a faint bone smudge — the mark existed in the atlas
+   * and did not exist in the frame. Verified by running the shader's own band
+   * functions over the atlas: see the note on HAZ_V.
+   *
+   * So the hatch becomes a small SOLID panel with a dark slot down one side. 13 x 9 m
+   * is 3.1 x 2.2 texels, which resolves, and it is 117 m^2 on a 3.9 million m^2 hull —
+   * this is a MARK, not the "arbitrary whole face" §4 forbids. The slot is what keeps
+   * it from reading as a sticker: a hatch has a hinge line and a dogged edge.
+   */
+  const accessHatch = (a, b, wM = 13, hM = 9) => {
     const w = ms(wM), h = ms(hM);
     const x = X(a) - w * 0.5, y = Y(b) - h * 0.5;
     ctx.save();
-    ctx.strokeStyle = V(HAZ_V);
-    ctx.lineWidth = Math.max(1, ms(2.4));
-    ctx.strokeRect(x, y, w, h);
     ctx.fillStyle = V(HAZ_V);
-    // Hinge down one short edge, two dogs down the other. This is the shape that
-    // says "this opens" at a glance, and it is what the colour is promising.
-    ctx.fillRect(x, y, Math.max(1, ms(2.0)), h);
-    for (const t of [0.3, 0.7]) {
-      ctx.fillRect(x + w - ms(3.0), y + h * t - ms(1.2), ms(3.0), Math.max(1, ms(2.4)));
-    }
+    ctx.fillRect(x, y, w, h);
+    // The hinge slot: unmarked hull, so the panel reads as two leaves rather than
+    // as one painted rectangle.
+    ctx.fillStyle = V(0);
+    ctx.fillRect(x + w * 0.46, y, Math.max(1, ms(2.2)), h);
     ctx.restore();
   };
 
@@ -714,6 +763,65 @@ function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
     hazardStripes(ctx, X(a) - ms(wM) * 0.5, Y(b) - ms(hM) * 0.5, ms(wM), ms(hM), {
       a: HAZ_HEX, b: 0x000000, period: Math.max(2, ms(pitchM)), angle: Math.PI / 4,
     });
+  };
+
+  /**
+   * ---------------------------------------------------------------------------
+   * §4's ACCENT BUDGET IS 3.5% AND THE SHIP WAS SPENDING 0.61%
+   * ---------------------------------------------------------------------------
+   * Blocker, art direction: "The saturated accent is 0.61% of ship area against a
+   * 3.5% budget and a 1.8-7.0% reference range. The amber identity is not actually on
+   * the ship. Spend it where it has a REASON: bay door arc, grapple rails, drive-well
+   * rim, radiator roots, cutter yoke shoulders."
+   *
+   * Every mark added below is on one of those five, and every one of them is an
+   * EDGE, a RAIL or a RIM — never a fill on an open face, which is the model-kit read
+   * §4 exists to prevent and which this file's own `trim` history was failed on.
+   *
+   * `rail` is the shape that was missing from the vocabulary. A stripe follows a
+   * chine; a hazard patch marks a zone; a RAIL is the painted track something runs
+   * on, and it is drawn as two thin lines with a gap, because that is what a track
+   * with a slot down the middle looks like from three kilometres and it costs half
+   * the saturated area a solid bar would.
+   */
+  const rail = (a0, a1, b, widthM = HAZ_MIN_M, gapM = 16.0) => {
+    const w = Math.max(HAZ_MIN_M, widthM);
+    const x0 = X(Math.min(a0, a1)), x1 = X(Math.max(a0, a1));
+    ctx.fillStyle = V(HAZ_V);
+    for (const s of [-1, 1]) {
+      ctx.fillRect(x0, Y(b + s * gapM * 0.5) - ms(w) * 0.5, x1 - x0, Math.max(1, ms(w)));
+    }
+  };
+
+  /** The same rail, running along the region's SECOND axis. */
+  const railV = (a, b0, b1, widthM = HAZ_MIN_M, gapM = 16.0) => {
+    const w = Math.max(HAZ_MIN_M, widthM);
+    const y0 = Y(Math.max(b0, b1)), y1 = Y(Math.min(b0, b1));
+    ctx.fillStyle = V(HAZ_V);
+    for (const s of [-1, 1]) {
+      ctx.fillRect(X(a + s * gapM * 0.5) - ms(w) * 0.5, y0, Math.max(1, ms(w)), y1 - y0);
+    }
+  };
+
+  /**
+   * A RIM: a hazard annulus that follows a circular opening instead of sitting beside
+   * it. The drive well is the hottest thing on the ship and its rim is the one place
+   * on a hull where a broad painted band is not decoration.
+   */
+  const rimBand = (rM, widthM, segments = 24) => {
+    ctx.save();
+    ctx.strokeStyle = V(HAZ_V);
+    ctx.lineWidth = Math.max(1, ms(Math.max(HAZ_MIN_M, widthM)));
+    // Dashed, so it reads as a marked rim rather than as a solid ring: half the
+    // saturated area of a continuous band for the same read.
+    for (let i = 0; i < segments; i++) {
+      const t0 = (i / segments) * Math.PI * 2;
+      const t1 = t0 + (Math.PI * 2 / segments) * 0.52;
+      ctx.beginPath();
+      ctx.arc(X(0), Y(0), Math.max(1.2, ms(rM)), t0, t1);
+      ctx.stroke();
+    }
+    ctx.restore();
   };
 
   /**
@@ -826,6 +934,18 @@ function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
       // A short return down the shoulder, so the stripe visibly TURNS at a structural
       // corner rather than fading out in the middle of a plate.
       edgeStripeV(-40, SHIP.deckChine - 9, SHIP.deckChine - 42, 8.0);
+      /**
+       * §4(a) THE KEEL CHINE, STARBOARD. A hull has two chines and the accent budget
+       * was being spent on one of them per side. The span is 100..430, which is clear
+       * of the port keel run (-330..-60) by 160 m, so §3's "never level, offset the
+       * opposite side by >= 60 m" holds on this edge as it does on every other.
+       */
+      edgeStripe(100, 430, SHIP.keel + 10, 8.0);
+      /**
+       * §4(b) THE STARBOARD GRAPPLE RAIL. The arms move along it, which is the whole
+       * reason the colour is allowed here. Drawn as a track, not a bar - see `rail`.
+       */
+      rail(SHIP.grappleRail.stbd[0], SHIP.grappleRail.stbd[1], SHIP.grappleRail.y, 5.0, 9.0);
       // §4(c) registry code, small and hung off the chine rather than floating.
       codeAt(200, SHIP.deckChine - 34, 14);
       // §4(b) the starboard grapple pivots — arms move. Note these are at DIFFERENT
@@ -848,6 +968,20 @@ function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
       // A different edge run from starboard, and along the KEEL chine rather than
       // the deck chine, so the two flanks do not read as one repeated treatment.
       edgeStripe(-330, -60, SHIP.keel + 10, 7.0);
+      // §4(a) the deck chine on THIS side too, over a span 220 m clear of starboard's
+      // (-40..260), so both chines are marked on both flanks and no two runs are
+      // opposite one another.
+      edgeStripe(-560, -260, SHIP.deckChine - 9, 8.0);
+      // §4(b) the port grapple rail. Different z from starboard's, like the pivots.
+      rail(SHIP.grappleRail.port[0], SHIP.grappleRail.port[1], SHIP.grappleRail.y, 5.0, 9.0);
+      /**
+       * §4(b) THE RADIATOR ROOTS. This flank's STRUCTURE band (a -600..-470) is the
+       * radiator root recess; a heat-rejection root is hot, is serviced, and is
+       * exactly what the access family describes. One hatch at each end of the run
+       * rather than a wash over it.
+       */
+      hazardAt(-588, 33, 26, 40, 12);
+      hazardAt(-484, 33, 26, 40, 12);
       // Port carries the mount identifier rather than the registry, at the pad.
       codeAt(-300, SHIP.keel + 34, 13, 'M4');
       hazardAt(SHIP.grapplePort[0], -58, 34, 20, 12);
@@ -867,8 +1001,24 @@ function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
       // §4(b) mount pads: something is bolted on here and it gets craned in.
       hazardAt(0, SHIP.mounts.dorsalZ, 40, 26, 13);
       hazardAt(0, SHIP.mounts.bowZ, 32, 22, 12);
+      /**
+       * §4(b) THE CUTTER YOKE SHOULDERS. The bow mount is where the salvage yoke
+       * bolts on and where its shoulders take the load, so the pad carries a marked
+       * shoulder either side of the mount itself. Two blocks, not one band, because
+       * the load path is two shoulders.
+       */
+      hazardAt(-38, SHIP.mounts.bowZ, 20, 30, 11);
+      hazardAt(38, SHIP.mounts.bowZ, 20, 30, 11);
       // §4(b) the drive-well approach on the aft deck — exhaust.
       hazardAt(-42, SHIP.sternBlock + 40, 30, 20, 12);
+      /**
+       * §4(b) THE RADIATOR ROOTS WHERE THEY COME THROUGH THE DECK. STRUCTURE region 2
+       * cuts the recess at x -66..4, z -560..-410; these are the two service rails
+       * running down either side of it. Rails, because a radiator is withdrawn along
+       * them when it is changed out.
+       */
+      edgeStripeV(-31 - 40, -560, -410, 5.0);
+      edgeStripeV(-31 + 40, -560, -410, 5.0);
       /**
        * §4(c) the sigil, on the foredeck where a crew would paint it.
        *
@@ -906,8 +1056,20 @@ function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
       edgeStripeV(B.x, B.z0, B.z1, 7.5);
       edgeStripeV(-B.x, B.z0, B.z1, 7.5);
       edgeStripe(-B.x, B.x, B.z1, 7.5);
+      // The aft lip of the opening was unmarked while the forward one was. Both ends
+      // of a 320 m door aperture are a structural break.
+      edgeStripe(-B.x, B.x, B.z0, 7.5);
       hazardAt(B.x - 26, B.z1 - 24, 34, 22, 12);
       hazardAt(-B.x + 26, B.z0 + 24, 34, 22, 12);
+      /**
+       * §4(b) THE DOOR SWING ARC — the largest single reason the accent budget
+       * exists. A 320 m door leaf sweeps outboard of each rail, and the band it
+       * sweeps is painted because standing in it while the bay cycles kills you.
+       * Hatched rather than filled, so it is a marked zone and not a coloured panel,
+       * and offset outboard of the rail so it does not double the rail's own width.
+       */
+      hazardAt(B.x + 24, 0, 20, 300, 14);
+      hazardAt(-B.x - 24, 0, 20, 300, 14);
       // ORANGE = ACCESS. Two keel hatches outboard of the bay, at different z so the
       // belly is not mirror-matched either (§3).
       accessHatch(-B.x - 40, -120, 16, 12);
@@ -925,8 +1087,15 @@ function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
       // §4(b) the drive-well rim is hot. An annulus, drawn as eight bars around the
       // real 62 m radius, so it follows the rim instead of sitting beside it.
       const r = SHIP.driveWell.r;
-      for (let i = 0; i < 8; i++) {
-        const t = (i / 8) * Math.PI * 2;
+      /**
+       * §4(b) THE DRIVE-WELL RIM. Eight 15 m patches scattered around a 62 m radius
+       * read as eight patches; a dashed band ON the radius reads as a marked rim, and
+       * the rim is the thing that is hot. Four of the patches stay, at the quarters,
+       * as the tie-down points a rim band does not describe.
+       */
+      rimBand(r, 12, 22);
+      for (let i = 0; i < 4; i++) {
+        const t = (i / 4) * Math.PI * 2 + Math.PI / 4;
         hazardAt(Math.cos(t) * r, Math.sin(t) * r, 15, 15, 7);
       }
       // §4(c) the stern block carries the ship's number where a tug can read it.
