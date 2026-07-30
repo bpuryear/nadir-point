@@ -49,11 +49,32 @@ volume, and refit at an anchorage into a ship with a different outline.
 |---|---|---|
 | Engine, fixed-step sim, seeded RNG | `src/core/`, `src/sim/` | solid |
 | Two-scene renderer (far celestials, near gameplay in metres) | `src/render/` | solid |
-| Cruiser, 13 faction classes, module geometry | `src/art/geometry/` | solid, art direction open |
+| Cruiser, 13 faction classes, module geometry | `src/art/geometry/` | solid; **colour identity open** |
 | Combat, power, heat, salvage, crippling | `src/sim/` | solid |
+| **Ripple broadside** — salvo, side-select, charge-and-release | `src/sim/salvo.js` | **new, gated by `tools/ripple.mjs`** |
 | Items, materials, refit economy, perks, objectives | `src/sim/meta/` | solid, wired |
-| UI: HUD plus six panels | `src/ui/` | solid |
+| UI: HUD plus seven panels | `src/ui/` | solid |
 | Camera, controls, VFX | `src/camera/`, `src/input/`, `src/vfx/` | solid |
+
+### The gates, and what each is for
+
+Every one of these exits non-zero on a regression. Run them before you believe anything.
+
+| command | asserts | today |
+|---|---|---|
+| `npm run smoke` | boots with no console error | ok, 114 draws |
+| `node src/sim/selftest.mjs` | the whole sim stream, incl. determinism over 167 files | 54/54 |
+| `node tools/ripple.mjs` | the broadside fires in hull order and keeps its gaps | 17/17 |
+| `node tools/flight.mjs` | the handling curve is the documented one | 20/20 |
+| `node src/sim/meta/economyAudit.mjs` | scrap rates agree, no free loops, exotic reachable | 21/21 |
+| `node tools/poicheck.mjs` | three POIs really have three different suns **on the live path** | 16/16 |
+| `npm run uicheck` | panel layout, contrast, and HUD frame coverage | 598 boxes / 30 regions |
+| `node tools/widediag.mjs close --assert` | the art-review frame actually renders | 1/1 |
+
+Four of those eight did not exist two waves ago. The pattern this project keeps
+rediscovering is that **a criterion only moves when somebody writes forty lines of tool
+instead of another paragraph** — and it now cuts both ways, because a tool was also the
+thing that was wrong twice (see the correction table above, and D67 below).
 
 Conventions every stream codes against are in `ARCHITECTURE.md`. Read it before
 touching anything shared — the ownership table exists because twelve parallel streams
@@ -108,11 +129,40 @@ the critic or the agent that contradicted it:
 | plate language is pillowy, not industrial | not measurable; **still open** | — |
 
 So the honest statement is narrower and more useful than the one I first wrote: the
-remaining art gap is **surface character**, not silhouette. The one number that supports
-the critic rather than contradicting it is the frequency split — `node tools/surface.mjs
-docs/review/look-surface/close.png` gives **78.1 / 20.3 / 1.6** calm/medium/dense against
-the brief's 60/30/10 target. That is `D-INT1`, it is real, and it now has a number
-instead of a screenshot argument.
+remaining art gap is **surface character**, not silhouette.
+
+**But every surface number quoted before now was measured on a black image.** `D67`: one
+unclamped varying in `src/vfx/engines.js` fed `pow(t, 0.72)`, which is undefined for a
+negative base in GLSL and returns NaN; the plume is additively blended, so the NaN poisoned
+the composite and took the whole frame to black. The `close` shot — the frame the hull's
+surface is judged from, and the sole evidence for `D-INT1` — rendered at **contrast 0.013
+with 99.31% near-black pixels**. It now reads **luma 0.169, contrast 0.262**.
+
+Two things hid it, and both are worth remembering:
+
+- **The framing contains no visible plume.** The geometry at fault is off-screen at that
+  camera. Every investigation looked at what was *in* the frame — framing, key direction,
+  frustum culling, LOD — and correctly ruled each one out.
+- **The diagnostic was measuring somewhere else.** `tools/widediag.mjs` hard-coded
+  `capture=1` while `shots.json` pins `close` to `poi=giant-orbit`, so it booted at the
+  graveyard. That is how "the key is frontal, dot +0.978" got recorded for a frame whose
+  key at the graveyard is on the shadow side at −0.864. **A diagnostic that boots somewhere
+  other than the thing it diagnoses is worse than none, because its numbers get quoted.**
+
+`node tools/widediag.mjs close --assert` is now a gate, and it distinguishes "not landed"
+from "landed and insufficient" — the ambiguity that made this defect need re-diagnosing
+from scratch twice.
+
+**So D-INT1 is only now honestly measurable, and the frame says the gap is colour, not
+density.** The hull reads as flat, light, cool bone-grey: near-uniform mid-to-high value,
+essentially no near-black anywhere, and no warm accent — against `look-target.md`'s binding
+"warm amber / bone / near-black". Two of the three named colours are simply absent.
+
+Note also that the two surface measurements **disagree about the direction of the failure**:
+78.1/20.3/1.6 on a game frame with the HUD inside the mask says too calm; 44.9/45.7/9.3 on
+a ship render — the framing `ship-language.md` §3 built its table from — says too *medium*.
+`tools/surface.mjs` now requires a `--frame ship|face|scene` argument so a number can never
+again be quoted without saying what it framed.
 
 Do not re-open the closed three on the strength of an older critic report. Re-run the
 tools first — every one of them exits non-zero on a real regression.
@@ -122,28 +172,57 @@ lighting**. Bloom, exposure and shadow work are explicitly deferred to a later p
 pass — `docs/design/look-target.md` is authoritative and critics are barred from scoring
 those. An earlier pass wasted effort on a zoom-driven grade before this was clear.
 
-**Also open, and it is not cosmetic:** `node tools/probe.mjs cruiser` logs
-`DETACHED GEOMETRY` — four pieces of the core hull float unattached in the bridge and
-sensor-mast region (roughly x −51..16, y 177..366, z −281..−170), at all three LODs.
-This is **not** a regression from the interrupted work: the identical bounding boxes
-appear at commit `5ea20d8`, before those art commits, with only the part index shifted.
-So it cannot be reverted away. It is the same class as `D49`, which was closed for
-modules and never checked for the core hull.
+**The `DETACHED GEOMETRY` report was the checker, not the hull.** `floatingParts()` shrank
+every bounding box by up to 0.5 m per axis before testing intersection, which demands more
+than a metre of mutual interpenetration before two parts count as joined — so anything
+bolted flat to a deck read as floating, which is how a bridge tower is built. Measured on
+the unshrunk boxes, `core/hull#3` sits on `core/hull#2` with a separation of **0.000 m**
+and overlap on both other axes. Nothing was ever detached. The check now expands by a
+0.25 m tolerance and the audit passes at all three LODs with no geometry moved. This
+document previously recorded it as real, "not cosmetic", and impossible to revert away.
 
-### 3. Ripple broadside, weapon archetypes, hull adaptation
+### 3. The ripple broadside — BUILT. Hull adaptation — still open.
 
-Fully specified, not yet implemented. `docs/design/firing-feel.md` and
-`docs/design/hull-adaptation.md` are the specs — spinal forward guns versus hull-mounted
-batteries, a broadside that ripples down the side on a cooldown, and a hull that adapts
-its own plating to whatever is fitted so a heavily modified ship still reads as one
-coherent object.
+**The broadside is in.** `src/sim/salvo.js`, gated by `tools/ripple.mjs` (17 assertions).
+The player commits once and the battery ripples fore-to-aft down the engaged flank, one
+barrel at a time. Three verbs: salvo, side-select, charge-and-release.
 
-**There is no blocking triangle breach.** I previously recorded one here — 2009 against
-a 2000 budget — carried forward from `docs/design/hull-adaptation.md:1047`, which
-measured it before the last art commits. Re-measured from `hull.stats`: LOD0/1/2 are
-**1989 / 1554 / 370** triangles and **11 / 6 / 3** draw calls, so the tree is inside
-`BUDGET.cruiserCoreTris`. §5.3 of `hull-adaptation.md` budgets its adaptation work off
-the stale 2009, and that arithmetic should be redone before it is trusted.
+Measured on the real registry: an ordinary broadside is **10 slots over 1.250 s**,
+interleaving two modules **by hull position** — 3 mount crossings, z from +188.0 m to
+−90.0 m. So the wave is a property of the hull, not of the module list.
+
+The idea worth protecting: **the raggedness carries information the game already simulated
+and never showed.** A dead barrel leaves a **0.055 s hole and the slot count does not
+change** (10 → 10). A worn feed is a late beat; a frozen traverse ring is a gun firing into
+empty space. One assertion in `ripple.mjs` exists solely to stop a future refactor
+"optimising away" the gaps — if the wave ever shortens when a gun dies, the mechanic is
+gone and the gate goes red.
+
+Recoil is **rotational**: 2.01° of roll, and exactly **0.000 m/s** of lateral velocity
+added, because `PlaneBody`'s servo (`physics.js:131-134`) deletes lateral components — a
+translational recoil measures 0.000 m of displacement and is therefore not a recoil.
+
+Two prerequisites had to be fixed first, and both were real bugs nobody had noticed:
+
+- **Every beam mount had its firing arc centred on the opposite flank.** `mount: [-48,5,12]`
+  with `yawCentre: +PI*0.5`, against `ship.js:141`'s `worldForward.set(sin(aim),0,cos(aim))`
+  — so `+π/2` points at `+X`. Fixed by negating 14 `yawCentre` literals; the geometry was
+  correct and was **not** moved. Nothing exposed it because `_fire` spawns from
+  `mount.worldPosition`, which is on the right side, and `worldForward` had one consumer.
+- **`refit.js` double-mirrored the starboard mount**, so a port-authored module fitted to
+  starboard simulated at the port position with the port arc. **Both flanks resolved to
+  port**, which makes "two broadsides" — one of the two archetypes the spec exists to
+  differentiate — impossible.
+
+**Hull adaptation is still not implemented** and is the first thing to take next run. It
+was cut deliberately: it writes the same five module files the armament work needed, plus
+`cruiser.js`, `contracts.js` and `units.js`, and nothing in it is on the critical path.
+
+**There is no blocking triangle breach**, but the headroom is now the constraint:
+LOD0/1/2 are **1989 / 1554 / 370** triangles against `BUDGET.cruiserCoreTris` 2000 —
+**11 triangles of headroom.** §5.3 of `hull-adaptation.md` budgets its work off a stale
+2009 and that arithmetic must be redone first. Anything that wants geometry needs an
+owner decision on the budget, not a quiet overrun.
 
 ### 4. Visible damage
 
