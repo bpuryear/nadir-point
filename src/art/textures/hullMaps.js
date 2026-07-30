@@ -282,6 +282,39 @@ function variantSpec(pal, variant) {
        * in a file this stream owns. Recorded as a request to the lighting stream with
        * the number attached, rather than chased by authoring a paint blacker than any
        * paint. `baseDark` is Y 0.0170 linear, already below a real black coating.
+       *
+       * PASS 14 RE-RAN THAT ABLATION ON A SEPARATE INSTRUMENT AND IT REPRODUCES, at
+       * two framings rather than one. The mask is a flat unlit material-key ID pass
+       * rendered from the same camera, so the tier is isolated by MATERIAL rather than
+       * by a luma threshold; the probe sets this tier's `material.color` to black at
+       * runtime and re-renders, so the two rows differ by exactly one term. 1600x900:
+       *
+       *   shot         tier as shipped        tier with albedo = 0
+       *                p05    p50    p95      p05    p50    p95
+       *   close       0.115  0.243  0.511    0.063  0.127  0.477
+       *   engagement  0.051  0.129  0.353    0.039  0.101  0.348
+       *
+       * So the FLOOR is p50 0.127 at close and 0.101 at engagement, against a target of
+       * 0.14. Two consequences, both worth stating:
+       *
+       *   1. At engagement range the tier ALREADY renders p50 0.129, i.e. inside the
+       *      target, and only 0.028 of that is albedo. The art direction's "hullDark
+       *      renders at sRGB 0.359" predates commit 6f46385 and does not describe this
+       *      tree at any framing.
+       *   2. At close, reaching 0.14 needs 89% of the tier's albedo contribution
+       *      removed, and a perfectly black paint still lands at 0.127 — 0.013 under
+       *      the target with nothing left to spend. The remainder is not the
+       *      omnidirectional terms either: at close, ablating the fill, the rim, the
+       *      bounce, `scene.environmentIntensity` and each of the three grade terms one
+       *      at a time moves this tier's p50 by at most 0.003 EACH. It is the direct
+       *      specular, F0 = 0.04, under a key of 14-16.
+       *
+       * The only lever left is F0 itself, which would mean substituting three's own
+       * `<lights_physical_fragment>` in materials/hullShader.js to scale
+       * `material.specularColor` per tier. NOT DONE, and the reason is arithmetic
+       * rather than caution: halving F0 on a tier whose black-albedo floor is already
+       * 0.127 still cannot reach 0.14 from 0.243, so it buys a partial move on an
+       * unreachable target while putting a core three chunk under patch. Filed.
        */
       base: pal.baseDark, alt: shade(pal.baseDark, 0.80), surface: pal.surface.hullDark,
       /**

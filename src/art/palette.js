@@ -724,11 +724,131 @@ export const FACTION_PALETTES = {
      * at most 0.004 at any percentile, which is the constant-Y claim above verified on
      * a rendered frame rather than asserted from the hexes.
      */
-    base: 0x736c5c,
-    baseAlt: 0x645e4f,
-    baseDark: 0x282319,    // warm oxide near-black, chroma 0.38 at Y 0.0172
-    plating: 0x564f3e,     // 0.94 stops under `base`; the ship's MID value
-    greeble: 0x989080,     // machinery, down 0.5 stops, still 0.90 above the hull
+    /**
+     * ===================================================================
+     * PASS 14: PASS 13 ROTATED THE WRONG RATIO, AND THE SHIP IS STILL GREEN
+     * ===================================================================
+     * Pass 13, immediately above, closed `reference-frames.md` §4 item 3 on the
+     * strength of one number — warmth, defined as mean sRGB R minus mean sRGB B —
+     * going from -0.009 to +0.030 at engagement range. Its own table records the
+     * frame it was measuring:
+     *
+     *     engagement   0.226/0.251/0.235  ->  0.242/0.248/0.212
+     *
+     * READ THE MIDDLE CHANNEL. 0.242 < 0.248. Green was the peak channel before and
+     * green was still the peak channel after. §4 item 3 says the ship "reads mean RGB
+     * 0.216 / 0.244 / 0.238 — COOL"; the defect is that the hull's own hue does not
+     * survive the location, and R minus B cannot see it, because in that row R minus B
+     * moves while the hull stays green. The item was reported closed and was not.
+     *
+     * RE-MEASURED ON HEAD, with the player hull isolated by a flat unlit material-key
+     * ID pass rendered from the same camera (the `--frame scene` mask is a luma
+     * threshold, which on a lit field is nebula and rocks as much as it is ship), at
+     * 1600x900, `engagement`:
+     *
+     *   tier         px    share   mean RGB                  peak
+     *   hull       6313   51.34%   0.2474 0.2637 0.2318      G
+     *   plating    2597   21.12%   0.2672 0.2798 0.2424      G
+     *   hullDark   1158    9.42%   0.1462 0.1569 0.1277      G
+     *   greeble     949    7.72%   0.2667 0.2953 0.2684      G
+     *   SHIP      12297  100.00%   0.2348 0.2501 0.2154      G   hue 86.5 deg
+     *
+     * Every tier on the ship renders green-dominant. The frame's own field measures
+     * hue 94.4 deg (`docs/review/field-baseline.md`), so R3's "mean hull hue >= 60 deg
+     * from mean background hue" is missed by 52 degrees: the separation is 7.9.
+     *
+     * WHY R/B IS THE WRONG RATIO, AND R/G IS THE RIGHT ONE.
+     *
+     * A diffuse surface returns albedo x irradiance PER CHANNEL, so the peak channel
+     * of a rendered hull is decided by albedo_c x light_c. Pass 13 derived its target
+     * from the graveyard key's B/R = 1.52 and stopped there. The same key, 0xb6c6da,
+     * is linear (0.4735, 0.5647, 0.7011) — blue first and GREEN SECOND — so beating
+     * blue is not enough. Red only becomes the peak channel if
+     *
+     *     albedo R/G  >  0.5647 / 0.4735  =  1.192
+     *
+     * before the graveyard's green fill (0x4c6a4a), its green rim (0x8fb04a) and its
+     * green grade lift (0x4c6a4a at 0.038) are added. Measured on HEAD, the generated
+     * albedo canvases at exactly the options `cruiser.js#SURFACE` asks for:
+     *
+     *   variant     mean linear R    G        B       R/G     R/B    peak under the key
+     *   hull            0.13537  0.11851  0.08351   1.142   1.621    GREEN
+     *   plating         0.07062  0.05915  0.03699   1.194   1.909    red, barely
+     *   hullDark        0.02001  0.01609  0.00921   1.244   2.173    red
+     *   greeble         0.20082  0.17905  0.13603   1.122   1.476    GREEN
+     *
+     * Pass 13 drove R/B from 1.32 to 1.60-1.93 and left R/G at 1.12-1.24. The tier
+     * that owns 36.5% of the ship's surface area sits at 1.142 against a 1.192 break-
+     * even, so the largest surface on the hull was authored to lose. That is the whole
+     * defect, and it is arithmetic rather than taste.
+     *
+     * THE RENDERED THRESHOLD IS HIGHER THAN THE KEY'S, AND IT WAS MEASURED. Dividing
+     * the rendered linear tier colour by its albedo linear colour on the frame above
+     * gives the system transfer, red-normalised: (1, 1.296, 1.427) on `hull`, (1,
+     * 1.308, ...) on `plating`, (1, 1.424, ...) on `hullDark`. Green is amplified
+     * MORE than the key alone predicts, because the fill, the rim and the grade lift
+     * are all green as well. So:
+     *
+     *   albedo R/G >= 1.30   the tier stops rendering green-dominant
+     *   albedo R/G >= 1.37   rendered hue drops below 34 deg, which is R3's 60 deg
+     *                        of separation from a 94 deg field
+     *
+     * THE ROTATION IS FREE, AND THAT IS THE POINT. Pass 13 spent CHROMA to buy
+     * warmth, measured its first attempt at 13.7% saturated accent against a 3.5%
+     * budget, and had to back off. Hue and chroma are different axes and only one of
+     * them had ever been spent. `tools/surface.mjs`'s accent operator counts a texel
+     * whose HSV saturation (max-min)/max clears 0.5, and its `chroma` column is the
+     * same quantity on the mask mean — NEITHER IS A FUNCTION OF HUE. So every hex
+     * below is solved at
+     *
+     *     constant linear luminance   (0.2126R + 0.7152G + 0.0722B, held to 0.36%)
+     *     constant sRGB chroma        ((max-min)/max, held to 0.0044)
+     *     constant channel ordering   (R > G > B)
+     *
+     * and the change comes out of GREEN and goes into RED AND BLUE together, in the
+     * proportion that holds (max-min)/max fixed. Luminance is held for the reason pass
+     * 10 wrote and passes 11 and 13 kept: six POI keys below are solved against
+     * `base`'s linear Y and re-valuing it hands the lighting stream a regression it
+     * did not cause.
+     *
+     *   hex        from        Y         R/G    chroma   hue      to          Y         R/G    chroma   hue
+     *   base       0x736c5c  0.15143   1.143   0.200   41.7    0x7a6962  0.15123   1.378   0.197   17.5
+     *   baseAlt    0x645e4f  0.11279   1.139   0.210   42.9    0x6b5b55  0.11264   1.405   0.206   16.4
+     *   plating    0x564f3e  0.07918   1.190   0.279   42.5    0x5b4d42  0.07925   1.410   0.275   26.4
+     *   baseDark   0x282319  0.01723   1.262   0.375   40.0    0x2d211c  0.01729   1.725   0.378   17.6
+     *   greeble    0x989080  0.28180   1.126   0.158   40.0    0x9f8d86  0.28142   1.302   0.157   16.8
+     *   bare       0xd0c7b6  0.57634   1.104   0.125   39.2    0xd5c5ba  0.57624   1.192   0.127   24.4
+     *
+     * `wear.oxide` (0x34291d) IS ALREADY AT R/G 1.549 and is not touched — it was the
+     * one colour pass 11 rotated far enough, and it is why the grime and streak layers
+     * were the warmest thing on the ship.
+     *
+     * `greeble` AND `bare` ARE ROTATED THIS TIME, and pass 13's reason for exempting
+     * them does not survive the measurement. The argument was that both are metals,
+     * where the albedo channel is F0 reflectance rather than a diffuse colour. True,
+     * and irrelevant to hue: a coloured F0 multiplies the incoming light exactly the
+     * same way a diffuse albedo does, so a metal authored at R/G 1.12 renders green
+     * under this key just as a paint does — measured above at 0.2667/0.2953/0.2684,
+     * the greenest tier on the ship. What the exemption was really protecting is the
+     * COLOUR BLOCK, i.e. that unpainted machinery stays legible against painted hull,
+     * and that block is carried by CHROMA (0.157 against the paint's 0.197-0.378) and
+     * by metalness, neither of which moves here. `reference-ui-language.md` §1's "no
+     * third hue anywhere in frame" argues the other way outright.
+     *
+     * `trim` (0xb39152) IS ALREADY AT R/G 1.592 and stays; it is still not rendered on
+     * the player cruiser, per the note below, and is not credited with anything.
+     *
+     * WHAT THE OTHER FACTIONS MEASURE, stated because it is the surprise: coalition is
+     * at R/G 1.406 / 1.417 / 1.537 (base / plating / baseDark) and derelict at 1.544.
+     * Both warm factions were ALREADY past the threshold; the player hull was the only
+     * one under it. Concord is at 0.909 and is supposed to be — it is the cool faction
+     * and R6 wants that legible. Nothing outside `player` is touched by this pass.
+     */
+    base: 0x7a6962,
+    baseAlt: 0x6b5b55,
+    baseDark: 0x2d211c,    // warm oxide near-black, chroma 0.38 at Y 0.0173, hue 17.6
+    plating: 0x5b4d42,     // 0.93 stops under `base`; the ship's MID value
+    greeble: 0x9f8d86,     // machinery, down 0.5 stops, still 0.90 above the hull
     /**
      * Muted amber - the one identity hue, per look-target.md §1's "faction hue
      * survives as the one identity exception". It was 0xa8a08f, a bone, which meant
@@ -769,7 +889,7 @@ export const FACTION_PALETTES = {
     trim: 0xb39152,
     glass: 0x090c10,
     burn: 0x14110d,
-    bare: 0xd0c7b6,        // bare metal at plate edges, same Y, warm rather than neutral
+    bare: 0xd5c5ba,        // bare metal at plate edges, same Y, R/G 1.104 -> 1.192
 
     /**
      * The running lights and the drive were the last two cool things on the player

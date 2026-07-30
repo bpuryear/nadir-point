@@ -85,6 +85,34 @@ const quantize = (v, step) => Math.round(v / step) * step;
  * means a good fraction of the response comes from a nearly uniform environment
  * rather than from a direction. Both flatten the terminator, which is the one thing
  * this project cannot afford to lose.
+ *
+ * ---------------------------------------------------------------------------
+ * THESE NUMBERS ARE WORTH 19.5 DEGREES OF HULL HUE AND NOBODY KNEW IT
+ * ---------------------------------------------------------------------------
+ * Measured for pass 14 (palette.js), `engagement` at 1600x900, player hull isolated by
+ * a flat material-key ID pass, one runtime term ablated per row:
+ *
+ *   probe                     ship mean RGB           peak   hue    chroma
+ *   baseline                  0.2509 0.2533 0.2240      G   64.9    0.1155
+ *   scene.environmentIntensity = 0
+ *                             0.2409 0.2366 0.2236      R   45.4    0.0716
+ *   key colour -> white       0.3705 0.3385 0.2826      R   38.2    0.2371
+ *   grade lift = 0            0.2377 0.2353 0.2070      R   55.3    0.1292
+ *   fill = 0                  0.2430 0.2435 0.2131      G   61.0    0.1250
+ *   rim  = 0                  0.2493 0.2511 0.2236      G   63.9    0.1095
+ *
+ * The environment is the SECOND largest term in the hull's hue at the graveyard, after
+ * the key's own colour — larger than the fill, the rim and the grade lift put together
+ * — even though `scene.environmentIntensity` there is 0.10. It is worth 19.5 degrees,
+ * and it costs 0.044 of chroma. That is the environment built from `poi.js`'s three
+ * near-black BLUE `ibl` hexes, i.e. exactly the room the file's own comment at
+ * `world/lighting/poi.js:94-99` says the player cannot see.
+ *
+ * DO NOT "FIX" IT BY LOWERING THE NUMBERS BELOW. `space-backgrounds.md` item 5 puts the
+ * real field into `scene.environment` via PMREM, which changes that room's COLOUR
+ * rather than its weight; turning these down now would under-light the hull against the
+ * corrected environment and would have to be undone. The table is here so the stream
+ * that lands item 5 knows what it is about to move, and re-measures it.
  */
 const HULL_VARIANTS = {
   // `hull` is the CALM ARMOUR tier (textures/hullMaps.js#variantSpec): a 57 m plate
