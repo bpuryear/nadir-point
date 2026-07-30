@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CAMERA } from '../core/units.js';
 import { ORBIT, damp, dampVec, smoothstep, smootherstep, shortestArc } from './constants.js';
+import { cameraShake } from './shake.js';
 
 /**
  * The tactical camera.
@@ -42,6 +43,13 @@ export class TacticalCamera {
     this._snap = null;
     this._idleTime = 0;
     this._dragging = false;
+
+    /**
+     * The recoil heave. Shared with the cinematic camera through `cameraShake(world)`
+     * so the two cannot disagree about how hard the last broadside hit; this camera is
+     * the one that ADVANCES it (see `update`), and both apply it.
+     */
+    this.shake = cameraShake(world);
 
     this.name = 'tactical-camera';
     this.order = 100;
@@ -188,6 +196,11 @@ export class TacticalCamera {
    */
   snapTo(entity, { durationMs = ORBIT.snapMs, zoomT = null } = {}) {
     if (!entity) return;
+    // HOME is a camera input like any other, so it kills the heave for the same reason
+    // an orbit drag does — and a snap that is fighting a settle is the exact case the
+    // rule exists for. It cannot go through `_cancelSnap`, which would eat the snap
+    // this method is about to install.
+    this.shake?.cancel();
     this._snap = {
       t: 0,
       duration: durationMs / 1000,
@@ -203,8 +216,21 @@ export class TacticalCamera {
     this.snapTo(this.world.player, opts);
   }
 
-  /** Any camera input during a snap cancels it that frame. Never fight the player. */
+  /**
+   * Any camera input cancels what the camera is doing on its own, that frame. Never
+   * fight the player.
+   *
+   * THIS IS NOW TWO THINGS, and they are deliberately the same rule rather than two
+   * rules that will drift. A snap dies here, and so does the recoil heave — every
+   * orbit, zoom, pan, key-pan and key-yaw already funnels through this one method, so
+   * "any camera input" is enforced by the call graph rather than by six remembered call
+   * sites. `CameraShake.cancel` zeroes the oscillator's velocity immediately and retires
+   * the residual offset on a 45 ms time constant — measured, 95 % gone in 135 ms against
+   * the 1.95 s an uncancelled settle takes. See the note in `shake.js` on why a hard cut
+   * would itself be the jump it was cancelling.
+   */
   _cancelSnap() {
+    this.shake?.cancel();
     if (!this._snap) return;
     this._snap = null;
   }
@@ -212,6 +238,10 @@ export class TacticalCamera {
   // --- per-frame ------------------------------------------------------------
 
   update(dt) {
+    // Advanced BEFORE the enabled check, and unconditionally: this camera owns the
+    // heave's clock, and a disabled tactical camera must not leave the cinematic one
+    // applying a frozen offset for the rest of the run.
+    this.shake?.update(dt, this);
     if (!this.enabled) return;
     this._idleTime += dt;
 
@@ -272,6 +302,25 @@ export class TacticalCamera {
     // stable horizon free, and a free-flying camera is a documented disorientation
     // source in this genre. Take the free win.
     this.camera.up.set(0, 1, 0);
+
+    /**
+     * THE RECOIL HEAVE IS A RIGID TRANSLATION OF THE EYE, not a pivot.
+     *
+     * The offset goes onto the camera position AND onto the look target, so the whole
+     * frame slides and the ship slides with it. Adding it to the position alone would
+     * keep the subject centred and swing the starfield behind it, which reads as the
+     * camera looking around rather than as the deck being hit.
+     *
+     * Note what is NOT done here: no roll. `rollMax` belongs to the cinematic camera by
+     * design (see the comment above), and answering a broadside by rolling the tactical
+     * horizon would spend the free win this camera has held since it was written.
+     */
+    if (this.shake?.offset(this.camera, this.focus, _shakeOff)) {
+      this.camera.position.add(_shakeOff);
+      _aim.copy(this.focus).add(_shakeOff);
+      this.camera.lookAt(_aim);
+      return;
+    }
     this.camera.lookAt(this.focus);
   }
 
@@ -291,3 +340,6 @@ export class TacticalCamera {
 }
 
 const _ray = new THREE.Ray();
+/** Heave scratch. Allocated once at import; `_applyToCamera` runs every frame. */
+const _shakeOff = new THREE.Vector3();
+const _aim = new THREE.Vector3();

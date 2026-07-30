@@ -185,6 +185,17 @@ export class UILayer {
      * close button. The tab row along the top says the windows exist and what key
      * opens them, which is the reference's own idiom (§7, `B Build`, `F1 CAM`), and
      * the always-on welded readouts carry what genuinely cannot wait for a keystroke.
+     *
+     * THAT LAST CLAUSE HAD A HOLE IN IT, AND IT WAS THE FIRING VERB. Because ARMAMENT
+     * constructs closed, the per-slot salvo run — the readout the whole ripple mechanic
+     * exists to be seen through — was reachable only behind X. The welded layer carried
+     * `SALVO PORT 10`, a PREVIEW of what the key would do, and then nothing at all for
+     * the 1.25 s the guns were talking. `hud.js#_drawWaveLane` now puts the live run on
+     * the own-ship block for the sweep plus a 1.4 s hold, inside the block's existing
+     * rectangle and in place of a static legend, so the always-on layer answers the one
+     * thing the player is most likely to have just done. The window is still where the
+     * full band lives — both flanks, the thermal projection, the ready count — and it is
+     * still closed until asked for.
      */
     this.panels = new PanelHost(this);
     this.armament = this.panels.add(new ArmamentPanel(this));

@@ -36,13 +36,70 @@
 import * as THREE from 'three';
 import { HARDPOINTS } from '../core/contracts.js';
 import { TIME_SCALES_COMBAT } from '../core/units.js';
+import { salvoReport } from '../sim/salvo.js';
 import {
   C, F, TRACK, Painter, screenPointRing, fmtRange, fmtPct, fmtSigned,
   factionInk, smootherstep, smoothstep, projectedSalvageState, projectedYieldsModule,
 } from './theme.js';
+import { PIP, drawSalvoPip } from './weapons.js';
 import { moduleName, MOUNT_EMPTY } from './names.js';
 
 const RING_SEGS = 44;
+
+/**
+ * THE WAVE, ON THE ALWAYS-ON BLOCK.
+ *
+ * How long the run stays up after the sweep ends. The ARMAMENT window keeps the last
+ * wave indefinitely — "a battery's last broadside is its damage report" — but welded
+ * chrome cannot afford to hold a lane for a wave that finished a minute ago, so here it
+ * is a hold and then the block goes back to its legend. 1.40 s is `SALVO.lockout` 0.35 s
+ * plus a full second to read the holes in, which is about as long as a player looks at a
+ * readout they did not open on purpose.
+ */
+const WAVE_HOLD = 1.40;
+
+/**
+ * THE ORDERED-HEADING INSTRUMENT.
+ *
+ * `tools/flight.mjs` check 3 measures a deliberate 6.24 degree heading OVERSHOOT that
+ * `docs/design/controls.md:1093-1096` asks to be shipped ("Ship the overshoot") — the
+ * most expensive and most deliberately tuned property of the handling model, produced by
+ * `CRUISER_FEEL.angAccel` 0.070 making the yaw loop under-damped. Before this,
+ * `desiredHeading` appeared NOWHERE in `src/ui`, `src/vfx` or `src/camera`: the ship
+ * swung past the heading you gave it and settled back, and nothing on screen said that
+ * a heading had been given at all. A tuned property with no instrument is a tuned
+ * property the player experiences as vagueness.
+ *
+ * Two marks, both of which vanish when the ship is on its ordered heading, because an
+ * instrument that is always lit stops being read:
+ *
+ *   the ARC, world-anchored on the combat plane, from the bow round to the ordered
+ *   bearing. The drawn quantity IS the error, so the overshoot is the arc collapsing to
+ *   nothing and then RE-OPENING on the other side. Nothing else in the interface can
+ *   show that, because it is a sign change.
+ *
+ *   the TICK, in the own-ship block beside HDG, on a +/- 30 degree scale. The arc is
+ *   only legible while the ship is on screen; the tick is always where the number is.
+ *
+ * `DEADBAND` is 0.35 degrees — under `tools/flight.mjs`'s own settle tolerance, so a
+ * settled ship draws neither mark, and the 6.24 degree overshoot is a fifth of the
+ * tick's full scale and unmissable.
+ */
+const HEADING_DEADBAND = 0.35 * Math.PI / 180;
+/** Full-scale deflection of the tick. 30 degrees puts the measured overshoot at 21 %. */
+const HEADING_SCALE = 30 * Math.PI / 180;
+/** Arc radius as a multiple of the hull's own radius, and how many segments it takes. */
+const HEADING_ARC_K = 1.35;
+const HEADING_ARC_SEGS = 18;
+
+/** Shortest signed arc from a to b. Same form as `camera/constants.js#shortestArc`. */
+function arcTo(a, b) {
+  let d = (b - a) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d <= -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
 const MOUNT_LABEL = {
   bow: 'BOW', dorsal: 'DORSAL', ventral: 'VENTRAL',
   port: 'PORT', starboard: 'STBD', engine: 'ENGINE',
@@ -60,6 +117,10 @@ export class HUD {
     this._pt2 = { x: 0, y: 0, z: 0, ok: false };
     this._dash8 = [7, 6];
     this._dash4 = [3, 5];
+    /** Projected points for the ordered-heading arc. Allocated once; see `screenPointRing`. */
+    this._arc = screenPointRing(HEADING_ARC_SEGS + 1);
+    /** Wall-clock stamp of the last frame on which a salvo was in flight. See `WAVE_HOLD`. */
+    this._waveAt = -100;
   }
 
   // =========================================================================
@@ -123,6 +184,10 @@ export class HUD {
       }
     }
 
+    // --- the ordered heading, as the arc still to be turned. See the note by
+    //     HEADING_DEADBAND at the top of this file for why this exists at all.
+    this._drawOrderedHeading(P, player);
+
     // --- selection brackets
     for (const s of world.selection) {
       if (!s || s.dead) continue;
@@ -137,6 +202,59 @@ export class HUD {
 
     // --- order markers
     ui.markers.forEach((m) => this._drawMarker(P, m, player));
+  }
+
+  /**
+   * THE ORDER STILL BEING EXECUTED, drawn as the arc between where the bow points and
+   * where it was told to point.
+   *
+   * It is an ARC and not a ray on purpose. A ray from the ship along `desiredHeading`
+   * says where you asked to go; the arc says HOW MUCH TURN IS LEFT, which is the
+   * quantity the handling model is actually about — `effectiveTurnRate` degrades with
+   * the square of speed, so the same arc costs a very different amount of time at flank
+   * than at rest, and watching it close is watching the ship's authority.
+   *
+   * And it is the only mark in the interface that can show the overshoot, because the
+   * overshoot is a SIGN CHANGE: the arc closes to nothing, re-opens on the other side of
+   * the bow, and closes again. `tools/flight.mjs` check 3 measures that at 6.24 degrees.
+   *
+   * Zero allocation: `_arc` is preallocated and `polyline` takes a count.
+   */
+  _drawOrderedHeading(P, player) {
+    const body = player?.body;
+    if (!player || player.dead || !body || typeof body.desiredHeading !== 'number') return;
+    const err = arcTo(player.heading, body.desiredHeading);
+    if (Math.abs(err) < HEADING_DEADBAND) return;
+
+    const proj = this.ui.projector;
+    const r = Math.max(60, (player.radius ?? 200) * HEADING_ARC_K);
+    const px = player.position.x;
+    const pz = player.position.z;
+
+    // Sampled from the bow round to the ordered bearing. `yawOf` is atan2(x, z), so a
+    // heading h is the direction (sin h, cos h) — the same convention `physics.js` and
+    // `salvo.js` use, taken from them rather than re-derived.
+    let any = false;
+    for (let i = 0; i <= HEADING_ARC_SEGS; i++) {
+      const a = player.heading + err * (i / HEADING_ARC_SEGS);
+      any = proj.point(px + Math.sin(a) * r, 0, pz + Math.cos(a) * r, this._arc[i]) || any;
+    }
+    if (!any) return;
+
+    const c = P.ctx;
+    // Fades in over the first two degrees so a hand on the turn key does not make the
+    // mark strobe on and off at the deadband.
+    c.globalAlpha = 0.35 + 0.55 * smoothstep(HEADING_DEADBAND, 2 * Math.PI / 180, Math.abs(err));
+    P.polyline(this._arc, HEADING_ARC_SEGS + 1, { stroke: C.friendlyDim, weight: 1, dash: this._dash4 });
+
+    // A solid tick at the ordered end, so the arc has a destination rather than just
+    // stopping. Screen-space length, because a world-space one is invisible at range.
+    const end = this._arc[HEADING_ARC_SEGS];
+    if (end.ok && proj.point(px + Math.sin(body.desiredHeading) * r * 1.16, 0,
+      pz + Math.cos(body.desiredHeading) * r * 1.16, this._pt2) && this._pt2.ok) {
+      P.leader(end.x, end.y, this._pt2.x, this._pt2.y, C.friendly, 1.5);
+    }
+    c.globalAlpha = 1;
   }
 
   /** A circle of radius `metres` on the combat plane, drawn in perspective. */
@@ -445,9 +563,12 @@ export class HUD {
     y += 34;
 
     // --- hardpoint structure ------------------------------------------------
-    P.label('MOUNT STRUCTURE', x, y, { color: C.inkFaint });
-    P.label(`BREACH AT ${Math.round(BREACH_WARN_FRACTION * 100)}%`, x + iw, y,
-      { color: C.warnDim, align: 'right' });
+    // The right-hand lane of this heading is either the breach legend or, while the
+    // battery is talking, the wave itself. `P.label` returns the x it ended at, so the
+    // run is placed off what the heading actually measured rather than off a copy of
+    // the string — the two cannot drift.
+    const headEnd = P.label('MOUNT STRUCTURE', x, y, { color: C.inkFaint });
+    this._drawWaveLane(P, x, y, iw, headEnd, player);
     P.hline(x, y + 4, iw, C.rule);
     let cy = y + 16;
 
@@ -537,8 +658,47 @@ export class HUD {
     P.text(`MAX ${Math.round(maxSpeed)}`, bx + bw - 3, cy - 1,
       { font: F.micro, color: C.inkStrong, align: 'right', track: TRACK.none });
     const hdg = ((player.heading * 180) / Math.PI + 360) % 360;
-    P.label('HDG', x + iw - wHdg + 4, cy, { color: C.inkFaint });
-    P.text(`${hdg.toFixed(0).padStart(3, '0')}°`, x + iw, cy, { font: F.small, color: C.ink, align: 'right' });
+    const hdgX = x + iw - wHdg + 4;
+    const ordErr = typeof player.body?.desiredHeading === 'number'
+      ? arcTo(player.heading, player.body.desiredHeading) : 0;
+    const turning = Math.abs(ordErr) >= HEADING_DEADBAND;
+    P.label('HDG', hdgX, cy, { color: C.inkFaint });
+    // Dim while the ordered heading has not been reached, full ink once it has: the
+    // figure then means "this is where you are AND where you asked to be", which is the
+    // state the player is steering toward and the state the number used to claim always.
+    P.text(`${hdg.toFixed(0).padStart(3, '0')}°`, x + iw, cy,
+      { font: F.small, color: turning ? C.inkDim : C.ink, align: 'right' });
+
+    /**
+     * THE ORDERED-HEADING TICK. See the note by `HEADING_DEADBAND` at the top of the file
+     * for why an instrument for `desiredHeading` had to exist at all.
+     *
+     * A SCALE, NOT A NUMBER, and the choice is measured rather than aesthetic: a second
+     * `ORD 047°` cell measures 60.2 px, and the velocity bar in this row has 61.5 px of
+     * width at 1280x720 (it is 125.5 at 1600x900). Adding the cell takes the bar to
+     * -6.7 px — it does not fit, and `panels.js`'s rule for that case is to drop whole
+     * rather than squeeze, which would mean an instrument that exists at 900p and not at
+     * 720p. Four pixels of scale under the cell costs no width at any frame.
+     *
+     * Centre is the current heading and right of centre is to STARBOARD — the ship's own
+     * frame, the way a rudder indicator reads, not the screen's, because the screen's
+     * left and right depend on where the player has orbited the camera to. The tick sits
+     * at zero exactly when the ship has arrived, and crosses the centre when it
+     * overshoots. Full scale is +/- 30 degrees,
+     * which puts `tools/flight.mjs`'s measured 6.24 degree overshoot at 21 % deflection —
+     * about 5 px of travel on a 52 px scale, on the far side of centre from the turn that
+     * produced it. Errors past 30 degrees peg the tick at the end rather than wrapping.
+     */
+    if (turning) {
+      const scaleW = wHdg - 8;
+      const scaleX = hdgX;
+      const scaleY = cy + 3;
+      const half = scaleW * 0.5;
+      P.rule(scaleX, scaleY, scaleW, P.hair, C.ruleDim);
+      P.rule(scaleX + half - P.hair, cy + 1, P.hair * 2, 4, C.inkFaint);
+      const k = THREE.MathUtils.clamp(ordErr / HEADING_SCALE, -1, 1);
+      P.fill(scaleX + half + k * half - 1, cy + 1, 2, 4, C.friendly);
+    }
 
     /**
      * What the fitted mass is actually costing. Both figures are read straight off the
@@ -568,6 +728,81 @@ export class HUD {
     P.label('TURN', xTurn, cy, { color: C.inkFaint });
     P.text(fmtSigned((turnPct - 1) * 100), x + iw, cy,
       { font: F.small, color: turnPct < 0.9 ? C.warn : C.inkDim, align: 'right' });
+  }
+
+  /**
+   * THE BROADSIDE, ON THE ALWAYS-ON BLOCK — the one second the welded layer was silent.
+   *
+   * WHAT WAS WRONG. `salvoReport` publishes a per-slot run — one pip per barrel, in hull
+   * order, with the dead ones drawn as holes — and the ONLY readout of it lived in the
+   * ARMAMENT window, which `ui/index.js` constructs CLOSED and which nothing opens for
+   * you. The always-on chrome carried one string, `SALVO PORT 10` on the bearing line of
+   * the target block (`_drawTargetPanel`), and that string is a PREVIEW: it says what
+   * pressing R would do. From the moment R is pressed to the moment the sweep ends —
+   * 1.250 s on the ordinary broadside, 1.750 s on the worst hull `tools/ripple.mjs`
+   * finds — the welded interface said nothing about the thing the player just did. The
+   * game's central firing verb had no always-on feedback at all.
+   *
+   * IT COSTS NO CHROME, AND THAT IS WHY IT IS HERE RATHER THAN IN A NEW BLOCK. The
+   * owner's standing note is "that UI looks very messy and condensed… otherwise the game
+   * becomes more UI than graphics", and `tools/uicheck.mjs#checkChrome` measures exactly
+   * the rectangles `layout.js` publishes. This draws inside the own-ship block's EXISTING
+   * rectangle, in the right-hand lane of a heading that was already being drawn, and it
+   * DISPLACES the `BREACH AT 35%` legend rather than joining it. So the frame gains a
+   * readout and gains zero measured chrome — and it gains zero net type, because the
+   * legend is a static teaching string and the 35 % threshold stays drawn on every one of
+   * the six bars underneath regardless (`P.bar(..., threshold: BREACH_WARN_FRACTION)`).
+   * A legend for a mark that is still on screen can afford to stand aside for 1.4 s.
+   *
+   * WHY THE OWN-SHIP BLOCK AND NOT THE TARGET BLOCK. The target block is only drawn when
+   * something is locked, and `salvo.js#engagedFlank` returns `'all'` precisely when there
+   * is NO target — so the one readout that must never go missing cannot live in the block
+   * that disappears.
+   *
+   * THE PIPS ARE `weapons.js`'s OWN. `drawSalvoPip` is imported rather than reimplemented:
+   * five states drawn from two hand-written copies is how `layout.js` and
+   * `_weldedRegions` came to hold two disagreeing copies of the same rectangles.
+   *
+   * The rows in `rep.slots` belong to the controller and are rewritten every wave, so
+   * they are drawn synchronously here and never retained — which is what `salvo.js`'s
+   * read-API note requires, and is why this needs no cache of its own.
+   */
+  _drawWaveLane(P, x, y, iw, headEnd, player) {
+    const legend = () => P.label(`BREACH AT ${Math.round(BREACH_WARN_FRACTION * 100)}%`,
+      x + iw, y, { color: C.warnDim, align: 'right' });
+    if (!player) { legend(); return; }
+
+    const rep = salvoReport(player);
+    if (rep.active) this._waveAt = P.t;
+    // `slotCount` survives the sweep — the controller keeps its slots, deliberately —
+    // so the hold is what decides when the lane goes back to being a legend.
+    if (rep.slotCount <= 0 || P.t - this._waveAt > WAVE_HOLD) { legend(); return; }
+
+    const labelW = P.measure('SALVO', F.micro, TRACK.label);
+    const runX = headEnd + 10 + labelW + 6;
+    const lane = x + iw - runX;
+    // MEASURED on the real frame at the three viewports `tools/uicheck.mjs#checkChrome`
+    // asserts on: the run's lane is 89.6 px at 1280x720 (13 pips), 153.6 at 1600x900 (22)
+    // and 139.6 at 1920x1080 / logical 1536x864 (20). The ordinary broadside is ten slots
+    // and 70 px, so the whole wave fits at every frame the game runs at — `+n` belongs to
+    // the eighteen-slot hull `tools/ripple.mjs` finds, not to the small frame.
+    let room = Math.max(0, Math.floor((lane + PIP.pitch - PIP.w) / PIP.pitch));
+    const n = Math.min(rep.slotCount, PIP.cap);
+    if (n > room) room = Math.max(0, room - 4);   // the `+n` tail comes out of the run
+    const shown = Math.min(n, room);
+    if (shown <= 0) { legend(); return; }
+
+    // Amber while the sweep is running, neutral once it has resolved: `theme.js`'s
+    // colour contract reserves amber for what is costing the player something RIGHT NOW,
+    // and a wave in flight is a battery that cannot be re-armed.
+    P.label('SALVO', runX - 6 - labelW, y, { color: rep.active ? C.warn : C.inkDim });
+    const py = y - PIP.w;
+    for (let i = 0; i < shown; i++) drawSalvoPip(P, runX + i * PIP.pitch, py, rep.slots[i]);
+    const over = rep.slotCount - shown;
+    if (over > 0) {
+      P.text(`+${over}`, runX + shown * PIP.pitch, y,
+        { font: F.micro, color: C.inkFaint, track: TRACK.label });
+    }
   }
 
   /** One row of the layer stack: name, bar, figure, and its own signed rate. */

@@ -177,6 +177,40 @@ const PIP_PITCH = 7;
 /** Left lane for the side name. `STBD` measures 30.5 px at micro with TRACK.label. */
 const FLANK_LABEL_W = 36;
 
+/**
+ * THE PIP VOCABULARY, EXPORTED, BECAUSE IT IS NOW DRAWN IN TWO PLACES.
+ *
+ * `ui/hud.js` puts the live run on the ALWAYS-ON own-ship block during a wave — this
+ * window is closed by default, so before that the welded chrome said `SALVO PORT 10` and
+ * then nothing at all for the 1.25 s the guns were actually talking. Two hand-written
+ * copies of a five-state vocabulary is how `_weldedRegions` and `layout.js` came to hold
+ * two disagreeing copies of the same rectangles, so there is exactly one copy and both
+ * readouts call it. A change to what "dropped" looks like changes both or neither.
+ */
+export const PIP = Object.freeze({ w: PIP_W, pitch: PIP_PITCH, cap: PIP_CAP });
+
+/**
+ * One slot, in the five-state vocabulary this file's header writes out.
+ *
+ * @param {import('./theme.js').Painter} P
+ * @param {number} x  left edge, logical px
+ * @param {number} y  top edge, logical px
+ * @param {{state: string, dead: boolean, frozen: boolean}} pip
+ */
+export function drawSalvoPip(P, x, y, pip) {
+  if (pip.dead) {
+    // A HOLE. No box at all, and the count did not go down — that identity is the
+    // feature (`tools/ripple.mjs` check 4: slots 10 -> 10, four of them dead).
+    P.rule(x, y + PIP_W * 0.5 - P.hair, PIP_W, P.hair * 2, C.inkFaint);
+    return;
+  }
+  if (pip.state === 'fired') { P.fill(x, y, PIP_W, PIP_W, C.ink); return; }
+  if (pip.state === 'dropped') { P.frame(x, y, PIP_W, PIP_W, C.ruleDim); return; }
+  // Pending. A frozen ring still fires — down a dead bearing, spending the round and
+  // the heat — so it is amber and hollow rather than absent.
+  P.frame(x, y, PIP_W, PIP_W, pip.frozen ? C.warnDim : C.ruleBright);
+}
+
 /** One flank row, allocated once per panel. Nothing below ever allocates again. */
 function makeFlankRow(side, name) {
   const pips = [];
@@ -417,7 +451,42 @@ export class ArmamentPanel extends Panel {
   // =========================================================================
 
   /**
-   * Rebuild both rows from the published salvo read API. 5 Hz.
+   * Rebuild both rows from the published salvo read API. 5 Hz — EXCEPT WHILE A WAVE IS
+   * RUNNING, which is the only second in which this row is the most important readout
+   * on the screen.
+   *
+   * ---------------------------------------------------------------------------
+   * THE THROTTLE WAS DROPPING THE INFORMATION THE MECHANIC IS MADE OF
+   * ---------------------------------------------------------------------------
+   *
+   * `if (now - this._flankAt < 0.2) return rows;` sampled the wave at 5 Hz against a
+   * `RIPPLE.step` of 0.110 s — 9.09 beats per second. MEASURED on the real controller,
+   * real modules, the ordinary port broadside (10 slots, 1.250 s sweep, 100 rendered
+   * frames):
+   *
+   *     distinct wave states the controller passed through   10
+   *     an unthrottled sampler sees                          10   (100 %)
+   *     the 5 Hz sampler sees                                 7   (70 %)
+   *     never drawn at all                                   states 3, 6 and 9
+   *
+   * and on the worst hull `tools/ripple.mjs` check 2 finds — 18 slots over 1.750 s —
+   * 5 Hz affords 9 refreshes for 18 transitions, so HALF the wave never gets a frame.
+   * On top of that the row was stale by up to 200 ms, which is 1.82 beats: the pips
+   * were not a wave, they were a coarse progress bar lagging the guns.
+   *
+   * That is not a performance/fidelity trade — it is the readout failing at its one job.
+   * The whole point of the ripple is that its RAGGEDNESS is information — a dead barrel
+   * is a 0.055 s hole that does not change the slot count, a worn feed is a late beat —
+   * and the channel carrying that information was throwing away between 30 % and 50 % of
+   * it. So `rep.active` suspends the throttle, and only `rep.active`: the moment the
+   * sweep ends the row goes back to 5 Hz, because outside the wave it is showing a
+   * PREVIEW that does not change from frame to frame.
+   *
+   * WHAT THE UNTHROTTLED PATH COSTS, per frame, for at most 1.75 s at a time: one
+   * `salvoReport` (walks `c._n <= 24` preallocated slots, allocates nothing), two
+   * `salvoPreview` calls and two `_capacity` walks over `player.weapons` — six mounts on
+   * the cruiser. `salvo.js`'s own note on `salvoReport` says "the UI may poll it without
+   * a rate limit"; this takes it at its word exactly when it matters and not otherwise.
    *
    * ORDER OF PREFERENCE, and it is the whole design: a REAL wave beats a preview. From
    * the moment one is armed until the next one replaces it, `salvoReport` carries the
@@ -426,10 +495,15 @@ export class ArmamentPanel extends Panel {
    */
   _refreshFlank(now) {
     const rows = this._flank;
-    if (now - this._flankAt < 0.2) return rows;
+    const player = this.world.player;
+    // Read the wave FIRST, because whether one is in flight is what decides the rate.
+    // `salvoReport` is cached-and-mutated and allocation-free, so asking early is free;
+    // it is passed down to `_fillWave` rather than re-read, so the throttle decision and
+    // the drawn state can never come from two different samples of the same wave.
+    const rep = player ? salvoReport(player) : null;
+    if (!rep?.active && now - this._flankAt < 0.2) return rows;
     this._flankAt = now;
 
-    const player = this.world.player;
     for (const row of rows) {
       row.live = false; row.active = false; row.n = 0; row.overflow = 0;
       row.ready = 0; row.capacity = 0; row.guns = 0; row.wait = 0;
@@ -452,7 +526,6 @@ export class ArmamentPanel extends Panel {
       this._capacity(player, row);
     }
 
-    const rep = salvoReport(player);
     if (rep.slotCount > 0 && rep.side) {
       // `side === 'all'` is not a third flank: `salvo.js#engagedFlank` returns it when
       // there is NO TARGET, so there is no engaged side to speak of. The band says that
@@ -653,17 +726,7 @@ export class ArmamentPanel extends Panel {
 
   /** One slot. The vocabulary is written out in this file's header. */
   _pip(P, x, y, pip) {
-    if (pip.dead) {
-      // A HOLE. No box at all, and the count did not go down — that identity is the
-      // feature (`tools/ripple.mjs` check 4: slots 10 -> 10, four of them dead).
-      P.rule(x, y + PIP_W * 0.5 - P.hair, PIP_W, P.hair * 2, C.inkFaint);
-      return;
-    }
-    if (pip.state === 'fired') { P.fill(x, y, PIP_W, PIP_W, C.ink); return; }
-    if (pip.state === 'dropped') { P.frame(x, y, PIP_W, PIP_W, C.ruleDim); return; }
-    // Pending. A frozen ring still fires — down a dead bearing, spending the round and
-    // the heat — so it is amber and hollow rather than absent.
-    P.frame(x, y, PIP_W, PIP_W, pip.frozen ? C.warnDim : C.ruleBright);
+    drawSalvoPip(P, x, y, pip);
   }
 
   // =========================================================================

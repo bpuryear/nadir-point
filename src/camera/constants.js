@@ -61,6 +61,25 @@ export const ORBIT = {
 export const CINE = {
   fov: 34, back: 1.35, up: 0.22, side: 0.55, aimAhead: 0.9,
   tauPos: 0.55, tauAim: 0.75, driftAmp: 0.018, driftHz: 0.07, rollMax: 0.09,
+
+  /**
+   * Camera roll per radian of `PlaneBody.recoilBank`. The hull's own recoil roll peaks
+   * at a MEASURED 0.03508 rad (2.01 deg, `tools/flight.mjs` check 11) and settles to
+   * exactly zero, so 1.35 puts 2.71 deg of camera roll under a full broadside against
+   * `rollMax`'s 5.16 deg ceiling — room for a hard turn to be happening at the same
+   * time, which is the case the clamp in `cinematic.js` exists for.
+   *
+   * Below 1.0 the term is measurably present and perceptually absent; above about 2.0 a
+   * broadside taken mid-turn saturates the clamp and the horizon locks over, which reads
+   * as a bug rather than as recoil.
+   */
+  recoilRollK: 1.35,
+  /**
+   * s. The roll tau WHILE the guns are talking. The turn's 0.8 s is the lag that reads
+   * as tonnage on a heading change; run the recoil through it as well and a kick becomes
+   * a slow lean, because `RECOIL.rise` has already spent its authored rise by then.
+   */
+  tauRollGun: 0.22,
 };
 
 /**

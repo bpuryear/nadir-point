@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { CINE, damp, dampVec } from './constants.js';
+import { cameraShake } from './shake.js';
 import { scratch } from '../core/world.js';
 
 /**
@@ -24,6 +25,9 @@ export class CinematicCamera {
     this.roll = 0;
     this._t = 0;
     this._savedFov = camera.fov;
+
+    /** The recoil heave, shared with the tactical camera. That one advances it. */
+    this.shake = cameraShake(world);
 
     this.name = 'cinematic-camera';
     this.order = 101;
@@ -83,16 +87,49 @@ export class CinematicCamera {
     if (s.velocity) aimTarget.addScaledVector(s.velocity, 0.4);
     dampVec(this.aim, aimTarget, CINE.tauAim, dt);
 
-    // Roll into the turn. The tactical camera never rolls; this one does, and that
-    // difference is most of what separates the two.
+    /**
+     * Roll into the turn - AND into the guns. The tactical camera never rolls; this one
+     * does, and that difference is most of what separates the two.
+     *
+     * THE SECOND TERM IS THE DEFECT THIS BLOCK CARRIED. It read `angularVelocity` and
+     * nothing else, so the ONE camera in the game that can roll showed nothing at all
+     * when a broadside fired: `PlaneBody.recoilBank` (`physics.js:229-235`) is the
+     * hull's own recoil roll, `tools/flight.mjs` check 11 measures it peaking at
+     * 0.03508 rad = 2.01 deg and settling to exactly zero, and `applyTo` was its only
+     * reader in the whole tree. The hull rolled and the camera did not know.
+     *
+     * `recoilRollK` 1.35 rather than the turn's 2.2, and the SUM is clamped rather than
+     * each term: recoil and a hard turn in the same second must not add up to a horizon
+     * past `rollMax`, which is the number that keeps this camera watchable. At the
+     * measured 2.01 deg peak this contributes 2.71 deg of camera roll against a 5.16 deg
+     * ceiling (`rollMax` 0.09 rad), so a broadside taken while already banked reads as a
+     * deeper lean and never as a barrel roll.
+     */
     const angVel = s.body?.angularVelocity;
-    const rollTarget = typeof angVel === 'number'
-      ? THREE.MathUtils.clamp(-angVel * 2.2, -CINE.rollMax, CINE.rollMax)
-      : 0;
-    this.roll = damp(this.roll, rollTarget, 0.8, dt);
+    const recoil = s.body?.recoilBank;
+    const turnRoll = typeof angVel === 'number' ? -angVel * 2.2 : 0;
+    const gunRoll = typeof recoil === 'number' ? recoil * CINE.recoilRollK : 0;
+    const rollTarget = THREE.MathUtils.clamp(turnRoll + gunRoll, -CINE.rollMax, CINE.rollMax);
+    // The recoil term is deliberately NOT damped on the camera's 0.8 s tau alone: the
+    // hull's own roll already has a rise and a decay authored into `RECOIL`, and
+    // smoothing it a second time here would turn a kick into a slow lean.
+    this.roll = damp(this.roll, rollTarget, gunRoll !== 0 ? CINE.tauRollGun : 0.8, dt);
 
     this.camera.position.copy(this.position);
     this.camera.up.set(Math.sin(this.roll), Math.cos(this.roll), 0);
+
+    // The recoil heave, rigidly translating the eye. Same instance the tactical camera
+    // uses and applied the same way - position and look target together.
+    if (this.shake?.offset(this.camera, this.aim, _shakeOff)) {
+      this.camera.position.add(_shakeOff);
+      _cineAim.copy(this.aim).add(_shakeOff);
+      this.camera.lookAt(_cineAim);
+      return;
+    }
     this.camera.lookAt(this.aim);
   }
 }
+
+/** Heave scratch. Allocated once at import; `update` runs every frame. */
+const _shakeOff = new THREE.Vector3();
+const _cineAim = new THREE.Vector3();
