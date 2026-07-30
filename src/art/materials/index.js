@@ -300,6 +300,14 @@ export function createMaterialRegistry({ renderer = null, rng = new RNG('materia
        * which is how the round-one frames ended up with amber lettering floating
        * mid-face: the wrong colour AND the wrong place. Both are fixed, separately.
        */
+      /**
+       * The tiling map's own mean, in linear light, so the detail-gain pass pivots
+       * the surface's contrast on ITS OWN value rather than on the constant 0.5.
+       * See the note in hullShader.js#MAP_FRAGMENT: that constant was lifting the
+       * calm armour tier 0.85 stops and the near-black tier 3.0, which is the entire
+       * "the hull reads at one light value" finding.
+       */
+      meanAlbedo: maps.meanAlbedo,
       inkColor: pal.marking.ink,
       hazardColor: pal.marking.hazardA,
       /**

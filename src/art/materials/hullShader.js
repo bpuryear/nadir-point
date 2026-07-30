@@ -101,6 +101,11 @@ uniform vec4 nadirWarp;
  * y: cavity strength      z: detail gain      w: max |dH| per pixel (the clamp)
  */
 uniform vec4 nadirRelief;
+/**
+ * The tiling albedo map's own mean, in LINEAR light, from
+ * textures/hullMaps.js#meanAlbedo. The detail-gain pivot; see MAP_FRAGMENT.
+ */
+uniform vec3 nadirMean;
 uniform vec3 nadirInkColor;
 uniform vec3 nadirHazardColor;
 uniform vec3 nadirSensorColor;
@@ -249,13 +254,50 @@ const MAP_FRAGMENT = /* glsl */`
 	vec4 sampledDiffuseColor = texture2D( map, vMapUv + nadirUvOffset );
 	/**
 	 * DETAIL GAIN. The tiling map's contrast is pushed about its own mean: up inside
-	 * a macro structure band, down over open armour. nadirDetail is 1.0 on a calm
-	 * face, so a 700 m flank belt renders EXACTLY as authored and only the bands move.
-	 * Pivoting on 0.5 rather than on the texel keeps the mean value of the surface
-	 * constant, so amplifying detail does not also change how light the ship is.
+	 * a macro structure band, down over open armour, so a 700 m flank belt keeps its
+	 * authored VALUE and only its contrast moves.
+	 *
+	 * THE PIVOT IS THE SURFACE'S OWN MEAN, AND IT USED TO BE THE CONSTANT 0.5.
+	 * THAT ONE CONSTANT WAS THE FLAT HULL.
+	 *
+	 * The old line read  vec3(0.5) + (sampled - vec3(0.5)) * nadirDetail  with a
+	 * comment claiming nadirDetail is 1.0 on a calm face and that pivoting on 0.5
+	 * "keeps the mean value of the surface constant". Neither was true. On a calm face
+	 * nadirDetail is 0.72 (see nadirStruct below), and pivoting on 0.5 only preserves
+	 * the mean of a surface whose mean IS 0.5 — no hull map in this game is anywhere
+	 * near it, because 'map' is sRGB and texture2D therefore returns LINEAR light,
+	 * where a bone armour belt is 0.13 and a near-black recess is 0.02.
+	 *
+	 * So on every calm texel the operation was  out = 0.5 + (a - 0.5) * 0.72 , i.e. a
+	 * 28% lerp of the entire hull towards mid grey, which lifts a dark surface far
+	 * harder than a light one. Worked through on this tree's own generated maps:
+	 *
+	 *   tier        authored linear Y   after the old crush   lift
+	 *   hull                   0.1296               0.2333    0.85 stops
+	 *   plating                0.0574               0.1813    1.66 stops
+	 *   hullDark               0.0190               0.1537    3.02 stops
+	 *
+	 *   hull -> plating   authored 1.17 stops  arrived as 0.36
+	 *   hull -> hullDark  authored 2.77 stops  arrived as 0.60
+	 *
+	 * Those predictions were checked against renders rather than asserted: measured on
+	 * the cruiser probe, comparing tiers only inside a matched N.L bucket so geometry
+	 * and light direction are held fixed, hull -> hullDark arrived at 0.46-0.60 stops
+	 * against a prediction of 0.60, on BOTH the pre-pass palette (predicted 0.48) and
+	 * the post-pass one. The model reproduces the defect on two different trees.
+	 *
+	 * That is the whole "flat, light, near-uniform mid-to-high value" finding, and it
+	 * is why authoring more separation into palette.js kept doing nothing: every stop
+	 * the palette added was being spent climbing back out of a lerp towards 0.5. It
+	 * also lifts the ship's LIGHTEST tier by 0.85 stops on its own, which is most of
+	 * why nothing on the hull is dark and everything on it is bone.
+	 *
+	 * nadirMean is the generated map's actual mean in linear light
+	 * (textures/hullMaps.js#meanAlbedo). Pivoting on it does what the old comment
+	 * said: the mean is preserved EXACTLY at any gain, and only the contrast moves.
 	 */
 	sampledDiffuseColor.rgb = clamp(
-		vec3(0.5) + (sampledDiffuseColor.rgb - vec3(0.5)) * nadirDetail, vec3(0.0), vec3(1.0) );
+		nadirMean + (sampledDiffuseColor.rgb - nadirMean) * nadirDetail, vec3(0.0), vec3(1.0) );
 	diffuseColor *= sampledDiffuseColor;
 #endif
 	// Low-frequency value drift. This is what stops two repeats of the plate tile
@@ -424,6 +466,12 @@ export function applyHullMacro(material, p = {}) {
         o.slopeClamp,
       ),
     },
+    /**
+     * Falls back to 0.5 only if a caller supplies no map mean, which reproduces the
+     * old (wrong) pivot rather than silently producing a different wrong one. Every
+     * hull-family material routes through `standardFromMaps` and always has it.
+     */
+    nadirMean: { value: new THREE.Vector3(...(o.meanAlbedo ?? [0.5, 0.5, 0.5])) },
     nadirInkColor: { value: new THREE.Color().setHex(o.inkColor ?? 0xd0cabd, THREE.SRGBColorSpace) },
     nadirHazardColor: { value: new THREE.Color().setHex(o.hazardColor ?? 0xbe6a22, THREE.SRGBColorSpace) },
     nadirSensorColor: { value: new THREE.Color().setHex(o.sensorColor ?? 0xe9e3d6, THREE.SRGBColorSpace) },

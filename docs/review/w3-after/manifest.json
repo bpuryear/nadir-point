@@ -1,0 +1,62 @@
+[
+  {
+    "id": "close",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.1271,
+      "contrast": 0.196,
+      "clippedPct": 0,
+      "nearBlackPct": 68.41
+    },
+    "description": "Cruiser fills the frame. Tests silhouette, panel density, rim light and material identity. HUD suppressed: this is a look-review frame.",
+    "hud": false,
+    "file": "docs/review/w3-after/close.png",
+    "stats": {
+      "fps": 68.85697422781824,
+      "cpuMs": 6.700000023841767,
+      "stepMs": 0.09999996423721313,
+      "renderMs": 1.4000000357627869,
+      "steps": 1,
+      "calls": 135,
+      "triangles": 72553,
+      "points": 7000,
+      "lines": 0,
+      "programs": 58,
+      "geometries": 72,
+      "textures": 78
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  },
+  {
+    "id": "engagement",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "meanLuma": 0.0306,
+      "contrast": 0.0282,
+      "clippedPct": 0,
+      "nearBlackPct": 15.16
+    },
+    "description": "Cruiser under way with hostiles on the plane. Tests scale cues and the fight read.",
+    "hud": true,
+    "file": "docs/review/w3-after/engagement.png",
+    "stats": {
+      "fps": 79.72892166822892,
+      "cpuMs": 6.899999976158142,
+      "stepMs": 0,
+      "renderMs": 1,
+      "steps": 0,
+      "calls": 112,
+      "triangles": 70179,
+      "points": 7200,
+      "lines": 0,
+      "programs": 54,
+      "geometries": 58,
+      "textures": 70
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]

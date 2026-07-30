@@ -511,19 +511,121 @@ export const FACTION_PALETTES = {
      *
      * `baseDark` is the near-black of "amber / bone / near-black" and it was not near
      * black: 0x3a3f47 is Y = 0.0491, three quarters of the hull's own 0.0666 once you
-     * account for the ACES toe. 0x2b2722 is Y = 0.0217 - a genuine third value that
-     * exists in the ALBEDO and therefore survives whatever the deferred lighting pass
-     * decides to do.
+     * account for the ACES toe. 0x2b2722 was a genuine third value that exists in the
+     * ALBEDO and therefore survives whatever the deferred lighting pass decides to do.
+     * (That hex measures Y = 0.0207 on this tree's own luminance operator, not the
+     * 0.0217 written here at the time; the difference is a rounding of the sRGB
+     * decode and it changes nothing about the argument. Pass 11 below holds the same
+     * luminance and spends the change on hue - see `baseDark` in the table.)
+     */
+    /**
+     * ===================================================================
+     * PASS 11: THE TWO TIERS THAT OWN THE SHIP WERE 0.31 STOPS APART
+     * ===================================================================
+     * Pass 10 (the note above) fixed the TEMPERATURE and fixed `baseDark`. What it
+     * did not do, because nothing could render a legible close frame until D67 was
+     * found, is check that the tiers separate in a picture. Measured on this tree,
+     * on the first legible close frame the project has had:
+     *
+     * WHERE THE SHIP'S SURFACE AREA ACTUALLY IS (real triangle area, m^2, LOD0,
+     * summed off `cruiser.js#hullParts`, which is pure and can be imported):
+     *
+     *   hull      1 438 286 m^2   36.5 %      plating   1 402 227 m^2   35.6 %
+     *   dark        735 518 m^2   18.7 %      greeble     274 885 m^2    7.0 %
+     *   radiator     85 900 m^2    2.2 %
+     *
+     * So `hull` and `plating` are 72.1 % of the ship between them - they ARE the
+     * ship - and the generated albedo maps measured 0.1320 and 0.1061 mean linear Y.
+     * That is 0.31 STOPS. Two tiers covering three quarters of a 1.4 km hull, a third
+     * of a stop apart, is one value with a texture change in it, and it is why every
+     * framing of this ship reads as a single bone object however it is lit.
+     *
+     * IT IS AN ALBEDO PROBLEM AND NOT AN EXPOSURE ONE, AND THAT WAS MEASURED, NOT
+     * ASSUMED. Rendering the cruiser probe three times at one pose - the real frame,
+     * a flat material-key ID pass, and a world-normal pass - and then comparing tiers
+     * only WITHIN a matched N.L bucket (so geometry and light direction are held
+     * fixed and the only thing left is the material):
+     *
+     *   N.L bucket        hull    plating   hullDark    authored albedo separation
+     *   0.85 - 1.0       0.799     0.786          -     0.31 / 1.80 stops
+     *   0.60 - 0.85      0.732     0.686      0.627
+     *   0.35 - 0.60      0.654     0.589      0.530
+     *
+     *   rendered separation: hull->plating 0.21-0.34 stops, hull->hullDark 0.50-0.67
+     *
+     * The mid tier passes through the rig at roughly 1:1 - 0.31 stops authored comes
+     * out as 0.21-0.34 stops rendered - so authoring more separation buys separation,
+     * predictably, with no lighting change at all. (The near-black tier passes only
+     * about a third of its authored depth, because a dielectric's F0 = 0.04 specular
+     * floor under an 11.5 key does not scale with albedo. That floor is a KEY
+     * intensity consequence, it cannot be fixed from this file, and it is filed as a
+     * request to the lighting stream rather than worked around here.)
+     *
+     * So `plating` moves and `base` DOES NOT. Every key intensity in the POI table
+     * below is solved against `base`'s linear luminance, and re-hueing or re-valuing
+     * it would silently invalidate six solved keys and hand the lighting stream a
+     * regression it did not cause - the same rule pass 10 wrote and the same reason.
+     * `base` is the anchor; everything else moves relative to it.
+     *
+     *   plating   0x605c54 -> 0x544f46   Y 0.1078 -> 0.0798   (map 0.1061 -> 0.0785)
+     *
+     * which puts the generated maps at hull 0.1320 / plating 0.0785 / hullDark 0.0364
+     * - a 0.75-stop and 1.11-stop ladder where it was 0.31 and 1.49. An EVEN ladder,
+     * which is what a three-value read is; the old one was two values that touched
+     * plus a third nothing could reach.
+     *
+     * WARM IS IN THE ALBEDO NOW, NOT ONLY IN THE KEY.
+     *
+     * The shipped frame measures a hull-mask chroma of 0.157-0.171, which looks like
+     * the warm identity is already there - but it is not in the MATERIAL. Measured on
+     * the generated albedo canvases, warmth (mean sRGB R minus B) was hull 0.050,
+     * plating 0.045, hullDark 0.036, greeble 0.038: essentially neutral. All of that
+     * 0.16 chroma is the cream key (0xfff0d8) landing on the hull, so the ship's
+     * "identity" was a property of one POI's light and would vanish the moment the
+     * deferred lighting pass touched it. look-target.md gives Beta Decay the IDENTITY
+     * half of the hybrid, and an identity that lives in the key is not an identity.
+     *
+     * Where the warm goes is ship-language.md §4's rule, not taste: the big armour
+     * belts stay BONE (they are the calm reserve and a saturated fill across them is
+     * the model-kit read §4 names), and the warm goes on the near-black, on the
+     * machinery and on the WEAR - the surfaces whose warmth has a physical cause.
+     * `baseDark` becomes a warm oxide near-black at the same luminance, and
+     * `wear.oxide` - which was 0x2b2a24, warmth 0.027, i.e. a grey pretending to be
+     * corrosion - becomes an actual rust. That last one is the highest-leverage
+     * colour in the file for "over-used industrial object", because grime and streaks
+     * are drawn from it on EVERY tier at every wear level, and it costs no geometry
+     * and no detail density (ARCHITECTURE.md:24-26).
+     *
+     * `greeble` comes down 0.5 stops. It was 1.40 stops ABOVE the hull - the
+     * machinery on a working salvager was the brightest surface on it. It is still
+     * 0.90 stops above, so the round-two finding this brightness was raised to fix
+     * ("the one dense element ... is far darker than everything around it, so it
+     * reads as a decal boundary") does not come back, and at metalness 0.52 it keeps
+     * a real metallic response - the file's opening note about F0 is respected, it is
+     * just not being used to argue the machinery must be the lightest thing in frame.
      */
     base: 0x716c63,
     baseAlt: 0x625e56,
-    baseDark: 0x2b2722,
-    plating: 0x605c54,
-    greeble: 0xada9a2,
-    trim: 0xa8a08f,        // bone, not a hue. Reads as "unfactioned".
+    baseDark: 0x282319,    // warm oxide near-black. Y 0.0207 -> 0.0170, warmth 0.035 -> 0.062
+    plating: 0x544f46,     // 0.92 stops under `base`; the ship's MID value
+    greeble: 0x989080,     // machinery, down 0.5 stops, still 0.90 above the hull
+    /**
+     * Muted amber - the one identity hue, per look-target.md §1's "faction hue
+     * survives as the one identity exception". It was 0xa8a08f, a bone, which meant
+     * the player ship had NO accent colour anywhere: `variantSpec('trim')` draws this
+     * only as an edge band on real structure (§4a), and a bone edge band on a bone
+     * hull is not a band.
+     *
+     * STATED PLAINLY BECAUSE IT IS NOT VISIBLE IN THIS PASS'S FRAMES: `cruiser.js#
+     * SURFACE` has no `trim` entry - the geometry stream deleted it for a draw call -
+     * so nothing on the player cruiser renders this today. It is an identity
+     * declaration the fleet path (`ships/common.js#SURFACES`) already reads, and it
+     * is NOT part of the before/after measured below. Do not credit it with anything.
+     */
+    trim: 0xab9364,
     glass: 0x090c10,
     burn: 0x14110d,
-    bare: 0xcdc7bf,
+    bare: 0xd0c7b6,        // bare metal at plate edges, same Y, warm rather than neutral
 
     /**
      * The running lights and the drive were the last two cool things on the player
@@ -563,11 +665,31 @@ export const FACTION_PALETTES = {
      * is the review's own criterion for it reading as structure rather than as a
      * sticker.
      */
+    /**
+     * `variance` IS WHAT MAKES PLATE READ AS WORKED METAL RATHER THAN AS CLAY, and
+     * it was the smallest number in this block.
+     *
+     * It is the panel-to-panel roughness swing: `hullMaps.js` writes
+     * `S.roughness + roughVar * S.variance * 0.55` into the ORM's green channel, so
+     * at variance 0.16 the whole armour belt sits inside +/- 4.4 points of roughness
+     * and every plate on a 1.4 km hull returns the key at the same width. That is the
+     * signature of a moulded object. A yard's plates come from different heats, get
+     * different primer and get worked differently, and the ONLY free evidence of that
+     * is how wide each one's highlight is.
+     *
+     * This is a specular change, not a detail change: no feature is added anywhere
+     * (ARCHITECTURE.md:24-26), the existing plate field just stops agreeing with
+     * itself about finish. `plating` gets the widest swing because it is the tier
+     * that carries the repairs, `hull` less because it is the calm armour reserve,
+     * and `hullDark` goes ROUGHER as well - recessed structure and shadowed plate is
+     * unfinished steel, and a rough surface spreads the specular floor that is
+     * currently eating two thirds of that tier's authored depth.
+     */
     surface: {
-      hull: { metalness: 0.18, roughness: 0.54, variance: 0.16 },
-      hullDark: { metalness: 0.26, roughness: 0.68, variance: 0.14 },
-      plating: { metalness: 0.22, roughness: 0.50, variance: 0.16 },
-      greeble: { metalness: 0.52, roughness: 0.52, variance: 0.18 },
+      hull: { metalness: 0.18, roughness: 0.56, variance: 0.26 },
+      hullDark: { metalness: 0.26, roughness: 0.80, variance: 0.22 },
+      plating: { metalness: 0.22, roughness: 0.48, variance: 0.30 },
+      greeble: { metalness: 0.52, roughness: 0.46, variance: 0.26 },
       trim: { metalness: 0.12, roughness: 0.50, variance: 0.12 },
       // Heat rejection: a black coating chosen for emissivity, so nearly pure
       // dielectric and very rough. It is the darkest large surface in the game.
@@ -585,11 +707,72 @@ export const FACTION_PALETTES = {
       rivetPitchM: 2.4,
       skew: 0.0,
       toneSpread: 0.035,
+      /**
+       * UNCHANGED AT 0.38, AND THE REASON IS RECORDED BECAUSE IT WAS CHANGED TWICE
+       * IN THIS PASS AND BOTH TIMES WRONGLY.
+       *
+       * Once the detail-gain crush in hullShader.js was fixed, the ventral bay
+       * structure came back reading as brown BRICKWORK - a lattice of bright lines
+       * around every plate. The obvious suspect is this dial, which scales the seam
+       * darkening and the recess cavity, and it was moved to 0.46 and then to 0.26
+       * chasing it. Neither helped, because the lattice is not made of seams: it is
+       * made of `wear.edge` below, which lerps every plate LIP to bare metal at
+       * Y 0.576, i.e. a 4.5-stop bright line drawn around each plate on a near-black
+       * surface. Ablating `wear.edge` to 0 removed the brickwork completely and left
+       * the plate layer looking correct; ablating this dial did not.
+       *
+       * So it goes back to where it was and the fix lands on the term that was
+       * actually responsible.
+       */
       plateContrast: 0.38,
       calm: 0.62,
     },
 
-    wear: { edge: 0.55, streak: 0.62, grime: 0.40, pit: 0.12, oxide: 0x2b2a24 },
+    /**
+     * `oxide` WAS A GREY PRETENDING TO BE CORROSION. 0x2b2a24 measures warmth
+     * (sRGB R minus B) 0.027 and chroma 0.163 - it is a neutral dark, and it is what
+     * `hullMaps.js` lerps grime and streaks towards on EVERY tier. So the layer whose
+     * entire job is to say "this thing has been used hard for a long time" was
+     * painting the hull with more of the same colour the hull already was.
+     *
+     * 0x322a1b is the same luminance band (Y 0.0230 -> 0.0241) and an actual rust.
+     * Because it rides the grime and streak masks it lands in cavities and runs down
+     * from seams - i.e. exactly where §4 says colour is allowed to be, on structure
+     * and never as a fill - and it is the cheapest warm in the file: no geometry, no
+     * new feature, no detail density.
+     *
+     * `grime` 0.40 -> 0.46 for the same reason and with the same constraint: it is a
+     * mask amplitude on a field that already exists, not a new field.
+     *
+     * `edge` 0.55 -> 0.34, AND THIS IS THE ONE THAT WAS DRAWING BRICKWORK.
+     *
+     * `wear.js#edgeWear` scales by `o.edge * amt * 1.9`, so at 0.55 the plate lips
+     * saturate and `hullMaps.js` lerps them ALL THE WAY to `pal.bare` — a bone metal
+     * at Y 0.576. On the near-black tier (Y 0.024) that is a four-and-a-half stop
+     * bright line drawn around every plate in the tile, i.e. mortar, and the plate
+     * field underneath it is a staggered course of rectangles. It had never been
+     * visible because the detail-gain crush in hullShader.js was lerping the whole
+     * surface towards mid grey and taking the lines with it; the moment the crush was
+     * fixed, the ventral bay read as a brick wall.
+     *
+     * Verified by ablation rather than by argument: `edge: 0` removes the lattice
+     * entirely and leaves a calm plate field (docs/review/w3-after and the run log in
+     * the stream report), while moving `plateContrast` in either direction does not.
+     * At 0.34 the lips still show metal where a lip is genuinely proud — this hull is
+     * "half-stripped gunmetal" and should — without outlining every plate on it.
+     *
+     * STATED COST, because it is a real one and it should not be discovered by a
+     * critic: this term was carrying most of the ship's measured `dense` frequency.
+     * `tools/surface.mjs --frame ship` on a fresh cruiser probe reads dense 8.2% ->
+     * 1.9%, which is now BELOW §3's six-reference envelope of 6.8-22.1%. That is the
+     * right trade and not a regression in disguise: §3 puts dense in 55 x 200 m bands
+     * on machinery and structure and forbids it "on any continuous armour face larger
+     * than 60 x 120 m", and a bright lattice around every plate on every face is
+     * exactly the forbidden case. The ship's real dense content should come from the
+     * greeble bands, and at 1.9% there is not enough of it — a geometry-stream item,
+     * filed in the report, not something to buy back by re-outlining the plates.
+     */
+    wear: { edge: 0.34, streak: 0.62, grime: 0.46, pit: 0.12, oxide: 0x312a1e },
 
     /**
      * `hazardA` was 0xbfa53a - a mustard yellow that is neither the amber the

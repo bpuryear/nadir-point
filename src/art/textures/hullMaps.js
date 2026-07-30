@@ -32,6 +32,13 @@ import { drawText, factionSigil, hullCode, hazardStripes } from './decals.js';
 import { fbmField, cellularField } from './noise.js';
 import { getFactionPalette, saturate as desat, shade, NEUTRAL } from '../palette.js';
 
+/** sRGB byte -> linear, for the map-mean below. Built once, not per bake. */
+const SRGB_TO_LINEAR = new Float32Array(256);
+for (let v = 0; v < 256; v++) {
+  const c = v / 255;
+  SRGB_TO_LINEAR[v] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
 export const HULL_MAP_DEFAULTS = {
   size: 512,
   variant: 'hull',
@@ -234,7 +241,28 @@ function variantSpec(pal, variant) {
       // near-black and the hull — a mid grey. It is the ship's THIRD VALUE and it
       // has to actually be dark.
       base: pal.baseDark, alt: shade(pal.baseDark, 1.25), surface: pal.surface.hullDark,
-      greeble: 1.0, markings: false, wearMul: 1.15,
+      /**
+       * `wearMul` 1.15 -> 0.55, AND THIS IS WHY THE NEAR-BLACK TIER WAS NOT NEAR
+       * BLACK IN A PICTURE.
+       *
+       * The edge-wear layer lerps albedo towards `pal.bare` — a bone metal at
+       * Y 0.576 — and pushes metalness to 0.92 where it lands. On a tier whose base
+       * is Y 0.020 that is a FOUR-AND-A-HALF STOP lift, and this tier was authored
+       * to take 15% MORE of it than the calm armour belt (`hull` runs wearMul 0.70).
+       *
+       * Measured on the generated 512 map at the START of this pass (player, tier 2,
+       * wear 0.5, and the palette as it then stood): hullDark came out p50 0.0227 but
+       * p95 0.1612 and MEAN 0.0379 — a 2.8-stop internal spread, i.e. the tier was a
+       * near-black with bright-metal confetti over enough of its area to drag its mean
+       * a third of the way to the hull tier's 0.1320. Rendered on the cruiser probe it
+       * sat at a median of 0.616 sRGB against the hull's 0.709.
+       *
+       * It is also wrong on its own terms. This tier is the recessed structure and
+       * the shadowed plate below the chine (see cruiser.js#SURFACE) — the surfaces a
+       * crew's boots and a docking clamp never touch. Scuffing them to bare metal
+       * harder than the armour belt that takes the actual abuse is backwards.
+       */
+      greeble: 1.0, markings: false, wearMul: 0.55,
       tileMul: 2.6, calmAdd: 0.06, contrastMul: 0.92, rivetMul: 0.7,
       strakes: 6, plateAspect: 6.0, stepMul: 0.9, buttChance: 0.55,
     };
@@ -624,6 +652,33 @@ export function hullMaps(opts = {}) {
   }
   const albedoCanvas = bytesToCanvas(bytes, size);
 
+  /**
+   * THE MEAN OF THIS MAP, IN LINEAR LIGHT. `hullShader.js#MAP_FRAGMENT` reduces the
+   * tiling map's contrast on calm faces and raises it inside a structure band, and it
+   * has to pivot that on a value or the operation moves the surface's brightness
+   * instead of its contrast. It was pivoting on the constant 0.5 — see the note in
+   * hullShader.js — which on a hull map whose mean linear value is 0.13 (and 0.02 on
+   * the near-black tier) was not a contrast change at all, it was a lerp towards mid
+   * grey that erased the value ladder this whole file exists to author.
+   *
+   * The map texture is uploaded as sRGB, so `texture2D` hands the shader LINEAR
+   * values and the pivot must be linear too. Computed here rather than in the shader
+   * because it is a property of the generated image and is known once, at bake time.
+   *
+   * Taken before `stampAccentEdges` and `stampMarkings` draw onto the canvas. Those
+   * cover a few percent of the tile at most (see the area note above
+   * `stampAccentEdges`) and reading the canvas back afterwards would cost a full
+   * getImageData per material to move this number by well under a percent.
+   */
+  let mr = 0, mg = 0, mb = 0;
+  for (let i = 0; i < n; i++) {
+    const o4 = i * 4;
+    mr += SRGB_TO_LINEAR[bytes[o4]];
+    mg += SRGB_TO_LINEAR[bytes[o4 + 1]];
+    mb += SRGB_TO_LINEAR[bytes[o4 + 2]];
+  }
+  const meanAlbedo = [mr / n, mg / n, mb / n];
+
   if (spec.accentEdge) {
     stampAccentEdges(ctx2d(albedoCanvas), size, panel, tileM, spec.accentEdge);
   }
@@ -688,7 +743,7 @@ export function hullMaps(opts = {}) {
   // before the plate field, because the field needs it to convert its metres.
   const repeat = 1 / tileM;
   return {
-    size, tileM, panel, surface: S, repeat,
+    size, tileM, panel, surface: S, repeat, meanAlbedo,
     albedoCanvas, ormCanvas, normalCanvas,
     map: canvasTexture(albedoCanvas, { srgb: true, repeat, name: `${o.faction}:${o.variant}:albedo` }),
     ormMap: canvasTexture(ormCanvas, { repeat, name: `${o.faction}:${o.variant}:orm` }),
