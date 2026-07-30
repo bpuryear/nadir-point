@@ -155,6 +155,23 @@ export class MountThermal {
 export class ShipThermal {
   constructor(ship) {
     this.ship = ship;
+    /*
+     * BIND THE POWER PLANT TO THE HULL. One line, and it is here for an ownership
+     * reason rather than a tidiness one.
+     *
+     * `power.js` now bills the FIT — it reads `ship.weapons`, `ship.shields.max` and
+     * `ship.massLoad` to publish a per-channel demand. `Ship` constructs the plant at
+     * `ship.js:371` and calls `power.update(dt)` with one argument at `ship.js:968`;
+     * neither hands the plant its hull, and `sim/ship.js` is the Ship & refit stream's
+     * file. `ShipThermal` is constructed at `ship.js:392` WITH the ship, it is the
+     * other half of the same power/heat interlock, and it is in this stream's write
+     * set. So the bind happens on this line.
+     *
+     * Guarded and idempotent: a hull built without a plant, or a plant from an older
+     * build, is a no-op. A one-line `this.power.bindShip(this)` in `Ship`'s constructor
+     * makes this redundant and it can then be deleted — filed as a request.
+     */
+    ship?.power?.bindShip?.(ship);
     this.load = 0.6;
     this.radiate = 0.65;
     this.peak = 0;
@@ -323,11 +340,38 @@ export class ShipThermal {
   }
 
   /**
+   * Why a purge would be refused, or null when it would land.
+   *
+   * Exists so the input layer can refuse BEFORE spending a charge, and print the
+   * reason. "I pressed the button and nothing happened" is the worst thing a finite,
+   * three-charge consumable can do; wasting one of the three on a cold hull is the
+   * second worst.
+   *
+   * @returns {string|null}
+   */
+  purgeRefusal() {
+    const stores = this.ship?.stores;
+    if (!stores || stores.coolant < 1) return 'NO COOLANT ABOARD';
+    // `peak` is the hottest mount and is what the purge is measured against. Below a
+    // third of the soft cap there is nothing worth a charge.
+    if (this.peak < THERMAL.softCap * 0.34 && (this.trippedCount ?? 0) === 0) {
+      return 'MOUNTS COLD — PURGE WITHHELD';
+    }
+    return null;
+  }
+
+  /**
    * Dump coolant. The thing the player presses.
    *
    * Costs a charge from stores, which is a real, finite, salvageable resource, so the
    * decision is "do I spend a purge to hold this broadside for six more seconds or do
    * I break off". Returns false when there is nothing to spend.
+   *
+   * BOUND TO `T` at `input/controls.js`. Until that binding landed this method had
+   * exactly one caller in the whole tree — `src/sim/selftest.mjs:279` — so
+   * `stores.coolant` was a row of pips on the weapon strip (`ui/weapons.js:764`) that
+   * could never move in a real game. A declared verb the player cannot reach is worse
+   * than an absent one, because the interface promises it.
    */
   purge() {
     const stores = this.ship.stores;

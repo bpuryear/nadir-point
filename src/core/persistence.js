@@ -292,6 +292,34 @@ export function applySave(world, data, opts = {}) {
   // Perks touch the same statistics the fit does, so they go on after the fit.
   s.perks?.apply?.();
 
+  /*
+   * AND THE HULL BAR GOES ON AFTER THE PERKS, BECAUSE IT IS AN ABSOLUTE AND THEY ARE
+   * A RATIO. This is the fix for a save/load round trip that shaved the hull every
+   * time, and it was measurable in the project's own harness long before anyone
+   * noticed it: `sortieHarness.js` section 8 printed `hull 7400 -> 6956  MATCH NO` and
+   * "15 of 16 fields identical" for as long as it has existed.
+   *
+   * The arithmetic, with `hold_bracing` at rank 1 (-6% max hull):
+   *
+   *   session A   fresh 12000 max -> perks.apply() -> 11280 max, player fights to 7400
+   *   save        { hullHP: 7400, maxHullHP: 11280 }
+   *   session B   fresh world: maxHullHP is 12000 again and `_basePerkMaxHullHP` is
+   *               unset, because both belong to the world, not to the file
+   *   restoreShip hullHP = min(7400, 12000) = 7400 against a max of 12000
+   *   perks.apply meta/perks.js:285-289 seeds baseHull from the PRE-perk 12000, sets
+   *               maxHullHP to 11280, and rescales hullHP by frac = 7400/12000 = 0.617
+   *               -> 6956. The 0.94 is applied a SECOND time, to a number that had
+   *               already paid it.
+   *
+   * `perks.apply()` is right to rescale — it is what keeps the bar in the same place
+   * when a rank is bought mid-run — and it is `meta/perks.js`, another stream's file.
+   * The defect is on this side: an absolute restored before a ratio that rescales it.
+   * So the fit, the structure and the stores stay where they are (they are absolutes
+   * that perks do not touch) and only the hull is re-asserted here, clamped to the
+   * post-perk ceiling that now exists.
+   */
+  if (data.ship && world.player) restoreHullBar(world.player, data.ship);
+
   // --- the world ------------------------------------------------------------
   if (data.discovery && s.discovery) {
     s.discovery.known = new Set(data.discovery.known ?? []);
@@ -410,6 +438,25 @@ function restoreShip(world, ship) {
   }
   p._refreshEfficiency();
   if (gate) gate.job = null;
+}
+
+/**
+ * Re-assert the saved hull as an ABSOLUTE, after every ratio that rescales it has run.
+ *
+ * Idempotent and order-independent: it reads only the file and the live ceiling, so
+ * calling it twice, or calling it when no perk changed anything, produces the same
+ * number. See the block at the call site in `applySave` for the arithmetic it undoes.
+ *
+ * @param {import('../sim/ship.js').Ship} p
+ * @param {Object} ship  the `captureShip` record
+ */
+function restoreHullBar(p, ship) {
+  const saved = num(ship.hullHP, p.maxHullHP);
+  if (!(p.maxHullHP > 0)) return;
+  p.hullHP = Math.max(0, Math.min(saved, p.maxHullHP));
+  // A hull restored above the crippling threshold must not still read as crippled,
+  // and `derelict.js` decides that on the live ratio rather than on a stored flag.
+  if (p.hullHP > 0) p.crippled = false;
 }
 
 function restoreWar(war, data) {

@@ -463,7 +463,19 @@ export class SalvageSystem {
     return this.rng.pick(exact.length ? exact : candidates).id;
   }
 
-  /** Player orders a cut on a specific section. */
+  /**
+   * Player orders a cut on a specific section.
+   *
+   * `mode` IS BOUND TO SHIFT and both cut paths pass it. It had no caller at all until
+   * `input/controls.js#_cut` landed — `_rightClick` and the `Z` handler each called
+   * `orderCut(wreck, section)` with two arguments — so `cutMode` was permanently
+   * `'clean'`, `setCutMode` was unreachable, and `fastCutRate` 1.75 was dead data
+   * describing a verb the player could not perform. Measured on the real system:
+   * 2.95 s at condition 0.62 clean against 1.68 s at 0.51 fast, on the same section of
+   * the same wreck at residual heat 0.6 (`tools/systems.mjs` section 4).
+   *
+   * @param {'clean'|'fast'|null} [mode]  null leaves the current mode alone
+   */
   orderCut(wreck, section, mode = null) {
     if (!section.cuttable) return false;
     if (mode) this.setCutMode(mode);
@@ -472,7 +484,7 @@ export class SalvageSystem {
     return true;
   }
 
-  /** 'clean' | 'fast'. See the cutMode note above. */
+  /** 'clean' | 'fast'. See the cutMode note above, and `orderCut` for the caller. */
   setCutMode(mode) {
     this.cutMode = mode === 'fast' ? 'fast' : 'clean';
     return this.cutMode;

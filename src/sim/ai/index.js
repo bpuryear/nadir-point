@@ -7,7 +7,10 @@
  * world simulation to get it.
  */
 
-export { ShipAI, ShipAISystem, AIHelm, bestArcHeading, effectiveRange } from './shipAI.js';
+export { ShipAI, ShipAISystem, AIHelm, bestArcHeading, effectiveRange, PRESS } from './shipAI.js';
+export {
+  readSystems, makeSystemsRead, aimFor, biasFor, routeFor, AI_BIAS, AI_OVERROUTE,
+} from './pressure.js';
 export { Fleet, FleetAISystem, shipStrength, FORMATIONS } from './fleetAI.js';
 export { pickClass, usingFallbackRoster, AI_ROLES } from './roster.js';
 export { installWorldSim } from '../../world/index.js';

@@ -50,10 +50,40 @@ import { scratch } from '../core/world.js';
  * two verbs by screen state, and it lives in W1-E's file, not this one. Anyone moving
  * either binding should read both sites; `FREE_KEYS` alone will not tell them.
  */
+/**
+ * TWO VERBS THAT WERE DECLARED AND UNREACHABLE, NOW BOUND HERE.
+ *
+ * Both were found by grepping for callers rather than by reading a design document,
+ * and both were the same defect wearing different clothes: a system published a verb,
+ * the UI drew its state, and no input path existed to reach it. That is worse than an
+ * absent feature, because the interface makes a promise the player cannot cash.
+ *
+ *   T          PURGE COOLANT. `sim/heat.js#purge` had ONE caller in the entire tree,
+ *              `src/sim/selftest.mjs:279`. `ui/weapons.js:764` has always drawn
+ *              `stores.coolant` as a row of pips — three of them, from
+ *              `STORES.coolantBase` — and in a real game they could never move.
+ *              `T` for THERMAL; it is on `ui/index.js#FREE_KEYS`, re-grepped on this
+ *              commit rather than trusted, and `Controls` has no screen scoping so
+ *              there is nothing for it to collide with.
+ *
+ *   Shift+Z    FAST CUT, and Shift + right-click likewise. `salvage.js#setCutMode` and
+ *   Shift+RMB  the third parameter of `orderCut(wreck, section, mode)` had no caller
+ *              at all: `_rightClick` and the `Z` handler below both passed two
+ *              arguments, so `cutMode` was permanently `'clean'` and `fastCutRate`
+ *              1.75 was dead data.
+ *
+ *              A MODIFIER, NOT A MODE TOGGLE, and that is a design choice rather than
+ *              a shortage of keys. `orderCut` takes the mode per order, so binding it
+ *              to Shift makes the decision at the moment it is made — with the burning
+ *              wreck and the second contact both on screen — instead of storing a
+ *              sticky state the player set a minute ago and has since forgotten. The
+ *              acknowledgement line carries the mode, so the choice is echoed back.
+ */
 const SALVO_KEY = 'keyr';
 const SALVO_PORT_KEY = 'comma';
 const SALVO_STARBOARD_KEY = 'period';
 const CHARGE_KEY = 'keyl';
+const PURGE_KEY = 'keyt';
 export class Controls {
   constructor(world, { tactical, cinematic, domElement }) {
     this.world = world;
@@ -263,8 +293,7 @@ export class Controls {
 
     const cut = this._pickWreckSection();
     if (cut) {
-      this.world.systems.salvage?.orderCut(cut.wreck, cut.section);
-      this._feedback('salvage', { section: cut.section });
+      this._cut(cut.wreck, cut.section);
       return;
     }
 
@@ -353,6 +382,58 @@ export class Controls {
     return 0;
   }
 
+  /** True while either shift key is down. The one modifier this file reads. */
+  get _shift() {
+    return this.keys.has('shiftleft') || this.keys.has('shiftright');
+  }
+
+  /**
+   * ORDER A CUT, CLEAN OR FAST.
+   *
+   * The single site both cut orders go through, so the mode cannot be bound to one and
+   * not the other. `orderCut`'s third argument sets `cutMode`, which `_updateCut` reads
+   * for BOTH the rate (`fastCutRate` 1.75) and the quality (`cutQuality(..., fast)` plus
+   * a 1.4x burn multiplier while the wreck is still hot). One press, two consequences
+   * pulling opposite ways — a hot wreck cools over about ninety seconds, so waiting is
+   * the third option and the reason the mode is a decision at all.
+   */
+  _cut(wreck, section) {
+    const salvage = this.world.systems.salvage;
+    if (!salvage?.orderCut) return false;
+    const mode = this._shift ? 'fast' : 'clean';
+    if (!salvage.orderCut(wreck, section, mode)) return false;
+    this._feedback('salvage', { section, mode });
+    return true;
+  }
+
+  /**
+   * DUMP COOLANT.
+   *
+   * Refused BEFORE the charge is spent — there are three of them in the whole hold
+   * (`STORES.coolantBase`) and a wasted one is a real loss. `purgeRefusal()` is the
+   * published predicate for that, so this cannot drift out of step with what `purge()`
+   * will actually do.
+   */
+  _purge() {
+    const player = this.world.player;
+    const thermal = player?.thermal;
+    if (!player || player.dead || !thermal?.purge) return false;
+    const refusal = thermal.purgeRefusal?.();
+    if (refusal) {
+      this.bus.emit(EV.NOTIFY, { text: refusal, kind: 'order:purge-refused', transient: true });
+      return false;
+    }
+    const before = thermal.peak;
+    if (!thermal.purge()) {
+      this.bus.emit(EV.NOTIFY, { text: 'PURGE FAILED', kind: 'order:purge-refused', transient: true });
+      return false;
+    }
+    this._feedback('purge', {
+      before, after: thermal.peak, remaining: player.stores?.coolant ?? 0,
+    });
+    return true;
+  }
+
   /**
    * Order acknowledgement. Emitted synchronously with the input so the UI can put a
    * marker on screen this frame - the acceptance criterion is 100 ms and this path
@@ -400,35 +481,58 @@ export class Controls {
         break;
       // --- armament. See the header block for where these four keys came from. ---
       case SALVO_KEY:
-        this._salvo('auto', this.keys.has('shiftleft') || this.keys.has('shiftright'));
+        this._salvo('auto', this._shift);
         break;
       case SALVO_PORT_KEY:
-        this._salvo('port', this.keys.has('shiftleft') || this.keys.has('shiftright'));
+        this._salvo('port', this._shift);
         break;
       case SALVO_STARBOARD_KEY:
-        this._salvo('starboard', this.keys.has('shiftleft') || this.keys.has('shiftright'));
+        this._salvo('starboard', this._shift);
+        break;
+      // Coolant purge. See the header block: this method had one caller in the tree
+      // and it was the self-test.
+      case PURGE_KEY:
+        this._purge();
         break;
 
       case 'keyz': {
         // Nearest cuttable section, one key. Salvage is the loop; make it cheap.
+        // Shift is the FAST cut — see the header block.
         const near = this.world.systems.salvage?.findNearestSection();
-        if (near) {
-          this.world.systems.salvage.orderCut(near.wreck, near.section);
-          this._feedback('salvage', { section: near.section });
-        }
+        if (near) this._cut(near.wreck, near.section);
         break;
       }
       default: break;
     }
 
-    // Power routing presets, gated until the player owns a reactor.
+    /*
+     * Power routing presets, gated until the player owns a reactor.
+     *
+     * F6 IS NEW AND IT IS THE ONE THE NEW SYSTEM NEEDS. The other five are fixed
+     * shares — they were written when the four channels always summed to 1 and there
+     * was nothing else they could be. `power.js` now publishes a DEMAND per channel
+     * derived from the fit, so `applyPreset('demand')` routes in proportion to what
+     * the hull is actually asking for. On a slack hull that feeds everything; on an
+     * oversubscribed one it spreads the shortfall evenly instead of choosing a victim,
+     * which is the right default for a player who has not decided yet.
+     *
+     * It also stops `demandRouting()` being the same defect this commit is fixing
+     * elsewhere: a published method with no caller.
+     */
     if (this.world.unlocked.powerRouting) {
-      const presets = { f1: 'balanced', f2: 'assault', f3: 'run', f4: 'turtle', f5: 'scan' };
+      const presets = {
+        f1: 'balanced', f2: 'assault', f3: 'run', f4: 'turtle', f5: 'scan', f6: 'demand',
+      };
       const preset = presets[code];
       if (preset) {
         e.preventDefault();
-        this.world.player?.power.applyPreset(preset);
-        this._feedback('power', { preset });
+        const plant = this.world.player?.power;
+        plant?.applyPreset(preset);
+        this._feedback('power', {
+          preset,
+          strain: plant?.strain ?? 0,
+          deficit: plant?.deficit ?? 0,
+        });
       }
     }
   };

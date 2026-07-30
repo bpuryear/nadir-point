@@ -26,14 +26,35 @@
  * a loading screen; it is the difference between a fight that ends and a fight that
  * leaves you a hull to take apart.
  *
+ * SECOND: IT NOW FIGHTS THE OTHER FOUR SYSTEMS TOO.
+ *
+ * A grep for `power\.|thermal|stores\.|salvo` across this directory used to return
+ * ZERO hits over 1131 lines. Everything above was true and none of it touched heat,
+ * stores or power — so the player could cook their battery, empty their magazines and
+ * oversubscribe their reactor with nobody on the other side of the table noticing. The
+ * enemy was a bearing problem. It is now a bearing problem AND a clock:
+ *
+ *   - it reads the target's heat, stores and reactor strain every think tick
+ *     (`pressure.js#readSystems`) and PRESSES a hull in trouble: closes the range,
+ *     holds instead of breaking off, and shoots the subsystem with the most leverage
+ *     on the specific trouble it can see;
+ *   - it reads its OWN, and a ship that has cooked its mounts routes power away from
+ *     weapons to buy radiator margin, exactly as `heat.js` asks the player to;
+ *   - a ship that has shot itself dry goes home, which is what makes "outlast them" an
+ *     available tactic rather than a line in `stores.js`'s header;
+ *   - and it routes its reactor, inside the same demand budget the player has, so
+ *     shooting an enemy reactor now slows its guns, its thrust and its shields at once.
+ *
  * NOTHING IN HERE ALLOCATES. Per-ship state is created once on adoption; the solver
- * uses module-level scratch buffers; positions come from `core/world.js#scratch`.
+ * uses module-level scratch buffers; positions come from `core/world.js#scratch`; the
+ * systems reads are two records per ship, made on adoption and mutated in place.
  */
 
 import * as THREE from 'three';
 import { scratch } from '../../core/world.js';
 import { angleDelta, yawOf } from '../physics.js';
 import { EV } from '../../core/events.js';
+import { makeSystemsRead, readSystems, aimFor, biasFor, routeFor } from './pressure.js';
 
 const TAU = Math.PI * 2;
 
@@ -103,8 +124,25 @@ const PROFILE = {
   default: { rangeK: 0.72, station: 0.34, orbitRate: 0.04, breakPoint: 0.30, aim: 'weapon', reacquire: 9 },
 };
 
+/**
+ * PRESSURE CONSTANTS. Four numbers, stated here rather than buried as literals so the
+ * behaviour can be tuned without reading the whole state machine.
+ */
+export const PRESS = {
+  /** `readSystems().pressure` at or above which the target is worth closing on. */
+  at: 0.34,
+  /** Preferred range is multiplied by this while pressing. Their guns are down. */
+  rangeK: 0.55,
+  /** Break point is multiplied by this while pressing. They smell it. */
+  breakK: 0.55,
+  /** Break point is multiplied by this when THIS ship has shot itself dry. */
+  spentBreakK: 1.7,
+};
+
 // Solver scratch. Single-threaded; reused by every ship, every tick.
 const _cand = new Float64Array(24);
+/** Scratch systems read for target SELECTION, which scores several hulls per tick. */
+const _pick = makeSystemsRead();
 
 /**
  * The heading that brings the most guns onto a bearing.
@@ -197,6 +235,19 @@ export class ShipAI {
     /** Diagnostics the probe and the UI read. */
     this.bearingCount = 0;
     this.bearingError = 0;
+
+    /**
+     * What its target's systems are doing, and what its own are. Made once, mutated in
+     * place by `pressure.js#readSystems` every think tick. Both are readable from
+     * outside — `tools/systems.mjs` asserts against them and the UI could show the
+     * enemy's tell without any new plumbing.
+     */
+    this.read = makeSystemsRead();
+    this.selfRead = makeSystemsRead();
+    /** True while the target is in enough trouble to be worth closing on. */
+    this.pressing = false;
+    /** Last routing bias applied, for the diagnostic. */
+    this.routing = 'patrol';
   }
 
   release() {
@@ -230,6 +281,25 @@ export class ShipAISystem {
     this.controlled = [];
     this._nextId = 0;
     this.autoAdopt = opts.autoAdopt !== false;
+    /**
+     * GIVE AI HULLS THE POWER WIDGET.
+     *
+     * `refit.js:375` sets `power.unlocked` for the PLAYER only, off `powerBonus > 0`,
+     * so every hostile in the game ran its reactor at a fixed even split and every
+     * `power.unlocked ? factor : 1` guard in `combat.js`, `ship.js` and `vfx/` took the
+     * constant branch. That is why shooting an enemy reactor out did nothing you could
+     * see: `setHealthFactor` moved a capacity nobody was reading.
+     *
+     * Unlocking it is what makes the enemy subject to the same budget — `power.js`
+     * bills their fit too, `strain` climbs when their reactor is hurt, and a strained
+     * hull cannot reach 1.0 on anything. The rate-of-fire side is bounded by
+     * `pressure.js#AI_OVERROUTE`; see that file for the arithmetic that keeps this from
+     * being a blanket buff.
+     *
+     * Opt-out rather than opt-in so it cannot be forgotten, but nameable, because a
+     * harness that wants the old fixed-split hostile can ask for one.
+     */
+    this.routePower = opts.routePower !== false;
 
     this._offSpawn = this.bus.on(EV.SHIP_SPAWNED, (ship) => {
       if (!this.autoAdopt) return;
@@ -254,6 +324,10 @@ export class ShipAISystem {
       fleet: opts.fleet ?? null,
       role,
     });
+    // The player's plant is unlocked by `refit.js` off a reactor module. An AI hull has
+    // no refit screen, so this is where its reactor comes online. Never touches a
+    // player hull: `adopt` returns above on `ship.isPlayer`.
+    if (this.routePower && ship.power) ship.power.unlocked = true;
     if (opts.anchor) ship.ai.anchor.copy(opts.anchor);
     this.controlled.push(ship);
     return ship.ai;
@@ -310,9 +384,17 @@ export class ShipAISystem {
     const target = ai.target;
     ship.target = target && !target.dead ? target : null;
 
+    // --- what its systems and the target's are doing -------------------------
+    // Read BOTH before any branch below, so every decision in this method sees the
+    // same snapshot. Allocation-free: both records were made on adoption.
+    readSystems(ship, ai.selfRead);
+    readSystems(ship.target, ai.read);
+    ai.pressing = ai.read.valid && ai.read.pressure >= PRESS.at;
+
     if (!ship.target) {
       ship.targetSubsystem = null;
       this._patrol(ship, ai);
+      this._route(ship, ai, 'patrol');
       return;
     }
 
@@ -323,7 +405,11 @@ export class ShipAISystem {
     const bearing = yawOf(dx, dz);
 
     const reach = effectiveRange(ship);
-    const preferred = Math.max(600, reach * ai.profile.rangeK);
+    // A hull whose battery is cooking, whose magazines are empty or whose reactor is
+    // oversubscribed cannot punish you for being close. So get close. This one line is
+    // the difference between an enemy that trades at its own comfortable range whatever
+    // happens and an enemy that notices.
+    const preferred = Math.max(600, reach * ai.profile.rangeK * (ai.pressing ? PRESS.rangeK : 1));
 
     // The one question. Everything below is the answer to it.
     const report = combat
@@ -333,14 +419,34 @@ export class ShipAISystem {
     ai.bearingError = Number.isFinite(report.minError) ? report.minError : 0;
 
     // --- what --------------------------------------------------------------
+    /*
+     * THE BREAK POINT IS NO LONGER A CONSTANT, AND BOTH TERMS ARE SYSTEMS READS.
+     *
+     * It moves DOWN when the target is in trouble — a ship that can see your battery
+     * offline holds on through damage it would otherwise run from, so cooking your
+     * mounts to force a kill has a price and the price is that they stay.
+     *
+     * It moves UP when THIS ship has shot itself dry. A hull with nothing left to
+     * shoot with is not in the fight whatever its hull bar says, and going home is the
+     * correct move. That is what makes "outlast them" a tactic: `stores.js`'s header
+     * has claimed since it was written that "a long fight genuinely dries an enemy up
+     * and 'outlast them' is an available tactic rather than a fiction", and until this
+     * line nothing in the AI read `stores` at all, so it was a fiction.
+     */
+    const breakPoint = ai.profile.breakPoint
+      * (ai.pressing ? PRESS.breakK : 1)
+      * (ai.selfRead.dry ? PRESS.spentBreakK : 1);
     // A fleet withdraws as a fleet. Five separate panics is not a retreat.
-    const losing = ai.hullFraction < ai.profile.breakPoint || ai.fleet?.stance === 'withdraw';
+    const losing = ai.hullFraction < breakPoint || ai.fleet?.stance === 'withdraw';
     const toothless = reach <= 0;
+    // Dry AND unable to make the target pay for it: leave, whatever the hull says.
+    const spent = ai.selfRead.dry && !ai.pressing;
 
-    if (losing || toothless) {
+    if (losing || toothless || spent) {
       if (ai.canManoeuvre) {
         this._withdraw(ship, ai, bearing);
         ship.targetSubsystem = null;
+        this._route(ship, ai, 'withdraw');
         return;
       }
       // Cornered: it cannot leave. It fights with whatever still bears, and this is
@@ -350,6 +456,7 @@ export class ShipAISystem {
       const h = bestArcHeading(ship, bearing);
       ai.helm.heading = Number.isFinite(h) ? h : bearing;
       ship.targetSubsystem = this._pickSubsystem(ship, ai, target, dist, reach);
+      this._route(ship, ai, 'cornered');
       return;
     }
 
@@ -359,6 +466,7 @@ export class ShipAISystem {
       const h = bestArcHeading(ship, bearing);
       ai.helm.heading = Number.isFinite(h) ? h : bearing;
       ship.targetSubsystem = this._pickSubsystem(ship, ai, target, dist, reach);
+      this._route(ship, ai, 'cornered');
       return;
     }
 
@@ -367,6 +475,43 @@ export class ShipAISystem {
     if (dist > reach * 1.02) this._approach(ship, ai, target, bearing, dist, preferred);
     else if (ai.role === 'corvette') this._harass(ship, ai, target, bearing, dist, preferred, report);
     else this._trade(ship, ai, target, bearing, dist, preferred, report);
+
+    // `press` is not a separate steering state — it is `broadside`/`flank` run against a
+    // closed-up preferred range, so the arc solver still owns the heading and a pressing
+    // frigate still has to show its flank. Naming it separately would duplicate the
+    // steering; naming it at all is what lets the UI and the tool see the decision.
+    if (ai.pressing) ai.state = 'press';
+    this._route(ship, ai, ai.pressing ? 'press' : (ai.state === 'approach' ? 'approach' : 'trade'));
+  }
+
+  /**
+   * ROUTE THE REACTOR.
+   *
+   * The AI's half of the power widget. `pressure.js#routeFor` solves a bias against the
+   * hull's own published demand and clamps it at `AI_OVERROUTE`, so an AI hull can
+   * never feed a channel much past what that channel asks for — see the block in that
+   * file for the arithmetic and for why an absolute share table would have handed every
+   * hostile in the game a 52% rate-of-fire increase as a side effect.
+   *
+   * `setAll` renormalises and emits `EV.POWER_ROUTED`, and the plant spools toward it at
+   * `spoolRate` like anybody else's, so an AI that changes its mind mid-fight pays the
+   * same three seconds the player does. Skipped entirely when the hull has no routing
+   * (`unlocked` false), which is every hull until `ShipAISystem.routePower` says
+   * otherwise — see `adopt()`.
+   */
+  _route(ship, ai, state) {
+    const plant = ship.power;
+    if (!plant?.unlocked) return;
+    // Resolve the cooling override FIRST, then compare, so a hull that is cooking does
+    // not re-solve and re-emit `EV.POWER_ROUTED` six times a second for the whole time
+    // it is over the cap. `mounts` is in the key because losing a mount changes the
+    // demand shares this was solved against.
+    const want = ai.selfRead.cooking ? 'cool' : state;
+    const mounts = ship.weapons.length;
+    if (ai.routing === want && ai._routedMounts === mounts) return;
+    ai.routing = want;
+    ai._routedMounts = mounts;
+    plant.setAll(routeFor(plant, biasFor(want, null)));
   }
 
   // --- states ---------------------------------------------------------------
@@ -530,9 +675,20 @@ export class ShipAISystem {
       const d = other.position.distanceTo(ship.position);
       if (d > acquire) continue;
       const hpFrac = other.maxHullHP > 0 ? other.hullHP / other.maxHullHP : 1;
-      const threat = other.weapons.length * (other.defanged ? 0.15 : 1);
-      // Cripples are finished, healthy threats are engaged, distance is a tax.
-      const score = (threat * 1.6 + (1 - hpFrac) * 2.4 + (other.stranded ? 1.2 : 0))
+      /*
+       * THREAT IS NOT A MOUNT COUNT. A four-gun battery that is tripped offline for
+       * heat, or dry, or hanging off a browned-out reactor is not four guns pointed at
+       * you this second. `readSystems` is the same read the pressing behaviour uses,
+       * so target selection and engagement agree about who is in trouble instead of
+       * one of them chasing a hull the other has written off.
+       */
+      readSystems(other, _pick);
+      const threat = other.weapons.length * (other.defanged ? 0.15 : 1)
+        * (1 - _pick.pressure * 0.5);
+      // Cripples are finished, healthy threats are engaged, distance is a tax, and a
+      // hull whose systems are failing is the cheapest kill on the board.
+      const score = (threat * 1.6 + (1 - hpFrac) * 2.4 + (other.stranded ? 1.2 : 0)
+        + _pick.pressure * 2.2)
         - (d / reach) * 1.8;
       if (score > bestScore) { bestScore = score; best = other; }
     }
@@ -555,6 +711,24 @@ export class ShipAISystem {
     let want = ai.profile.aim;
     if (hpFrac < 0.28) want = 'reactor';
     else if (this._isOpening(ship, target)) want = 'engine';
+    /*
+     * AND THEN THE SYSTEMS READ OVERRIDES BOTH, because it is better information.
+     *
+     * `pressure.js#aimFor` maps trouble to leverage: a STRAINED reactor gets shot,
+     * because `power.js#factor` is supply over demand and capacity multiplies through
+     * every channel — taking a third off an oversubscribed reactor takes a third off
+     * the target's rate of fire, thrust and shield regeneration simultaneously, while
+     * the same shot into a slack reactor buys almost nothing. A COOKING battery gets
+     * shot, to finish it while it is offline. A DRY hull gets its engines shot, so it
+     * cannot leave and re-arm.
+     *
+     * It does not override the two rules above it by accident: `hpFrac < 0.28` already
+     * says reactor, and `aimFor` only ever returns something when it has seen a
+     * specific, published failure. When it has seen nothing it returns null and the
+     * profile keeps its default.
+     */
+    const smart = aimFor(ai.read);
+    if (smart) want = smart;
 
     let chosen = null;
     for (const sub of target.subsystems.values()) {
