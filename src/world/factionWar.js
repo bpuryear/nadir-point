@@ -128,13 +128,84 @@ export const ESCALATION = [
   },
 ];
 
+/**
+ * THE LEDGER'S ARITHMETIC, AND THE MEASUREMENT THAT REWROTE IT.
+ *
+ * `perSection`, `sectionRef` and the decay rule all moved, because the shipped ones
+ * could not reach the first rung of the table above them. Measured on the live assembly
+ * — the real registry, the real arrival fit, the real seeded graveyard, a player cutting
+ * flat out with zero wasted time and no travel at all:
+ *
+ *     cuttable sections in the field        60   (30 Coalition, 30 Concord)
+ *     cuts completed in 240 s               64   (the field is stripped bare at ~100 s)
+ *     GROSS claim accrued, both factions   207.1
+ *     PEAK claim on either faction          37.4
+ *     rung 1 needs                         110
+ *     responses spawned                      0
+ *
+ * The old `perSection: 3.0` at the graveyard's control share paid 1.93 per section
+ * against a decay of 1.11/s, and a section takes 2.6 s to cut. Net accrual was
+ * +0.07 claim/s. The first rung was therefore 26 minutes of uninterrupted cutting away,
+ * in a field holding 100 seconds of material. The escalation table was unreachable
+ * content: `ESCALATION` was imported, printed by a harness, and never once fired in a
+ * game. Two things were wrong, and both are fixed here rather than papered over by
+ * dropping the thresholds — the rungs are unchanged at 110 / 260 / 480:
+ *
+ *   DECAY RAN WHEREVER YOU WERE. The header two blocks up says the claim decays "when
+ *   you work somewhere else" and this constant has said "shed per second AT REST" since
+ *   it was written. Neither was implemented: it decayed unconditionally, so cutting
+ *   their hulls in front of them and flying away were the same to the ledger, which is
+ *   the exact distinction the system exists to draw. And the cost is not a rounding
+ *   error, because a salvager spends most of a session in transit. Measured gaps
+ *   between one charge and the next while working the graveyard, real `orderMove` and
+ *   real `PlaneBody`:
+ *
+ *       within one hull   1.3 - 1.6 s          (the cut and the tow)
+ *       hull to hull      29.6, 40.9, 31.2, 116.0 s   coalition
+ *                         58.7, 102.9 s              concord
+ *
+ *   A 116 s crossing shed 129 claim at the old rate — more than a whole hull yields. So
+ *   the ladder could only ever climb inside a single wreck, and one wreck is not worth
+ *   a tender. The rule now says what the fiction always said: THEIR ATTENTION HOLDS
+ *   WHILE YOU ARE STILL IN THE FIELD YOU TOOK THEIR HULLS OUT OF. It falls once you
+ *   leave it, and falls up to three times faster the further outside their space you
+ *   go. That is one sentence, it is the spatial negotiation the header promises rather
+ *   than a timer with a skin on it, and it makes `entry.lastPOI` — recorded on every
+ *   accrual since the ledger was written and read by nothing — load-bearing.
+ *
+ *   The two ways down are both things the player does: leave, or dock at one of their
+ *   berths and settle the bill (`dockRelief`). Idling in their graveyard is not one of
+ *   them, and should not be.
+ *
+ *   ONE SECTION WAS ONE SECTION. A capital's spine and a sensor mast were the same
+ *   theft. `sectionRef` makes the charge proportional to what came out of the hull,
+ *   using `section.materials`, which the salvage layer already computes — so "which
+ *   wreck do I open" is a decision about attention as well as about yield. Measured
+ *   spread on the seeded field: min 2, median 12, max 34.
+ *
+ * WHAT THIS BUYS, measured after the change by `escalationHarness.mjs` sections 3-5, on
+ * a player who FLIES between the hulls under the real controller:
+ *
+ *     working Coalition hulls   warned  48 s (claim 79) · tender launched  88 s after
+ *                               18 sections · first hostile bearing on you 131 s
+ *                               · closed to 97 m
+ *     working Concord hulls     warned 184 s (claim 105) · tender launched 200 s after
+ *                               21 sections · first hostile bearing on you 261 s
+ *                               · closed to 277 m
+ *
+ * So: strip about two of a faction's hulls and their tender is on its way, and you read
+ * about it before it launches. Six sections and a course out sheds the lot and draws
+ * nobody. Both of those are assertions in the harness, not claims in this comment.
+ */
 const LEDGER = {
-  /** Claim shed per second at rest, before the spatial multiplier. */
+  /** Claim shed per second once you have left the field you earned it in. */
   decay: 0.55,
-  /** ...multiplied by up to this much when working outside their space entirely. */
+  /** ...multiplied by up to this much when you are outside their space entirely. */
   awayMul: 3.0,
   /** Claim charged for one cut section, scaled by how much of the place they hold. */
-  perSection: 3.0,
+  perSection: 7.0,
+  /** Section materials that count as one whole section. Charge is 0.5 + mats/ref. */
+  sectionRef: 12,
   perModule: 16.0,
   perAmmo: 5.0,
   /** Killing one of their hulls is worth a lot of cutting. */
@@ -143,9 +214,31 @@ const LEDGER = {
   dockRelief: 0.35,
   /** Warn the player at this fraction of the next threshold. */
   warnAt: 0.70,
+  /**
+   * A response may not launch until its warning has been on screen this long. Without
+   * it a single event large enough to cross both the warn line and the threshold — a
+   * kill is worth 30 — fires the warning and the group on the same strategic step, and
+   * a warning that arrives with the thing it warns about is not a warning.
+   */
+  warnLead: 12,
   /** A response arriving discharges this fraction: they have made their point. */
   dischargeOnSpawn: 0.30,
+  /** After this long in the field a response gives up and goes home. */
+  responseTTL: 480,
 };
+
+/**
+ * How big a theft one cut section is, as a multiple of an ordinary one.
+ *
+ * `section.materials` is the salvage layer's own measure of how much hull came away and
+ * is already on the record the event carries, so this adds no new state. Clamped so a
+ * 2-material offcut still registers and a 34-material spine cannot be worth six of them.
+ */
+function sectionWeight(section) {
+  const m = section?.materials;
+  if (!(m > 0)) return 1;
+  return THREE.MathUtils.clamp(0.5 + m / LEDGER.sectionRef, 0.5, 3.0);
+}
 
 /** Per-POI simulation state. */
 export class POIWarState {
@@ -267,11 +360,18 @@ export class FactionWarSystem {
      * table has already been answered and when they may answer again.
      */
     this.ledger = {
-      coalition: { claim: 0, tier: -1, cooldown: 0, warned: -1, lastPOI: null, responses: 0 },
-      concord: { claim: 0, tier: -1, cooldown: 0, warned: -1, lastPOI: null, responses: 0 },
+      coalition: {
+        claim: 0, tier: -1, cooldown: 0, warned: -1, warnedAt: -1e9,
+        lastPOI: null, responses: 0,
+      },
+      concord: {
+        claim: 0, tier: -1, cooldown: 0, warned: -1, warnedAt: -1e9,
+        lastPOI: null, responses: 0,
+      },
     };
     /** @type {Object[]} live escalation groups, for the read API. */
     this.responses = [];
+    this._responseAccum = 0;
 
     this.name = 'faction-war';
     this.order = 20;
@@ -463,6 +563,7 @@ export class FactionWarSystem {
     if (steps >= 8) this._stepAccum = 0;
 
     this._updateBattles(dt);
+    this._updateResponses(dt);
     this._retireLeavers();
     this._observe(dt);
 
@@ -825,6 +926,68 @@ export class FactionWarSystem {
   }
 
   /**
+   * KEEP A RESPONSE POINTED AT THE PERSON IT WAS SENT ABOUT.
+   *
+   * A group used to be spawned and then forgotten, and the forgetting was measurable.
+   * Spawn anchored on the POI CENTRE at a random bearing, 17-26 km out; the player can
+   * be anywhere inside a 26 km POI radius; `ShipAI._selectTarget` acquires at a floor of
+   * 26 km. So a group could open 40 km from the player, see nobody, and — because a
+   * fleet with no focus formed its slots around its own centroid — sit exactly where it
+   * spawned for the rest of the game. Measured on the live assembly, ten runs with the
+   * player parked at five distances from the POI centre:
+   *
+   *     off  0 km   spawn 19.3 / 25.5 km   closest 0.08 / 0.13 km   in range  75 s /100 s
+   *     off  9 km   spawn 27.8 / 23.5 km   closest 11.73 / 0.06 km  in range NEVER / 90 s
+   *     off 16 km   spawn  8.0 / 32.5 km   closest 0.06 / 31.99 km  in range  30 s /NEVER
+   *     off 22 km   spawn 25.4 / 37.6 km   closest 0.20 / 24.18 km  in range  95 s /NEVER
+   *     off 25 km   spawn 40.1 /  6.4 km   closest 26.68 / 0.17 km  in range NEVER / 23 s
+   *
+   * Four of ten never came. Not "arrived late" — never moved at all. `_spawnResponse`
+   * now opens at a standoff measured from the player, and this pass keeps the group's
+   * forming-up anchor on the player so a group that loses contact steers to where the
+   * player is rather than to where it happened to appear. Both halves are needed: the
+   * spawn fix alone still strands a group whose target crosses the field.
+   *
+   * It also gives a response an END. Nothing retired one before, so every group ever
+   * sent stayed in the world; they leave after `LEDGER.responseTTL` through the same
+   * withdrawal path battle survivors use, which is what makes running a real answer.
+   *
+   * Runs at 2 Hz over at most eight groups of at most three hulls, and allocates
+   * nothing — `Vector3.set` on an anchor that already exists.
+   */
+  _updateResponses(dt) {
+    if (this.responses.length === 0) return;
+    this._responseAccum += dt;
+    if (this._responseAccum < 0.5) return;
+    this._responseAccum = 0;
+
+    const player = this.world.player;
+    const playable = !!player && !player.dead;
+    for (let i = this.responses.length - 1; i >= 0; i--) {
+      const group = this.responses[i];
+      let alive = 0;
+      for (const s of group.ships) if (s && !s.dead) alive++;
+      if (alive === 0) { this.responses.splice(i, 1); continue; }
+
+      if (this.time - group.at > LEDGER.responseTTL) {
+        if (!group.retiring) {
+          group.retiring = true;
+          if (group.fleet) group.fleet.stance = 'withdraw';
+          for (const s of group.ships) {
+            if (!s || s.dead) continue;
+            s.__leaveAt = this.time + 150;
+            s.__leavePOI = group.poiId;
+            this._leaving.push(s);
+          }
+        }
+        continue;
+      }
+      if (!playable || !group.fleet) continue;
+      group.fleet.anchor.set(player.position.x, 0, player.position.z);
+    }
+  }
+
+  /**
    * Retire withdrawing survivors. Ships are removed once they are outside the player's
    * useful view or have been running long enough, and their strength goes back into the
    * garrison they came from - so a fleet that survives a battle is a fleet that is
@@ -1071,18 +1234,31 @@ export class FactionWarSystem {
 
     this._offSalvage = this.bus.on(EV.SALVAGE_ACQUIRED, (e) => {
       const section = e?.section;
+      /*
+       * NO SECTION MEANS IT DID NOT COME OFF ANYBODY'S HULL JUST NOW.
+       *
+       * `sim/meta/index.js:293` emits `SALVAGE_ACQUIRED { kind: 'materials' }` with no
+       * section when the player breaks a part down in their OWN hold. That fell through
+       * to `_lastCutFaction` and billed reputation and claim to whoever's wreck was cut
+       * last — a hull the player already owned, possibly hours and a berth ago. The
+       * fallback is kept for the case it was written for: a real section whose wreck has
+       * already been removed from the world.
+       */
+      if (!section) return;
       let faction = this._lastCutFaction;
-      if (section) {
-        for (const w of world.wrecks) {
-          if (w.sections.includes(section)) { faction = w.faction; break; }
-        }
+      for (const w of world.wrecks) {
+        if (w.sections.includes(section)) { faction = w.faction; break; }
       }
       if (faction === 'coalition' || faction === 'concord') {
         // Stripping a hull is theft, and both sides know whose hull it was.
         this.adjustReputation(faction, -1.1, 'salvage');
+        // A capital's spine and a sensor mast were the same theft before this. The
+        // charge for raw section is now proportional to what actually came out of the
+        // hull; a recovered module and a magazine keep their own flat weights because
+        // what makes those expensive is what they ARE, not what they mass.
         const weight = e?.kind === 'module' ? LEDGER.perModule
           : e?.kind === 'ammo' ? LEDGER.perAmmo
-            : LEDGER.perSection;
+            : LEDGER.perSection * sectionWeight(section);
         this.accrueClaim(faction, weight, 'salvage');
       }
     });
@@ -1132,9 +1308,25 @@ export class FactionWarSystem {
     const share = player ? this._controlShare(faction, player.position.x, player.position.z) : 0.5;
     const delta = base * (0.30 + 0.70 * share);
     entry.claim += delta;
+    /*
+     * WHERE you took it from, which is what `_holdingField` reads to decide whether
+     * their attention is still on you. This has been recorded on every accrual since
+     * the ledger was written and was read by nothing at all.
+     */
     entry.lastPOI = this.system.containing(player?.position.x ?? 0, player?.position.z ?? 0)?.id ?? null;
     this.bus.emit(MEV.LEDGER_CHANGED, { faction, claim: entry.claim, delta, reason });
     return delta;
+  }
+
+  /**
+   * Is the player still standing in the field this claim was earned in?
+   *
+   * One predicate, called by the simulation and by the readout, so the number the HUD
+   * prints and the number the ledger applies can never come from two different rules.
+   */
+  _holdingField(entry, player) {
+    if (!player || entry.lastPOI === null) return false;
+    return this.system.containing(player.position.x, player.position.z)?.id === entry.lastPOI;
   }
 
   /** 0..1 how much of the control field at a point belongs to this faction. */
@@ -1160,9 +1352,13 @@ export class FactionWarSystem {
       if (entry.cooldown > 0) entry.cooldown -= dt;
 
       // Away from their space, attention fades fast. Sitting in it, it barely fades.
+      // AND IT DOES NOT FADE AT ALL WHILE YOU ARE STILL IN THE FIELD YOU TOOK THEIR
+      // HULLS OUT OF: see the LEDGER block for the transit measurements that forced
+      // this. A field with no id — open space — can never be held, because you cannot
+      // still be standing in a place that is not one.
       const share = alive ? this._controlShare(faction, player.position.x, player.position.z) : 0;
       const mul = 1 + (1 - share) * (LEDGER.awayMul - 1);
-      if (entry.claim > 0) {
+      if (entry.claim > 0 && !this._holdingField(entry, alive ? player : null)) {
         entry.claim = Math.max(0, entry.claim - LEDGER.decay * mul * dt);
       }
 
@@ -1176,13 +1372,19 @@ export class FactionWarSystem {
 
       if (entry.warned <= entry.tier && entry.claim >= next.at * LEDGER.warnAt) {
         entry.warned = entry.tier + 1;
+        entry.warnedAt = this.time;
         this.bus.emit(EV.NOTIFY, {
           text: `${faction.toUpperCase()} HAS NOTICED — ${next.tier.toUpperCase()} AT `
             + `${Math.round(next.at)} CLAIM, YOU ARE AT ${Math.round(entry.claim)}`,
           important: true,
         });
       }
-      if (entry.claim >= next.at && entry.cooldown <= 0) {
+      // The warning has to have been readable BEFORE the thing it warns about. A kill is
+      // worth 30 claim, so without this a single event could cross the warn line and the
+      // threshold on the same strategic step and both notifications would land together.
+      const warnedInTime = entry.warned > entry.tier
+        && this.time - entry.warnedAt >= LEDGER.warnLead;
+      if (entry.claim >= next.at && entry.cooldown <= 0 && warnedInTime) {
         entry.tier++;
         entry.cooldown = next.cooldown;
         entry.responses++;
@@ -1202,20 +1404,39 @@ export class FactionWarSystem {
     if (!player) return null;
     const rng = this._escalationRng.fork(`${faction}:${rung.tier}:${this.ledger[faction].responses}`);
 
-    // A tender or a picket comes to the FIELD; a hunter comes to YOU.
+    /*
+     * EVERY RUNG OPENS AT A STANDOFF FROM THE PLAYER, NOT FROM THE POI CENTRE.
+     *
+     * A tender or a picket still comes to the FIELD and a hunter still cuts across your
+     * line of retreat — that difference is now carried by the BEARING and by how far out
+     * they open, which is what the player can actually see, rather than by which point
+     * the maths happened to measure from. Measuring from the centre was not a fiction
+     * with a different flavour, it was a bug: the POI radius is 26 km, the group opened
+     * 17-26 km from the centre on a random bearing, and `ShipAI._selectTarget` acquires
+     * at a floor of 26 km. Four of ten measured runs opened outside acquisition and
+     * never moved again. See `_updateResponses` for the table.
+     *
+     * Both standoffs are inside the acquisition floor by construction, so a group can
+     * always see what it was sent about on its first think tick.
+     */
     const here = this.system.containing(player.position.x, player.position.z);
-    const anchor = rung.plotsToPlayer || !here ? player.position : here.position;
     const bearing = rung.plotsToPlayer
       ? Math.atan2(player.velocity.x, player.velocity.z) + Math.PI
       : rng.range(0, Math.PI * 2);
-    const standoff = rung.plotsToPlayer ? rng.range(11000, 16000) : rng.range(17000, 26000);
+    // A tender announces itself from the edge of the field and takes a minute and a half
+    // to arrive; a hunter is already close when you read the warning.
+    const standoff = rung.plotsToPlayer ? rng.range(10000, 15000) : rng.range(14000, 21000);
+    const anchor = player.position;
 
     const fleet = this.fleetAI?.create({
       faction, anchor: new THREE.Vector3(anchor.x, 0, anchor.z), poiId: here?.id ?? null,
     }) ?? null;
     if (fleet) fleet.stance = 'engage';
 
-    const group = { faction, tier: rung.tier, at: this.time, poiId: here?.id ?? null, ships: [] };
+    const group = {
+      faction, tier: rung.tier, at: this.time, poiId: here?.id ?? null,
+      fleet, retiring: false, ships: [],
+    };
     for (let i = 0; i < rung.roles.length; i++) {
       const classDef = pickClass(faction, rung.roles[i]);
       if (!classDef) continue;
@@ -1266,8 +1487,15 @@ export class FactionWarSystem {
     for (const faction of ['coalition', 'concord']) {
       const entry = this.ledger[faction];
       const share = player ? this._controlShare(faction, player.position.x, player.position.z) : 0.5;
-      const decayPerSecond = LEDGER.decay * (1 + (1 - share) * (LEDGER.awayMul - 1));
+      const holding = this._holdingField(entry, player && !player.dead ? player : null);
+      const rate = LEDGER.decay * (1 + (1 - share) * (LEDGER.awayMul - 1));
+      // What it is ACTUALLY doing this second, not what it would do if you left. A
+      // readout that printed "shedding 1.11/s" at a claim that was pinned was telling
+      // the player the opposite of what the number was doing, and the whole decision
+      // this system creates is "how long can I keep working here".
+      const decayPerSecond = holding ? 0 : rate;
       const next = ESCALATION[entry.tier + 1] ?? null;
+      const live = this.responses.filter((g) => g.faction === faction).length;
       out.push({
         faction,
         claim: entry.claim,
@@ -1278,14 +1506,20 @@ export class FactionWarSystem {
         secondsToNext: next && decayPerSecond > 0
           ? (entry.claim >= next.at ? 0 : null)
           : null,
+        /** 0 while you are still in the field; `awayDecay` is what it becomes. */
         decayPerSecond,
+        awayDecay: rate,
+        holding,
+        holdingAt: holding ? entry.lastPOI : null,
+        inField: live,
         theirSpace: share,
         cooldown: Math.max(0, entry.cooldown),
         responses: entry.responses,
         /** The sentence a HUD prints verbatim. */
         text: next
           ? `${Math.round(entry.claim)} / ${next.at} to ${next.tier.toUpperCase()} `
-            + `· shedding ${decayPerSecond.toFixed(2)}/s`
+            + (holding ? '· HOLDING — you are still in the field you took it from'
+              : `· shedding ${rate.toFixed(2)}/s`)
           : `${Math.round(entry.claim)} · everything they have is already out`,
       });
     }

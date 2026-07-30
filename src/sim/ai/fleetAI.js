@@ -236,6 +236,23 @@ export class FleetAISystem {
    * Write the formation slots. Runs every step (not just on the think tick) so slots
    * track a moving centroid smoothly; it is pure arithmetic over a handful of ships
    * into vectors that already exist.
+   *
+   * WHICH POINT THE FORMATION IS BUILT AROUND IS THE WHOLE OF "GO SOMEWHERE".
+   *
+   * This used to build every slot around `fleet.centroid` unconditionally, including
+   * when the fleet had nothing to fight — so `ShipAI._patrol`, whose entire job is to
+   * drive to `slotFor(ship)`, was handed a point roughly where the ship already stood,
+   * measured `d < anchorRadius`, and set the throttle to zero. A fleet with no target
+   * therefore could not move, and `Fleet.anchor` — documented in the constructor as
+   * "where it forms up when it has nothing to fight" — was read by nothing except a
+   * facing fallback. It was decorative.
+   *
+   * That is not a tidiness point. It is why an escalation group that opened outside its
+   * own acquisition range sat on its spawn point for the rest of the game: nothing in
+   * the fleet layer could tell it where to be. With no focus the formation now assembles
+   * on the anchor, which `FactionWarSystem._updateResponses` keeps on the player, so a
+   * group that has lost contact steers to where its quarry is instead of holding a
+   * station nobody chose. With a focus, `base` is the centroid exactly as before.
    */
   _updateSlots(fleet) {
     const n = fleet.ships.length;
@@ -243,6 +260,7 @@ export class FleetAISystem {
     const s = Math.sin(fleet.facing), c = Math.cos(fleet.facing);
     // right-hand perpendicular of the facing, on the plane
     const rx = c, rz = -s;
+    const base = fleet.focus && !fleet.focus.dead ? fleet.centroid : fleet.anchor;
 
     for (let i = 0; i < n; i++) {
       const slot = fleet._slots[i] ?? (fleet._slots[i] = new THREE.Vector3());
@@ -251,9 +269,9 @@ export class FleetAISystem {
       if (fleet.formation === 'wedge') along = -Math.abs(i - (n - 1) * 0.5) * fleet.spacing * 0.8;
       else if (fleet.formation === 'screen') along = fleet.spacing * 1.6;
       slot.set(
-        fleet.centroid.x + rx * lateral + s * along,
+        base.x + rx * lateral + s * along,
         0,
-        fleet.centroid.z + rz * lateral + c * along,
+        base.z + rz * lateral + c * along,
       );
     }
   }

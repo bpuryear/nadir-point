@@ -196,6 +196,37 @@ export function aimFor(read) {
 }
 
 /**
+ * THE SAME DECISION, AS A SENTENCE THE PLAYER CAN READ.
+ *
+ * `scope-decision.md`'s fourth test is "can the player see it?", and until this existed
+ * the answer for the whole pressure model was no. The AI read four booleans off the
+ * player's own systems, closed the range, held through damage it would otherwise have
+ * run from, and re-aimed at the subsystem with the most leverage — and every part of
+ * that was invisible. The player experienced "the fight got harder around the time my
+ * battery tripped" and had no way to connect the two, which makes a good system read as
+ * bad luck.
+ *
+ * IT IS DERIVED FROM THE SAME BRANCHES IN THE SAME ORDER AS `aimFor`, deliberately, so
+ * the sentence and the shot can never disagree. A tell that says "it is shooting your
+ * reactor" while the solver aims somewhere else is worse than silence — it teaches the
+ * player a rule the game does not follow. `escalationHarness.mjs` asserts the pairing
+ * case by case rather than trusting this comment.
+ *
+ * `pinned` has no `aimFor` branch — a hull that cannot run is not a leverage point, it
+ * is an opportunity — so its sentence names no subsystem.
+ *
+ * @returns {string|null} a clause for `EV.NOTIFY`, or null when nothing is visibly wrong
+ */
+export function pressReason(read) {
+  if (!read?.valid) return null;
+  if (read.strained) return 'YOUR REACTOR IS OVERSUBSCRIBED — IT IS SHOOTING THE REACTOR';
+  if (read.cooking) return 'YOUR MOUNTS ARE OVER THE CAP — IT IS SHOOTING THE BATTERY';
+  if (read.dry) return 'YOUR MAGAZINES ARE FLAT — IT IS SHOOTING THE DRIVE';
+  if (read.pinned) return 'YOU CANNOT RUN — IT IS CLOSING TO POINT BLANK';
+  return null;
+}
+
+/**
  * POWER ROUTING FOR AN AI HULL — BIASES ON ITS OWN DEMAND, NOT ABSOLUTE SHARES.
  *
  * These are MULTIPLIERS applied to the hull's `demandRouting()` — the allocation that

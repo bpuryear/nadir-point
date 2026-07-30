@@ -49,6 +49,7 @@
  */
 
 import { EV } from '../core/events.js';
+import { MEV } from '../sim/meta/events.js';
 import { KM, RANGE } from '../core/units.js';
 import { registerItem } from '../core/contracts.js';
 
@@ -84,6 +85,13 @@ const RESOLVE = {
   shipRate: 0.30,
   shipReach: 1.35,
 };
+
+/**
+ * Resolution a squawking escalation group is seeded at: a MASS SIGNATURE with a bearing
+ * and an error band, deliberately below `RESOLVE.classified` so naming the thing is
+ * still the sensor channel's job. See the `MEV.ESCALATION` binding in `_bind`.
+ */
+const SQUAWK = 0.30;
 
 /**
  * PROBES, and the enemy-probe dilemma.
@@ -978,6 +986,85 @@ export class DiscoverySystem {
 
     // Cutting a place open resolves it whether or not it was on the map.
     this._offEnter = this.bus.on(EV.POI_ENTERED, ({ id }) => this.reveal(id, 'sensors'));
+
+    /*
+     * A RECOVERY TENDER HAILS. A HUNTER-KILLER DOES NOT.
+     *
+     * Measured on the live assembly: an escalation group opens 17.3 - 20.4 km from the
+     * player, and the arrival fit's hull-contact reach in the graveyard's debris terrain
+     * is 12.9 km (`RANGE.sensorBase` 14 km x 3 sensor pips x terrain.sensor 0.68 x
+     * `RESOLVE.shipReach`). So the player read "RECOVERY TENDER INBOUND" and then looked
+     * at an empty display for the forty seconds it took to close — a warning with no
+     * bearing, which is a jump scare rather than a decision.
+     *
+     * The fix belongs here rather than in the war, because moving the spawn inside the
+     * sensor envelope would couple the two layers' constants and would make every rung
+     * arrive the same way. What actually differs between the rungs is INTENT, and that
+     * is a sensor fact: a tender and a picket are announcing that the field is theirs,
+     * so they squawk, and the player gets a bearing and a tonnage the moment they
+     * launch. A hunter-killer is not announcing anything. It stays dark and you find it
+     * on your own sensors, which is the whole reason the third rung is the frightening
+     * one.
+     *
+     * Seeded at `SQUAWK`, deliberately below `RESOLVE.classified`: a MASS SIGNATURE with
+     * a bearing and an error band, not a name. Naming it is still the sensor channel's
+     * job and still costs power.
+     */
+    this._offEscalation = this.bus.on(MEV.ESCALATION, ({ faction, tier }) => {
+      if (tier === 'hunter') return;
+      const group = this._latestResponse(faction, tier);
+      if (!group) return;
+      let announced = 0;
+      for (const ship of group.ships) {
+        if (!ship || ship.dead) continue;
+        if (this.markShipContact(ship, SQUAWK)) announced++;
+      }
+      if (announced > 0) {
+        this.bus.emit(EV.NOTIFY, {
+          text: `${faction.toUpperCase()} ${tier.toUpperCase()} SQUAWKING — `
+            + `${announced} MASS SIGNATURE${announced === 1 ? '' : 'S'} ON YOUR SENSORS`,
+          important: true,
+        });
+      }
+    });
+  }
+
+  /** The group the war just launched, from its own published read API. */
+  _latestResponse(faction, tier) {
+    const list = this.war?.responses;
+    if (!list) return null;
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i].faction === faction && list[i].tier === tier) return list[i];
+    }
+    return null;
+  }
+
+  /**
+   * Put a hull on the sensor board at a floor resolution, creating the record if it is
+   * not there yet. Returns true when this call actually moved something.
+   *
+   * A floor rather than an assignment, for the same reason `contact()` above is: a hull
+   * the player has already worked out must never be blurred by something announcing
+   * itself.
+   */
+  markShipContact(ship, resolution) {
+    if (!ship || ship.dead) return false;
+    let rec = this.shipContacts.get(ship);
+    if (!rec) {
+      rec = {
+        ship,
+        resolution: 0,
+        trueMass: ship.classDef?.mass ?? 1000,
+        jitter: this.rng.signed(),
+        firstSeen: this._clock,
+        markedSeen: false,
+        markedScanned: false,
+      };
+      this.shipContacts.set(ship, rec);
+    }
+    if (rec.resolution >= resolution) return false;
+    rec.resolution = Math.min(1, resolution);
+    return true;
   }
 
   /**
@@ -1168,6 +1255,7 @@ export class DiscoverySystem {
     this._offCut?.();
     this._offSalvage?.();
     this._offEnter?.();
+    this._offEscalation?.();
     this.probes.length = 0;
     this.shipContacts.clear();
   }

@@ -45,6 +45,15 @@
  *   - and it routes its reactor, inside the same demand budget the player has, so
  *     shooting an enemy reactor now slows its guns, its thrust and its shields at once.
  *
+ * THIRD: IT SAYS SO.
+ *
+ * All of that changed four behaviours off state only the simulation could see, which
+ * fails `scope-decision.md`'s fourth test — "hidden state that changes outcomes is a
+ * bug, not depth" — for the whole model. A hull that commits to pressing the PLAYER now
+ * names the tell it is pressing, once, through the same notification column that
+ * carries `_withdraw`'s "is breaking off". See `_tell`, and `pressure.js#pressReason`
+ * for why the sentence is derived from the same branches as the shot.
+ *
  * NOTHING IN HERE ALLOCATES. Per-ship state is created once on adoption; the solver
  * uses module-level scratch buffers; positions come from `core/world.js#scratch`; the
  * systems reads are two records per ship, made on adoption and mutated in place.
@@ -54,7 +63,7 @@ import * as THREE from 'three';
 import { scratch } from '../../core/world.js';
 import { angleDelta, yawOf } from '../physics.js';
 import { EV } from '../../core/events.js';
-import { makeSystemsRead, readSystems, aimFor, biasFor, routeFor } from './pressure.js';
+import { makeSystemsRead, readSystems, aimFor, biasFor, routeFor, pressReason } from './pressure.js';
 
 const TAU = Math.PI * 2;
 
@@ -137,6 +146,8 @@ export const PRESS = {
   breakK: 0.55,
   /** Break point is multiplied by this when THIS ship has shot itself dry. */
   spentBreakK: 1.7,
+  /** Seconds before one hull will say out loud what it is pressing again. */
+  tellCooldown: 22,
 };
 
 // Solver scratch. Single-threaded; reused by every ship, every tick.
@@ -248,6 +259,14 @@ export class ShipAI {
     this.pressing = false;
     /** Last routing bias applied, for the diagnostic. */
     this.routing = 'patrol';
+    /**
+     * The sentence this hull would say about why it is pressing, or null. Published so
+     * a UI stream can render the enemy's read against the contact without any new
+     * plumbing, and so a tool can assert that the tell and the shot agree.
+     */
+    this.tell = null;
+    this._toldWhat = null;
+    this._toldAt = -1e9;
   }
 
   release() {
@@ -390,6 +409,7 @@ export class ShipAISystem {
     readSystems(ship, ai.selfRead);
     readSystems(ship.target, ai.read);
     ai.pressing = ai.read.valid && ai.read.pressure >= PRESS.at;
+    this._tell(ship, ai);
 
     if (!ship.target) {
       ship.targetSubsystem = null;
@@ -482,6 +502,36 @@ export class ShipAISystem {
     // steering; naming it at all is what lets the UI and the tool see the decision.
     if (ai.pressing) ai.state = 'press';
     this._route(ship, ai, ai.pressing ? 'press' : (ai.state === 'approach' ? 'approach' : 'trade'));
+  }
+
+  /**
+   * SAY IT OUT LOUD.
+   *
+   * The pressure model changed four behaviours — range, break point, target choice and
+   * subsystem choice — off state only the simulation could see. From the cockpit that
+   * reads as the fight arbitrarily getting harder, which fails `scope-decision.md`'s
+   * fourth test ("hidden state that changes outcomes is a bug, not depth") for the
+   * whole system. So when a hull commits to pressing the PLAYER it names the tell it is
+   * pressing, once, through the same `EV.NOTIFY` column that already carries
+   * `_withdraw`'s "is breaking off" — the symmetric message, and the one that turns
+   * "why am I losing" into a sentence.
+   *
+   * Only ever about the player's own hull: a frigate pressing another frigate across
+   * the field is not the player's business and would bury the column. Bounded by
+   * `PRESS.tellCooldown` per hull and by the tell not having changed, so a player
+   * oscillating around the thermal cap gets one line, not forty.
+   */
+  _tell(ship, ai) {
+    const reason = ai.pressing && ship.target?.isPlayer ? pressReason(ai.read) : null;
+    ai.tell = reason;
+    if (!reason) { if (!ai.pressing) ai._toldWhat = null; return; }
+    if (ai._toldWhat === reason && ai.stateTime - ai._toldAt < PRESS.tellCooldown) return;
+    ai._toldWhat = reason;
+    ai._toldAt = ai.stateTime;
+    this.bus.emit(EV.NOTIFY, {
+      text: `${(ship.classDef?.name ?? 'CONTACT').toUpperCase()} IS PRESSING — ${reason}`,
+      ship, important: true, faction: ship.faction,
+    });
   }
 
   /**

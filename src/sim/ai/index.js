@@ -9,7 +9,7 @@
 
 export { ShipAI, ShipAISystem, AIHelm, bestArcHeading, effectiveRange, PRESS } from './shipAI.js';
 export {
-  readSystems, makeSystemsRead, aimFor, biasFor, routeFor, AI_BIAS, AI_OVERROUTE,
+  readSystems, makeSystemsRead, aimFor, pressReason, biasFor, routeFor, AI_BIAS, AI_OVERROUTE,
 } from './pressure.js';
 export { Fleet, FleetAISystem, shipStrength, FORMATIONS } from './fleetAI.js';
 export { pickClass, usingFallbackRoster, AI_ROLES } from './roster.js';
