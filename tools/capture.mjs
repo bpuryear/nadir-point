@@ -6,6 +6,13 @@
  * force a loadout, or run an arbitrary setup snippet against window.__NADIR.
  *
  *   npm run capture -- --out docs/review/pass1 --shots wide,close,silhouette
+ *
+ * THIS TOOL CANNOT GRADE R1 OR R2. Its three guards are an empty-frame tripwire on a
+ * whole-frame 160x90 downscale; they say nothing about the background, which is what
+ * `docs/design/reference-frames.md` §2 measures. Use `node tools/fieldcheck.mjs` for
+ * that — it hides `world.scene`, renders `renderer.far` alone through the same post
+ * chain, and reports median luma, % above 0.06, median chroma, hue and hue-band width
+ * at full canvas resolution. See the note above the frame statistic below.
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -105,6 +112,29 @@ try {
      * luminance) near zero means an empty or flat frame. A high clipped fraction
      * means the top of the value curve is blown out, which is the exact failure the
      * critic found on every hull.
+     *
+     * WHAT THESE NUMBERS ARE NOT, AND WHERE TO GO INSTEAD.
+     *
+     * They are WHOLE-FRAME statistics of a 160x90 = 14400 px box-filtered downscale,
+     * over hull + debris + VFX + background together. They cannot answer R1 or R2
+     * (`docs/design/reference-frames.md` §2):
+     *
+     *   - no median, and R1 is a median;
+     *   - no chroma or hue, and R2 is both;
+     *   - no background isolation, so a bright hull can carry a frame whose field is
+     *     black, which is the exact failure R1 was written against;
+     *   - `drawImage` at 1/10 scale averages 100 source pixels into one, which pulls
+     *     chroma toward grey and flattens contrast. Fine for these three guards.
+     *     Wrong for a chroma median.
+     *
+     * `tools/fieldcheck.mjs` does all four, at full canvas resolution, with
+     * `world.scene` hidden so the field is measured alone. The guards below stay
+     * exactly as they were — this block is the empty-frame tripwire it has always
+     * been, and nothing here is a look target.
+     *
+     * `samples` is reported because this project has shipped a UI audit that measured
+     * zero panels and a harness that certified a system that never ran. A statistic
+     * without its N is a statistic that can pass on nothing.
      */
     const frame = await page.evaluate(() => {
       const src = document.getElementById('viewport');
@@ -124,6 +154,8 @@ try {
       }
       const mean = sum / n;
       return {
+        samples: n,
+        sampleSize: `${w}x${h}`,
         meanLuma: +mean.toFixed(4),
         contrast: +Math.sqrt(Math.max(0, sum2 / n - mean * mean)).toFixed(4),
         clippedPct: +(clipped / n * 100).toFixed(2),
@@ -153,6 +185,7 @@ try {
     });
     console.log(`shot ${shot.id.padEnd(14)} calls=${String(stats.calls).padStart(4)} tris=${String(stats.triangles).padStart(8)}`
       + `  luma=${frame.meanLuma.toFixed(3)} contrast=${frame.contrast.toFixed(3)} clipped=${String(frame.clippedPct).padStart(5)}%`
+      + `  [N=${frame.samples} px, whole frame]`
       + `  -> ${path.relative(ROOT, file)}`);
     for (const w of warnings) { console.warn(`   !! ${w}`); process.exitCode = 1; }
     await page.close();
