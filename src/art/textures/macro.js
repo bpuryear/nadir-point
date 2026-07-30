@@ -398,6 +398,38 @@ const HAZ_MIN_M = 11;
 
 /**
  * ---------------------------------------------------------------------------
+ * PASS 13: THE WIDTH OF A STRUCTURAL RUN. ONE NUMBER, BECAUSE IT IS ONE DECISION.
+ * ---------------------------------------------------------------------------
+ * Art direction, still open: "the saturated accent is 0.61% of ship area against a
+ * 3.5% budget and a 1.8-7.0% reference range ... spend it where it has a REASON — bay
+ * door arc, grapple rails, drive-well rim, radiator roots, cutter yoke shoulders."
+ *
+ * The previous pass put marks on all five of those and the accent still did not
+ * arrive, and the reason is measurable rather than aesthetic. Measured on the
+ * generated atlas by running the shader's own band functions (`hullShader.js#
+ * nadirMark`) over the alpha channel: the HAZARD family covered 0.278% of the atlas at
+ * full resolution. A flank region maps 1600 x 1600 m and the hull occupies about 22%
+ * of it, so 0.278% of atlas is about 1.3% of HULL — which is the 0.61-1.5% the render
+ * measures once you account for what is actually facing the camera.
+ *
+ * The marks were in the right places. There was not enough of them.
+ *
+ * So the long structural RUNS — the two chines, the bay opening, the grapple tracks,
+ * the radiator withdrawal rails, the drive-well rim — go from 7.5-11 m to 17 m. Every
+ * one of those follows a real geometric edge for 200-430 m, which is what §4(a)
+ * licenses; none of them is a fill on an open face; and 17 m on a 1400 m hull is 1.2%
+ * of its length, which is about what a Hiigaran destroyer's stripe measures against
+ * its own hull. The hazard PATCHES are deliberately left alone: a patch marks a zone,
+ * and a wider zone marking starts reading as a painted panel, which is the model-kit
+ * failure §4 exists to stop.
+ *
+ * Stated as one constant rather than eleven literals so the next pass can move it and
+ * measure the move, and so a critic can see that exactly one decision was taken.
+ */
+const RUN_W = 17;
+
+/**
+ * ---------------------------------------------------------------------------
  * THE DENSE BANDS, AS METRES OF HULL — ship-language.md §3
  * ---------------------------------------------------------------------------
  * "Dense greeble is concentrated in bands, never scattered. Budget: 8 to 11 bands on
@@ -930,22 +962,22 @@ function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
        * where the taper begins. 300 m long, 8 m wide. This is the Hiigaran
        * destroyer's stripe and it is the ship's only colour identity at 3 km.
        */
-      edgeStripe(-40, 260, SHIP.deckChine - 9, 8.0);
+      edgeStripe(-40, 260, SHIP.deckChine - 9, RUN_W);
       // A short return down the shoulder, so the stripe visibly TURNS at a structural
       // corner rather than fading out in the middle of a plate.
-      edgeStripeV(-40, SHIP.deckChine - 9, SHIP.deckChine - 42, 8.0);
+      edgeStripeV(-40, SHIP.deckChine - 9, SHIP.deckChine - 42, RUN_W);
       /**
        * §4(a) THE KEEL CHINE, STARBOARD. A hull has two chines and the accent budget
        * was being spent on one of them per side. The span is 100..430, which is clear
        * of the port keel run (-330..-60) by 160 m, so §3's "never level, offset the
        * opposite side by >= 60 m" holds on this edge as it does on every other.
        */
-      edgeStripe(100, 430, SHIP.keel + 10, 8.0);
+      edgeStripe(100, 430, SHIP.keel + 10, RUN_W);
       /**
        * §4(b) THE STARBOARD GRAPPLE RAIL. The arms move along it, which is the whole
        * reason the colour is allowed here. Drawn as a track, not a bar - see `rail`.
        */
-      rail(SHIP.grappleRail.stbd[0], SHIP.grappleRail.stbd[1], SHIP.grappleRail.y, 5.0, 9.0);
+      rail(SHIP.grappleRail.stbd[0], SHIP.grappleRail.stbd[1], SHIP.grappleRail.y, RUN_W, 26.0);
       // §4(c) registry code, small and hung off the chine rather than floating.
       codeAt(200, SHIP.deckChine - 34, 14);
       // §4(b) the starboard grapple pivots — arms move. Note these are at DIFFERENT
@@ -967,13 +999,13 @@ function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
     case 1:
       // A different edge run from starboard, and along the KEEL chine rather than
       // the deck chine, so the two flanks do not read as one repeated treatment.
-      edgeStripe(-330, -60, SHIP.keel + 10, 7.0);
+      edgeStripe(-330, -60, SHIP.keel + 10, RUN_W);
       // §4(a) the deck chine on THIS side too, over a span 220 m clear of starboard's
       // (-40..260), so both chines are marked on both flanks and no two runs are
       // opposite one another.
-      edgeStripe(-560, -260, SHIP.deckChine - 9, 8.0);
+      edgeStripe(-560, -260, SHIP.deckChine - 9, RUN_W);
       // §4(b) the port grapple rail. Different z from starboard's, like the pivots.
-      rail(SHIP.grappleRail.port[0], SHIP.grappleRail.port[1], SHIP.grappleRail.y, 5.0, 9.0);
+      rail(SHIP.grappleRail.port[0], SHIP.grappleRail.port[1], SHIP.grappleRail.y, RUN_W, 26.0);
       /**
        * §4(b) THE RADIATOR ROOTS. This flank's STRUCTURE band (a -600..-470) is the
        * radiator root recess; a heat-rejection root is hot, is serviced, and is
@@ -1017,8 +1049,8 @@ function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
        * running down either side of it. Rails, because a radiator is withdrawn along
        * them when it is changed out.
        */
-      edgeStripeV(-31 - 40, -560, -410, 5.0);
-      edgeStripeV(-31 + 40, -560, -410, 5.0);
+      edgeStripeV(-31 - 40, -560, -410, RUN_W);
+      edgeStripeV(-31 + 40, -560, -410, RUN_W);
       /**
        * §4(c) the sigil, on the foredeck where a crew would paint it.
        *
@@ -1053,12 +1085,12 @@ function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
       // following the real 210 x 320 m opening rather than floating near it. This is
       // the largest single marking on the ship and every metre of it is on an edge.
       const B = SHIP.bay;
-      edgeStripeV(B.x, B.z0, B.z1, 7.5);
-      edgeStripeV(-B.x, B.z0, B.z1, 7.5);
-      edgeStripe(-B.x, B.x, B.z1, 7.5);
+      edgeStripeV(B.x, B.z0, B.z1, RUN_W);
+      edgeStripeV(-B.x, B.z0, B.z1, RUN_W);
+      edgeStripe(-B.x, B.x, B.z1, RUN_W);
       // The aft lip of the opening was unmarked while the forward one was. Both ends
       // of a 320 m door aperture are a structural break.
-      edgeStripe(-B.x, B.x, B.z0, 7.5);
+      edgeStripe(-B.x, B.x, B.z0, RUN_W);
       hazardAt(B.x - 26, B.z1 - 24, 34, 22, 12);
       hazardAt(-B.x + 26, B.z0 + 24, 34, 22, 12);
       /**
@@ -1093,7 +1125,7 @@ function regionMarks(ctx, size, rng, { region, faction, scale = 1 }) {
        * the rim is the thing that is hot. Four of the patches stay, at the quarters,
        * as the tie-down points a rim band does not describe.
        */
-      rimBand(r, 12, 22);
+      rimBand(r, RUN_W, 22);
       for (let i = 0; i < 4; i++) {
         const t = (i / 4) * Math.PI * 2 + Math.PI / 4;
         hazardAt(Math.cos(t) * r, Math.sin(t) * r, 15, 15, 7);

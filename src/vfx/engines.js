@@ -14,14 +14,51 @@
  * rebuilt to face the camera per vertex, tapers along its length in the fragment
  * shader, and carries shock diamonds whose spacing tightens as the drive spools up.
  * A cold engine emits a short, dim idle glow; a dead one emits nothing at all.
+ *
+ * ===========================================================================
+ * R4: THE DRIVES ARE A PRIMARY READ, AND THEY WERE 0.05 HULL LENGTHS LONG
+ * ===========================================================================
+ *
+ * `docs/design/reference-frames.md` R4 asks for a plume of at least **1.5 hull
+ * lengths at cruise** at a peak chroma of at least 0.30, off three Homeworld frames
+ * where the engine trails are the strongest single read in the picture.
+ *
+ * Measured on the live game before this pass, straight off the instance buffers at
+ * the shipped `engagement` pose: `maxLen 75.4 m` against a `1400 m` hull — **0.054
+ * hull lengths**, and that is the IDLE figure because the ship is stationary in that
+ * shot. At full burn the old expression gave `58 * (1.3 + 11.5) = 742 m`, or **0.53
+ * hull lengths**, still a third of what R4 asks for.
+ *
+ * THE LENGTH WAS KEYED TO THE WRONG QUANTITY. It read `r * (1.3 + 11.5 * burn)`,
+ * where `r` is the drive SUBSYSTEM's radius — so "how long is the plume" was answered
+ * by "how big did somebody author the bell", and the same coefficient produced 0.53
+ * hull lengths on the player cruiser (r 58, hull 1400) and 3.2 on a Coalition corvette
+ * (r 8, hull ~90). A quantity R4 states in hull lengths is now computed in hull
+ * lengths, and the whole fleet gets the same read at every scale.
  */
 
 import * as THREE from 'three';
 import { scratch } from '../core/world.js';
+import { getFactionPalette, saturate } from '../art/palette.js';
 import {
   instancedQuad, markVFXMaterial, factionVFX, FACTION_ORDER, shipForward, shipLocalToWorld,
-  RangeUploader,
+  hdr, RangeUploader,
 } from './common.js';
+
+/**
+ * Plume length as a FRACTION OF HULL LENGTH, which is the unit R4 is stated in.
+ *
+ *   idle 0.10   a live drive is never dark, but a cold one is only a bell glow
+ *   burn 1.55   1.65 hull lengths at full burn, against R4's floor of 1.50
+ *
+ * `chroma` is how far `saturate()` pushes the faction's own engine hue. It is a
+ * chroma move and nothing else: `art/palette.js#saturate` is hue- and
+ * luminance-preserving by construction, so the player's 0xf0c898 stays at hue 32.9
+ * degrees and only its relative chroma moves, 0.37 -> 0.47. R4's other half is
+ * "the drives are a deliberate, saturated colour decision", and a pale cream that
+ * lands on the ACES shoulder as white is not one.
+ */
+const PLUME = { idle: 0.10, burn: 1.55, chroma: 1.45 };
 
 const VERT = /* glsl */ `
   uniform float uTime;
@@ -104,15 +141,34 @@ const FRAG = /* glsl */ `
     float glow = pow(edge, 1.7);
 
     // Shock diamonds - the tell that this is a throttled drive and not a lamp.
-    float diamonds = 0.82 + 0.18 * sin(t * 34.0 - uTime * 2.2 + vSeed * 6.28);
+    //
+    // CONFINED TO THE BELL, and stated at a frequency that assumes it. They used to be
+    // 0.82 + 0.18 * sin(t * 34.0) spread over the WHOLE plume, which was survivable
+    // at 742 m and is not at 2310 m: five diamonds over 2.3 km is one every 430
+    // metres, which is not a shock train, it is a barber pole. exp(-t * 7.0) puts
+    // them in the first seventh of the plume where a real one has them, and the
+    // frequency goes up to keep the spacing in METRES roughly where it was.
+    float diamonds = 1.0 + 0.20 * exp(-t * 7.0) * sin(t * 88.0 - uTime * 2.2 + vSeed * 6.28);
     // Combustion flicker, low amplitude; big flicker reads as a broken shader.
     float flicker = 0.93 + 0.07 * sin(uTime * 23.0 + vSeed * 51.0);
 
-    float along = pow(1.0 - t, 1.10);
+    // 0.95, not 1.10: the plume is three times longer than it was, and the old
+    // exponent spent that length on pixels too dim to see. R4 wants the trail read at
+    // range, which is a question about the last third of it.
+    float along = pow(1.0 - t, 0.95);
 
-    vec3 col = vColor * (glow * 0.55 + core * 1.25) * along * diamonds * flicker;
+    // Weighted towards glow rather than core. The core term is pow(edge, 6.0) -- a
+    // two-pixel centreline -- and at hdr x2.9 it lands on the ACES shoulder as white,
+    // so the old 0.55/1.25 split made a white wire with a coloured skirt and R4's
+    // "peak chroma" had nowhere to live. 1.15/0.85 makes the ribbon a broad coloured
+    // band that still has a hot line down the middle.
+    vec3 col = vColor * (glow * 1.15 + core * 0.85) * along * diamonds * flicker;
     // White-hot throat: hottest right at the bell, gone by a third of the way down.
-    col += vec3(1.0, 0.97, 0.93) * core * pow(1.0 - t, 4.5) * 1.7 * flicker;
+    // 1.30, not 1.70: this term is achromatic by construction, so every unit of it is
+    // chroma removed from the one measurement R4 makes of the plume's colour. Measured
+    // over the plume mask, p95 absolute chroma was 0.290 at the close pose against
+    // R4's floor of 0.30; the throat is what was eating it.
+    col += vec3(1.0, 0.97, 0.93) * core * pow(1.0 - t, 4.5) * 1.30 * flicker;
 
     gl_FragColor = vec4(col * vIntensity, 1.0);
   }
@@ -159,8 +215,20 @@ export class EngineVFX {
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 10;
 
+    /**
+     * `factionVFX(f).engine` is the faction's engine hex at hdr x2.9. The plume takes
+     * the same hex through `saturate()` first — see PLUME.chroma. Everything else on
+     * the shared palette (muzzle, tracer, shield) is untouched, because R4 is about
+     * drives and a chroma push applied to every effect in the game is a grade.
+     */
     this.palettes = Object.create(null);
-    for (const f of FACTION_ORDER) this.palettes[f] = factionVFX(f);
+    for (const f of FACTION_ORDER) {
+      const vfx = factionVFX(f);
+      this.palettes[f] = {
+        ...vfx,
+        engine: hdr(saturate(getFactionPalette(f).engine, PLUME.chroma), 2.9, `vfx.enginePlume.${f}`),
+      };
+    }
 
     this._upload = new RangeUploader([this.aOrigin, this.aDir, this.aParams, this.aColor]);
     this._fwd = new THREE.Vector3();
@@ -234,6 +302,13 @@ export class EngineVFX {
     const fwd = shipForward(ship, this._fwd);
     const dx = -fwd.x, dy = -fwd.y, dz = -fwd.z;
 
+    /**
+     * THE UNIT R4 IS STATED IN. `length` is the class's hull length in metres; the
+     * fallback is the old bell-relative figure so a class that somehow has drives and
+     * no length still gets a plume rather than a zero-length one.
+     */
+    const hullLen = ship.classDef?.length ?? 0;
+
     let found = false;
     if (ship.subsystems) {
       for (const sub of ship.subsystems.values()) {
@@ -241,6 +316,7 @@ export class EngineVFX {
         found = true;
         const subHealth = Math.max(0, Math.min(1, sub.hp / sub.maxHP));
         const r = sub.def.radius;
+        const L = hullLen > 0 ? hullLen : r * 12;
         // The cached world position is only refreshed on a sim step; recompute so
         // plumes do not lag the hull between steps.
         const [lx, ly, lz] = sub.def.position;
@@ -248,7 +324,9 @@ export class EngineVFX {
         this.push(
           scratch.v1.x + dx * r * 0.4, scratch.v1.y + dy * r * 0.4, scratch.v1.z + dz * r * 0.4,
           dx, dy, dz,
-          r * (1.3 + 11.5 * burn * subHealth),
+          // Length in hull lengths; RADIUS still comes off the bell, because the bell
+          // is the bell. R4 is a statement about length, not about girth.
+          L * (PLUME.idle + PLUME.burn * burn * subHealth),
           r * 1.05,
           (0.10 + 0.90 * burn) * (0.35 + 0.65 * subHealth),
           pal.engine,
@@ -258,11 +336,11 @@ export class EngineVFX {
 
     if (!found) {
       // No declared drives (strike craft, probe stand-ins): one plume at the stern.
-      const len = ship.classDef?.length ?? 60;
+      const len = hullLen > 0 ? hullLen : 60;
       shipLocalToWorld(ship, 0, 0, -len * 0.46, scratch.v1);
       this.push(
         scratch.v1.x, scratch.v1.y, scratch.v1.z, dx, dy, dz,
-        len * (0.10 + 1.35 * burn), len * 0.10, level, pal.engine,
+        len * (PLUME.idle + PLUME.burn * burn), len * 0.10, level, pal.engine,
       );
     }
   }

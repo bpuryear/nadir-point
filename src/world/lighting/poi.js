@@ -90,14 +90,30 @@ const ENV_R = 60;           // radius the env-scene props sit at
 const KEY_DISTANCE = 14000; // metres; only affects the shadow camera placement
 const PROXY_DISTANCE = 90000;
 
-/** Vertical gradient sky for the environment scene. */
-function envSky(ibl) {
+/**
+ * Vertical gradient sky for the environment scene.
+ *
+ * `dome`, when the POI has one, REPLACES the palette's `ibl` gradient here, and that
+ * is the point rather than a shortcut. The IBL exists so a hull's shadow side
+ * reflects the place it is in; if the visible sky is a coloured dome
+ * (`celestials/skydome.js`) and the environment map is still built from three
+ * near-black `ibl` hexes, the shadow side of every hull reflects a room the player
+ * cannot see. The dome's own gains come with it, so the reflection is the same
+ * brightness as the thing being reflected instead of a second free parameter.
+ */
+function envSky(ibl, dome = null) {
   const geo = new THREE.SphereGeometry(ENV_R * 1.6, 24, 16);
+  const domeCol = (hex, k) => col(hex).multiplyScalar(k);
   const mat = new THREE.ShaderMaterial({
     uniforms: {
-      uZenith: { value: col(ibl.zenith) },
-      uHorizon: { value: col(ibl.horizon) },
-      uGround: { value: col(ibl.ground) },
+      uZenith: { value: dome ? domeCol(dome.zenith, dome.baseGain ?? 1) : col(ibl.zenith) },
+      uHorizon: {
+        value: dome
+          // The horizon band is where the dome's lobe lives, so it carries the lobe.
+          ? domeCol(dome.zenith, (dome.baseGain ?? 1) * 0.5).add(domeCol(dome.core, (dome.gain ?? 1) * 0.55))
+          : col(ibl.horizon),
+      },
+      uGround: { value: dome ? domeCol(dome.ground, dome.baseGain ?? 1) : col(ibl.ground) },
     },
     vertexShader: /* glsl */`
       varying vec3 vP;
@@ -204,7 +220,7 @@ export function buildPOIEnvironment(poiId, renderer, { spec = null } = {}) {
   const disposables = [];
   const add = (o) => { scene.add(o); disposables.push(o); return o; };
 
-  add(envSky(pal.ibl));
+  add(envSky(pal.ibl, s.dome ?? null));
   add(envSun(s.sunDir, s.star?.angularRadius ?? pal.key.angularRadius ?? 0.02, pal.ibl.sun, 26 * (pal.ibl.intensity ?? 1)));
 
   if (s.giant) {
@@ -365,14 +381,24 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
    * every hull facing the planet in flat black while the planet behind it is bright,
    * which reads instantly as wrong even to someone who could not say why.
    *
-   * With no giant, the fill falls back to the opposite hemisphere, pushed below the
+   * With no giant, the SECOND largest thing in the sky is the nebula bank, and at the
+   * graveyard it is the only thing: `art/palette.js` says so in as many words — "the
+   * nebula IS the fill here, and it is the only reason anything in this POI is visible
+   * at all". It did not point there. The fill fell through to the anti-sun branch
+   * below, so the light the palette calls nebula-fill arrived from a direction with
+   * nothing in it, and after `celestials/index.js` re-aimed the graveyard band the two
+   * were 121 degrees apart. Now the fill comes from where the glow is.
+   *
+   * With neither, the fill falls back to the opposite hemisphere, pushed below the
    * plane so it separates undersides rather than washing the whole shadow side.
    */
   const fillDir = (opts.fillDir
     ? opts.fillDir.clone().normalize()
     : spec.giant
       ? spec.giant.direction.clone().normalize()
-      : new THREE.Vector3(-sunDir.x, -Math.abs(sunDir.y) * 0.55 - 0.25, -sunDir.z).normalize());
+      : spec.nebula
+        ? new THREE.Vector3(spec.nebula.centre[0], spec.nebula.centre[1], spec.nebula.centre[2]).normalize()
+        : new THREE.Vector3(-sunDir.x, -Math.abs(sunDir.y) * 0.55 - 0.25, -sunDir.z).normalize());
   /**
    * The fill's COLOUR is not the POI's identity colour, and the difference matters.
    *
@@ -425,9 +451,29 @@ export function buildPOILighting(poiId, ctx, world, opts = {}) {
   // low and left to do nothing but keep undersides off pure black. Anything more and
   // it raises the black point everywhere, which is the mid-grey mush failure.
   const bounceColor = col(pal.bounce.color);
+  /**
+   * THE DOWN-FACING HALF IS THE FIELD, AND IT USED TO BE THE VOID.
+   *
+   * `shade(pal.shadow, 0.85)` is not a palette-stated light, it is this file's own
+   * placeholder, and it says "there is nothing below the ship". There is: every POI in
+   * the game has an asteroid or debris field filling the volume under the combat plane
+   * (`world/fields/index.js` gives the graveyard 420 wrecks and the belt 24 km of
+   * rock), and light off oxidised hull plating and rock is WARM. So the down half of
+   * the hemisphere carries that colour instead of the void's.
+   *
+   * This is the term `reference-frames.md` §4.3 is about: at engagement range the hull
+   * measured mean RGB 0.216 / 0.244 / **0.238** — blue above red — because every light
+   * reaching a face the key misses was cold. Note honestly what this does NOT fix: the
+   * tactical camera looks DOWN, so the faces the player mostly sees take the SKY half,
+   * and that half is `pal.bounce.color`, which `art/palette.js` authors at 0x2b3c4e —
+   * hue 210 degrees. A warm hull identity at play distance needs that hex to move, and
+   * that file is not this stream's to write. See the W5-C report.
+   */
+  const bounceGround = opts.bounceGround
+    ?? mix(shade(pal.shadow, 0.85), NEUTRAL.rockOre, 0.42);
   const ambient = new THREE.HemisphereLight(
     bounceColor,
-    col(shade(pal.shadow, 0.85)),
+    col(bounceGround),
     statedToIntensity(bounceColor, pal.bounce.intensity * (opts.bounceScale ?? 1)),
   );
   ambient.name = `poi-bounce:${poiId}`;

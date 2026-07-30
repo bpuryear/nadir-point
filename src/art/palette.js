@@ -192,15 +192,40 @@ export const FACTION_PALETTES = {
      * cast (G > R) that put it a third temperature away from both the amber
      * emissives it wears and the bone the rest of the game is moving to.
      */
-    base: 0x7d786e,        // warm industrial steel
-    baseAlt: 0x6a655d,     // second plate tone, for panel-to-panel variance
+    /**
+     * PASS 13: COALITION AND PLAYER WERE THE SAME HUE, AND R6 IS ABOUT HUE.
+     *
+     * reference-frames.md R6 asks for "faction identity legible as HUE at two
+     * hull-lengths, not only as outline". Measured before this pass, player `base`
+     * was 0x716c63 and coalition `base` 0x7d786e: chroma 0.124 and 0.120, linear R/B
+     * 1.32 and 1.32. Two of the four factions were the SAME near-neutral warm grey at
+     * two values. Value is not identity — a Coalition frigate half-lit reads as the
+     * player's own hull.
+     *
+     * THE GREEN DOES NOT COME BACK, and that is deliberate. Pass 10 removed this
+     * faction's G > R cast with a written argument — it was a third temperature
+     * against the amber emissives it wears — and reference-frames.md §1 backs that
+     * argument rather than overturning it ("EVE Frontier ... ONE hue owning the entire
+     * frame" is named as the closest model for the ship). So the separation is taken
+     * INSIDE the warm family: Coalition goes red-oxide (hue ~24 degrees, which is what
+     * heavy industry primes steel with) against the player's yellow-bone (~38
+     * degrees), at a higher chroma because this is the faction that paints.
+     *
+     * Constant linear luminance, byte-solved, same rule as everything else here:
+     *   base      0x7d786e -> 0x897562   Y 0.18919 -> 0.18923  chroma 0.120 -> 0.285
+     *   baseAlt   0x6a655d -> 0x766250   Y 0.13162 -> 0.13166  chroma 0.123 -> 0.322
+     *   baseDark  0x2b2620 -> 0x2f251a   Y 0.02004 -> 0.02002  chroma 0.256 -> 0.447
+     *   plating   0x8f887e -> 0x9c856d   Y 0.24954 -> 0.24947  chroma 0.119 -> 0.301
+     */
+    base: 0x897562,        // red-oxide industrial steel
+    baseAlt: 0x766250,     // second plate tone, for panel-to-panel variance
     /**
      * NEAR-BLACK, and it used to be a mid. 0x373b31 is Y = 0.0416 linear, which the
      * rig lands near 0.40 sRGB - i.e. the "dark" value was three quarters as bright
-     * as the hull and the ship read at one value. 0x2b2620 is Y = 0.0243.
+     * as the hull and the ship read at one value. 0x2f251a is Y = 0.0200.
      */
-    baseDark: 0x2b2620,    // recessed structure - the near-black of the three
-    plating: 0x8f887e,     // secondary armour, slightly brighter
+    baseDark: 0x2f251a,    // recessed structure - the near-black of the three
+    plating: 0x9c856d,     // secondary armour, slightly brighter
     greeble: 0xa19c92,     // small mechanical detail - METAL, so a bright F0
     trim: 0xc4671b,        // the identity carrier: safety orange
     glass: 0x0a0e11,
@@ -604,10 +629,105 @@ export const FACTION_PALETTES = {
      * a real metallic response - the file's opening note about F0 is respected, it is
      * just not being used to argue the machinery must be the lightest thing in frame.
      */
-    base: 0x716c63,
-    baseAlt: 0x625e56,
-    baseDark: 0x282319,    // warm oxide near-black. Y 0.0207 -> 0.0170, warmth 0.035 -> 0.062
-    plating: 0x544f46,     // 0.92 stops under `base`; the ship's MID value
+    /**
+     * ===================================================================
+     * PASS 13: THE SHIP HAD VALUE STRUCTURE AND NO PAINT
+     * ===================================================================
+     * reference-frames.md R6, which was NOT STARTED: "hulls carry painted colour
+     * blocking, not only value and wear — faction identity legible as HUE at two
+     * hull-lengths". And §4 item 3, which is the same defect measured from the other
+     * end: "at engagement range the ship reads mean RGB 0.216 / 0.244 / 0.238 — COOL —
+     * because at that distance it is lit almost entirely by blue fill and rim."
+     *
+     * MEASURED FIRST, on the generated albedo canvases at exactly the options
+     * `cruiser.js#SURFACE` asks for, before this pass. `warmth` is mean sRGB R minus
+     * mean sRGB B; `sat%` is the share of texels above l 0.15 whose HSV saturation
+     * clears 0.5, i.e. tools/surface.mjs's own accent operator run on the TEXTURE:
+     *
+     *   variant     meanY    warmth   chroma   sat%   linear R/B
+     *   hull       0.1186     0.050    0.126     0.0      1.32
+     *   plating    0.0608     0.049    0.172     0.0      1.45
+     *   hullDark   0.0141     0.051    0.375     0.0      2.18
+     *   greeble    0.1647     0.076    0.163     0.0      1.46
+     *
+     * NOT ONE SATURATED TEXEL ANYWHERE ON THE SHIP. Every scrap of colour in a shipped
+     * frame was the cream key (0xfff0d8) landing on a near-neutral hull, which is why
+     * the same hull measures chroma 0.296 at giant-orbit and goes cool the moment the
+     * light does. That is not an identity; it is a property of one POI.
+     *
+     * THE ARITHMETIC THAT SETS THE TARGET, AND IT IS NOT A TASTE NUMBER.
+     *
+     * A diffuse surface returns albedo x light, per channel. The graveyard key is
+     * 0xb6c6da = linear (0.462, 0.564, 0.702), i.e. the LIGHT itself carries
+     * B/R = 1.52. A hull whose albedo is linear R/B = 1.32 therefore comes back at
+     * B/R = 1.15 — cool — however warm the palette says it is. To land warm under that
+     * key the albedo needs R/B comfortably past 1.52; at 1.85-2.0 the product reads
+     * R > B with margin, and at 2.5 (the mid tier) it stays warm under anything in the
+     * POI table. That is the whole design rule for the numbers below.
+     *
+     * WHERE THE CHROMA GOES: UP AS THE VALUE GOES DOWN. reference-frames.md R5 —
+     * "dark masses carry the warm accent" — and it is also the only physically honest
+     * option, because a light paint cannot hold chroma (you cannot have a saturated
+     * near-white) while a dark surface on a working ship is oxide, soot and burnt
+     * coating, all of which are warm. So:
+     *
+     *   tier        chroma   what it is
+     *   greeble       0.16   bare hardware. UNCHANGED, and it is the colour BLOCK:
+     *                        unpainted machinery stays neutral against painted hull.
+     *   hull          0.20   warm bone. The calm armour reserve.
+     *   plating       0.28   the ship's mid; the tier that carries repairs.
+     *   hullDark      0.38   warm oxide. The near-black, unchanged in hue.
+     *
+     * EVERY ONE OF THESE IS A ROTATION AT CONSTANT LINEAR LUMINANCE, held to better
+     * than 0.1% by a byte-level solve, for the reason pass 10 wrote and pass 11 kept:
+     * six POI keys are solved against `base`'s linear Y and re-valuing it would hand
+     * the lighting stream a regression it did not cause.
+     *
+     *   base       0x716c63 -> 0x736c5c   Y 0.15137 -> 0.15143  (+0.04%)  R/B 1.32 -> 1.60
+     *   baseAlt    0x625e56 -> 0x645e4f   Y 0.11274 -> 0.11279  (+0.05%)  R/B 1.31 -> 1.63
+     *   plating    0x544f46 -> 0x564f3e   Y 0.07919 -> 0.07918  (-0.01%)  R/B 1.45 -> 1.93
+     *   baseDark   0x282319 UNCHANGED — see below
+     *
+     * HOW FAR THE ROTATION GOES WAS SET BY A MEASUREMENT, AND THE FIRST ATTEMPT WAS
+     * TOO FAR. Tried at base 0x776b58 / plating 0x594e3e / baseDark 0x2b2218 (R/B 1.89
+     * / 2.07 / 2.65), which is where the "R/B past 1.85" argument above points, and
+     * measured `tools/surface.mjs --frame ship` on three fresh cruiser probes:
+     * SATURATED ACCENT 1.5% -> 13.7%, against §4's 3.5% budget and the 1.8-7.0%
+     * reference range. That is nearly twice the top of a range measured off shipped
+     * reference games, and reference-frames.md §5 is explicit that Everspace's
+     * saturation is the thing NOT to take. Backed off to the numbers above, which
+     * measure 5.5%: inside the reference range, over the older budget, and the reason
+     * is stated rather than hidden — that operator counts the HULL'S OWN PAINT, which
+     * is precisely what R6 asks us to add, not only the accent marks.
+     *
+     * `baseDark` DOES NOT MOVE, and its chroma 0.375 remains the highest on the ship,
+     * so the chroma-rises-as-value-falls rule holds. It was rotated to 0.442 in the
+     * first attempt and put back: at 16.1% of the ship's pixels its RENDERED chroma
+     * went 0.417 -> 0.509, i.e. straight across the 0.5 threshold the accent operator
+     * counts on, and it was worth about half of the 13.7% on its own.
+     *
+     * `greeble` and `bare` are deliberately NOT rotated. Both are metals, where the
+     * albedo channel is F0 reflectance rather than a diffuse colour, and both are the
+     * thing the painted tiers are supposed to be legible AGAINST.
+     *
+     * WHAT IT BOUGHT, measured on the LIVE GAME with the player hull masked by a
+     * material-key ID pass (the `--frame scene` mask is nebula now, not ship), same
+     * frozen tree, only these four files differing:
+     *
+     *   shot         mean RGB (off)        mean RGB (on)         warmth   verdict
+     *   engagement   0.226/0.251/0.235     0.242/0.248/0.212     -0.009 -> +0.030
+     *                                                            COOL   -> WARM
+     *   close        0.448/0.399/0.321     0.471/0.397/0.296      0.127 -> 0.175
+     *
+     * The engagement row is reference-frames.md §4 item 3 closed: the ship no longer
+     * goes cool when the key does. The luminance ladder over the same masks moves by
+     * at most 0.004 at any percentile, which is the constant-Y claim above verified on
+     * a rendered frame rather than asserted from the hexes.
+     */
+    base: 0x736c5c,
+    baseAlt: 0x645e4f,
+    baseDark: 0x282319,    // warm oxide near-black, chroma 0.38 at Y 0.0172
+    plating: 0x564f3e,     // 0.94 stops under `base`; the ship's MID value
     greeble: 0x989080,     // machinery, down 0.5 stops, still 0.90 above the hull
     /**
      * Muted amber - the one identity hue, per look-target.md §1's "faction hue
@@ -622,7 +742,31 @@ export const FACTION_PALETTES = {
      * declaration the fleet path (`ships/common.js#SURFACES`) already reads, and it
      * is NOT part of the before/after measured below. Do not credit it with anything.
      */
-    trim: 0xab9364,
+    /**
+     * PASS 13: THE ACCENT NOW HAS TO CLEAR A MEASUREMENT, SO IT IS AUTHORED TO.
+     *
+     * `tools/surface.mjs` counts a texel as saturated accent when it is above l 0.15
+     * and its HSV saturation clears 0.5. 0xab9364 measures chroma 0.415 — it is a
+     * perfectly good muted amber and it would NEVER have been counted, so the ship
+     * could have been striped in it end to end and still measured 0% saturated albedo.
+     * That is the gap between "there is an accent colour in the file" and "the amber
+     * identity is on the ship".
+     *
+     * 0xb39152 is the same luminance (Y 0.30445 -> 0.30444) rotated to chroma 0.542,
+     * i.e. an ochre a yard would actually mix, and it is still nowhere near the arcade
+     * saturation reference-frames.md §5 forbids ("do not adopt Everspace's saturation
+     * on the hull") — Everspace's gold reads past 0.85.
+     *
+     * STILL NOT RENDERED ON THE PLAYER CRUISER, and the note above stays true: there
+     * is no `trim` entry in `cruiser.js#SURFACE`, so this hex reaches the fleet path
+     * and nothing else. It was tried as an edge band on the `hullDark` tier this pass
+     * — R5 puts the accent on the dark masses and hullDark is every one of them — and
+     * the attempt is written up with its arithmetic in `hullMaps.js#variantSpec`,
+     * where it was measured to cost the near-black tier 0.8 to 1.2 stops. Do not
+     * credit this line with any of the accent measured on the cruiser; that came from
+     * `macro.js`, on the named structure.
+     */
+    trim: 0xb39152,
     glass: 0x090c10,
     burn: 0x14110d,
     bare: 0xd0c7b6,        // bare metal at plate edges, same Y, warm rather than neutral
@@ -788,7 +932,15 @@ export const FACTION_PALETTES = {
      * greeble bands, and at 1.9% there is not enough of it — a geometry-stream item,
      * filed in the report, not something to buy back by re-outlining the plates.
      */
-    wear: { edge: 0.34, streak: 0.62, grime: 0.46, pit: 0.12, oxide: 0x312a1e },
+    /**
+     * PASS 13: `oxide` gets the same rotation the hull family gets, at the same linear
+     * luminance (0x312a1e -> 0x34291d, Y 0.02403 -> 0.02405, +0.08%). It rides the
+     * grime and streak masks on EVERY tier, so it is the cheapest hue in this file —
+     * it lands in cavities and runs down from seams, which is exactly where §4 allows
+     * colour to be, and it costs no geometry and no detail density
+     * (ARCHITECTURE.md:24-26). chroma 0.388 -> 0.442.
+     */
+    wear: { edge: 0.34, streak: 0.62, grime: 0.46, pit: 0.12, oxide: 0x34291d },
 
     /**
      * `hazardA` was 0xbfa53a - a mustard yellow that is neither the amber the

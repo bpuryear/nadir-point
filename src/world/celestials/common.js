@@ -17,6 +17,7 @@
  *
  * RENDER ORDER CONTRACT — every celestial obeys this or the layering falls apart:
  *
+ *   ORDER.dome      -1   depthTest off, normal blend      the coloured darkness
  *   ORDER.stars      0   depthTest off, additive          always at the very back
  *   ORDER.backGlow   1   depthTest off, additive          nebula behind everything
  *   ORDER.star       2   depthTest off, additive          the system primary
@@ -38,6 +39,13 @@ import { makeCanvas, ctx2d } from '../../art/textures/canvas2d.js';
 
 /** Draw order inside the far scene. See the header. */
 export const ORDER = {
+  /**
+   * The sky dome. NEGATIVE, and that is the whole contract it needs: it is drawn
+   * before everything else in the far scene with depth test AND depth write off, so
+   * its radius is free to be anything inside the far camera's frustum and no other
+   * celestial has to know it exists. See `skydome.js` for why the frame has one.
+   */
+  dome: -1,
   stars: 0,
   backGlow: 1,
   star: 2,

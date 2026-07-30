@@ -285,6 +285,42 @@ function variantSpec(pal, variant) {
        */
       base: pal.baseDark, alt: shade(pal.baseDark, 0.80), surface: pal.surface.hullDark,
       /**
+      /**
+       * ===================================================================
+       * NO TILING ACCENT BAND ON THIS TIER. TRIED, MEASURED, REJECTED.
+       * ===================================================================
+       * reference-frames.md R5 puts the warm accent on the darkest masses, and
+       * `cruiser.js#SURFACE` puts this tier on every large dark mass on the ship — the
+       * two 640 m flank belts, the stern casing, the drive pylons, the bay rail
+       * fairings. So a painted amber stripe along this tier's strake seam is the
+       * obvious way to spend the accent budget, and it is written up here because the
+       * next pass will have the same idea.
+       *
+       * IT COSTS THE THIRD VALUE, AND THE ARITHMETIC IS NOT NEGOTIABLE. The band's
+       * area times its value lands straight on the tier's mean, which is what the
+       * shader pivots contrast about and, through the diffuse lobe, most of what the
+       * tier renders at. Measured on the generated canvas, this variant, one band per
+       * 83.2 m tile:
+       *
+       *   band                          tier mean linear Y     plating->hullDark
+       *   none                                    0.0141             2.11 stops
+       *   9 m at shade(trim, 0.70)                0.0325             0.90 stops
+       *   8 m at shade(trim, 0.45)                0.0243             1.32 stops
+       *
+       * The tier that palette.js spends four hundred words declaring a near-black goes
+       * up 0.8 to 1.2 stops, i.e. the accent is bought with the ship's third value.
+       * Holding the mean instead needs a 2.5 m band, which is 0.9 screen pixels at the
+       * probe camera and is not a stripe at all. Item 1 of the art direction wants this
+       * tier DARKER; shipping it 0.8 stops brighter and calling the accent budget met
+       * would be trading the blocker for the target.
+       *
+       * WHERE THE ACCENT WENT INSTEAD: `textures/macro.js`, on the named structure the
+       * art direction actually listed — the bay door arc, the grapple rails, the
+       * drive-well rim, the radiator roots, the two chines. Those marks are drawn in
+       * OBJECT space, they are already on real edges, and widening them costs this
+       * tier nothing at all.
+       */
+      /**
        * `wearMul` 1.15 -> 0.55, AND THIS IS WHY THE NEAR-BLACK TIER WAS NOT NEAR
        * BLACK IN A PICTURE.
        *
@@ -328,11 +364,42 @@ function variantSpec(pal, variant) {
       greeble: 0.90, markings: false, wearMul: 1.0,
       tileMul: 0.62, calmAdd: -0.26, contrastMul: 1.0, rivetMul: 1.0,
       strakes: 4, plateAspect: 2.0, stepMul: 1.4, buttChance: 1.0,
-      // The greeble variant's own base IS the machinery colour and its `alt` is
-      // already baseDark, so tinting the mechanical mask towards baseDark a second
-      // time drove whole bands to near-black. Every other variant needs the full tint
-      // because on those the greeble is a different part from the plate it sits on.
-      greebleTint: 0.16,
+      /**
+       * `greebleTint` 0.16 -> 0.34, AND THE COMMENT THAT SET IT TO 0.16 DESCRIBES A
+       * TREE THAT NO LONGER EXISTS.
+       *
+       * It read: "the greeble variant's own base IS the machinery colour and its `alt`
+       * is already baseDark, so tinting the mechanical mask towards baseDark a second
+       * time drove whole bands to near-black." `alt` was `pal.baseDark` when that was
+       * written. It is `shade(pal.greeble, 0.68)` now — a neighbour of its own base,
+       * changed by the pass directly above this one — so the double-tint the 0.16
+       * was protecting against cannot happen any more.
+       *
+       * WHAT IT COST, MEASURED. The DENSE tier had the LOWEST internal value range of
+       * any tier on the ship: sRGB IQR 0.0157 against the calm armour belt's 0.0185
+       * and `plating`'s 0.0244, p05-p95 0.326-0.472. The tier whose entire job is to
+       * be the busy one was one flat value with a normal map on it, because the only
+       * thing distinguishing a machinery block from the plate it is bolted to was 16%
+       * of a lerp.
+       *
+       * This is not surface noise and ARCHITECTURE.md:24-26 is not in tension with it:
+       * no feature is added anywhere, the mechanical mask already exists, and this
+       * tier only appears inside the ten 55 x 200 m bands `macro.js#STRUCTURE` cuts.
+       * It is the VALUE of parts that are already drawn, and a part bolted onto a
+       * plate is a different object with a different finish — which is the one thing
+       * that makes a band read as machinery rather than as a texture.
+       *
+       * WHAT IT DID NOT DO, STATED SO NOBODY CREDITS IT WITH IT. The tier's albedo IQR
+       * moves 0.0157 -> 0.0185, and the tier's RENDERED spread on the cruiser probe
+       * does not move at all: p05-p95 0.119-0.639 before, 0.142-0.651 after, which is
+       * inside the run-to-run noise. Nor does the ship frame's `dense` column. The
+       * reason is arithmetic and is not fixable from this file: the dense tier is
+       * 6.0% of the ship's pixels (measured by material-key ID pass), so nothing done
+       * to it can move a whole-ship frequency number. `tools/surface.mjs`'s dense
+       * figure is a question for where the geometry stream PUTS this material, not for
+       * how much contrast the material has. Recorded in the stream report.
+       */
+      greebleTint: 0.34,
     };
     // Trim's second tone must be a darker TRIM, not the hull grey - blending an
     // accent band towards the hull colour is how a faction's identity colour ends
@@ -826,20 +893,23 @@ export function hullMaps(opts = {}) {
    * values and the pivot must be linear too. Computed here rather than in the shader
    * because it is a property of the generated image and is known once, at bake time.
    *
-   * Taken before `stampAccentEdges` and `stampMarkings` draw onto the canvas. Those
-   * cover a few percent of the tile at most (see the area note above
-   * `stampAccentEdges`) and reading the canvas back afterwards would cost a full
-   * getImageData per material to move this number by well under a percent.
+   * TAKEN AFTER THE STAMPS NOW, AND THE OLD ORDER WAS A REAL DEFECT ON ONE VARIANT.
+   *
+   * It used to be computed off `bytes`, before `stampAccentEdges` and `stampMarkings`
+   * drew onto the canvas, with a comment claiming those "cover a few percent of the
+   * tile at most". `stampAccentEdges`'s own header says otherwise in the same file:
+   * "saturated area = band / strake height, i.e. ~2.6 / 22 = 12% of the trim surface".
+   * A twelfth of the tile repainted a colour 4 stops off the plate moves the mean by
+   * far more than a percent, so on the `trim` variant the shader's detail-gain pivot
+   * has been wrong ever since the accent band was added — it pivots contrast about a
+   * value the surface does not have, which is a smaller version of exactly the bug
+   * the pivot was introduced to fix.
+   *
+   * It matters more now, because the accent band is on `hullDark` as well and that
+   * tier is 18.7% of the ship. One `getImageData` per material bake — not per frame,
+   * not per draw — is the correct price for a pivot that is actually the surface's
+   * mean.
    */
-  let mr = 0, mg = 0, mb = 0;
-  for (let i = 0; i < n; i++) {
-    const o4 = i * 4;
-    mr += SRGB_TO_LINEAR[bytes[o4]];
-    mg += SRGB_TO_LINEAR[bytes[o4 + 1]];
-    mb += SRGB_TO_LINEAR[bytes[o4 + 2]];
-  }
-  const meanAlbedo = [mr / n, mg / n, mb / n];
-
   if (spec.accentEdge) {
     stampAccentEdges(ctx2d(albedoCanvas), size, panel, tileM, spec.accentEdge);
   }
@@ -847,6 +917,16 @@ export function hullMaps(opts = {}) {
   if (o.markings && spec.markings) {
     stampMarkings(ctx2d(albedoCanvas), size, panel, pal, o.faction, rng.fork(`marks:${o.variant}`), tier);
   }
+
+  const stamped = ctx2d(albedoCanvas).getImageData(0, 0, size, size).data;
+  let mr = 0, mg = 0, mb = 0;
+  for (let i = 0; i < n; i++) {
+    const o4 = i * 4;
+    mr += SRGB_TO_LINEAR[stamped[o4]];
+    mg += SRGB_TO_LINEAR[stamped[o4 + 1]];
+    mb += SRGB_TO_LINEAR[stamped[o4 + 2]];
+  }
+  const meanAlbedo = [mr / n, mg / n, mb / n];
 
   // --- ORM ------------------------------------------------------------------
   const ormBytes = new Uint8ClampedArray(n * 4);
@@ -931,6 +1011,12 @@ export function hullMaps(opts = {}) {
  * whole by an enormous margin, because trim is a small fraction of the hull to begin
  * with, and it means the accent is now a LINE the eye follows rather than a patch it
  * stops on.
+ *
+ * PASS 13 MEASURED THE AREA CLAIM ABOVE AND IT IS RIGHT, WHICH IS WHY THE MEAN MOVED.
+ * On the `trim` variant this band covers about an eighth of the tile in a colour four
+ * stops off the plate, and `hullMaps` used to compute `meanAlbedo` — the value the
+ * shader pivots the surface's contrast about — BEFORE this ran. See the note above the
+ * mean loop; it is taken after the stamps now.
  */
 function stampAccentEdges(ctx, size, panel, tileM, accentHex) {
   const strakes = panel.strakes ?? [];
