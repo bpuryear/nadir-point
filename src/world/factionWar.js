@@ -1495,7 +1495,10 @@ export class FactionWarSystem {
       // this system creates is "how long can I keep working here".
       const decayPerSecond = holding ? 0 : rate;
       const next = ESCALATION[entry.tier + 1] ?? null;
-      const live = this.responses.filter((g) => g.faction === faction).length;
+      // Counted rather than filtered: this read is called at 2 Hz by the sortie panel
+      // and an array per faction per call is garbage on a schedule.
+      let live = 0;
+      for (const g of this.responses) if (g.faction === faction) live++;
       out.push({
         faction,
         claim: entry.claim,
