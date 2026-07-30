@@ -283,7 +283,10 @@ export class PowerPlant {
     const massLoad = ship.massLoad ?? 1;
     const engines = base.engines * (massLoad > 0 ? massLoad : 1);
 
-    const bays = ship.world?.hangarBays ?? 0;
+    // `world.hangarBays` is a WORLD-level field written by `refit.js:381` from the
+    // PLAYER's fit, so reading it on a hostile would bill that hostile for the player's
+    // hangar deck. Player hulls only, until a per-ship bay count exists.
+    const bays = ship.isPlayer ? (ship.world?.hangarBays ?? 0) : 0;
     const sensors = base.sensors + mounts * DEMAND.perMount + bays * DEMAND.perBay;
 
     this.demand.weapons = weapons;
