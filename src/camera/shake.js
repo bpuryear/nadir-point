@@ -6,12 +6,14 @@ import { EV } from '../core/events.js';
  *
  * WHY THIS FILE EXISTS. Before it, `grep -rn 'shake\|kick\|hitstop' src/` returned
  * nothing, and the ONLY path by which firing a broadside reached the viewport was
- * `PlaneBody.recoilBank` — a roll of the hull, not of the frame. Measured on the real
- * boot framing that is **1.24 px of roll across a 334 px hull**, against a `RECOIL.bankCap`
- * that tops out at 2.6 px. A 620,000 t capital ship committed ten barrels and the frame
- * did not move. An independent critic scored moment-to-moment feel 5/10 and wrote that
- * "the systems here are better than the game they are in"; this is the load-bearing half
- * of that sentence.
+ * `PlaneBody.recoilBank` — a roll of the hull, not of the frame. The review that opened
+ * this work reports that as **1.24 px of roll across a 334 px hull** at boot framing,
+ * against a `RECOIL.bankCap` ceiling of 2.6 px; that figure is quoted from the review and
+ * was not re-derived here, but what IS re-measured is the quantity underneath it —
+ * `tools/flight.mjs` check 11 puts the hull's recoil roll at 0.03508 rad, 2.01 deg. A
+ * 620,000 t capital ship committed ten barrels and the frame did not move. The same
+ * review scored moment-to-moment feel 5/10 and wrote that "the systems here are better
+ * than the game they are in"; this file is the load-bearing half of that sentence.
  *
  * ---------------------------------------------------------------------------
  * THIS IS A HEAVE, NOT A RATTLE. The distinction is the whole design.
@@ -94,9 +96,10 @@ export const HEAVE = {
    * MEASURED by integrating the real class at the real render rates: 0.876 % at 60 Hz,
    * 0.880 % at 144 Hz, 0.825 % at 12 Hz against the 0.900 % asked — the substepped
    * integrator runs a couple of per cent under the analytic peak and that is reported
-   * rather than tuned away. 0.876 % is **6.31 px at 720p, 9.46 px at 1080p**, against
-   * the 1.24 px of roll `recoilBank` puts on a 334 px hull at boot framing, and against
-   * the 3-5 % of frame height a shooter would use for a rifle.
+   * rather than tuned away. 0.876 % is **6.31 px at 720p, 9.46 px at 1080p**, and the
+   * whole offset measured on the live camera through a real ten-slot broadside is
+   * **6.75 px at 720p and 8.44 px at 900p** once the lateral term and the flank
+   * projection are in. Against the 3-5 % of frame height a shooter would use for a rifle.
    */
   firePeak: 0.0090,
   /** The SETTLE kick, the other way. Deliberately about a third of the commit (0.331 % measured). */
