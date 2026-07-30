@@ -66,6 +66,19 @@ export class Fleet {
     this.formation = 'line';
     this.spacing = 900;
 
+    /**
+     * `hasAnchor` exists because a missing anchor and an anchor at the origin are not the
+     * same thing, and `_updateSlots` now steers on the anchor whenever a fleet has no
+     * focus. `create()` defaults `anchor` to null, so without this flag any caller that
+     * omitted one would get a fleet that forms up on world origin and flies there —
+     * silently, and only when it had nothing to chase.
+     *
+     * No caller omits it today (travel.js:629, factionWar.js:798 and factionWar.js:1431
+     * all pass one), so this is a guard against the next one rather than a live defect.
+     * It was found by reverting the anchor change and observing that nothing in the tree
+     * exercises either branch.
+     */
+    this.hasAnchor = !!anchor;
     this.anchor = new THREE.Vector3().copy(anchor ?? new THREE.Vector3());
     this.centroid = new THREE.Vector3().copy(this.anchor);
     this.facing = 0;
@@ -260,7 +273,13 @@ export class FleetAISystem {
     const s = Math.sin(fleet.facing), c = Math.cos(fleet.facing);
     // right-hand perpendicular of the facing, on the plane
     const rx = c, rz = -s;
-    const base = fleet.focus && !fleet.focus.dead ? fleet.centroid : fleet.anchor;
+    // A fleet with a live focus forms up on itself and chases; one with nothing to chase
+    // holds its station. Falling back to the centroid when there is no anchor keeps a
+    // fleet that was created without one where it already is, rather than sending it to
+    // world origin — see `hasAnchor` in the Fleet constructor.
+    const base = (fleet.focus && !fleet.focus.dead) || !fleet.hasAnchor
+      ? fleet.centroid
+      : fleet.anchor;
 
     for (let i = 0; i < n; i++) {
       const slot = fleet._slots[i] ?? (fleet._slots[i] = new THREE.Vector3());
