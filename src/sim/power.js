@@ -29,16 +29,39 @@ import { EV } from '../core/events.js';
  * now `supply / demand` with `supply = capacity * actual[ch]`, so capacity — and
  * therefore reactor damage — multiplies straight through into every consumer.
  *
- * WHY `factor()` KEEPS ITS OLD SCALE. Every consumer reads it as a performance
- * multiplier around 1.0 (`combat.js:180`, `ship.js:953`, `ship.js:1020`,
- * `salvo.js:440`, `vfx/engines.js:228`, `ui/weapons.js:512`). Demand is therefore
- * calibrated so a LIGHT hull sits near 1.0 at an even split, exactly where the old
- * ratio put it, and the new behaviour appears as the fit grows. Nothing had to be
- * re-tuned at the far end either: over-supply is deliberately worth less than
- * under-supply costs (`DEMAND.overdriveGain`) and is capped at `DEMAND.overdriveMax`
- * 2.0, which is the exact value the old `actual/even` form produced at a 50% share.
- * So no channel can now be driven harder than it could before, and starving one bites
- * for the first time.
+ * WHAT THIS DOES TO EVERY EXISTING CONSUMER, STATED RATHER THAN DISCOVERED LATER.
+ * `factor()` is read as a performance multiplier around 1.0 by `combat.js:180`
+ * (cadence), `ship.js:953` (thrust), `ship.js:1020` (shield regen), `salvo.js:440`,
+ * `vfx/engines.js:228` and `ui/weapons.js:512`. Changing what it means moves all six,
+ * so here is the measured redistribution on the weapons channel, against the same
+ * three fits `tools/systems.mjs` prints:
+ *
+ *     fit      preset     factor NOW   was      delta
+ *     light    balanced         1.85   1.00      +85%
+ *     light    assault          2.00   2.00        0%
+ *     light    turtle           1.49   0.72     +107%
+ *     working  balanced         1.05   1.00       +5%
+ *     working  assault          1.55   2.00      -23%
+ *     heavy    balanced         0.58   1.00      -42%
+ *     heavy    assault          1.07   2.00      -46%
+ *
+ * THIS IS A REDISTRIBUTION, NOT A NERF, and its shape is the design: a two-gun bank on
+ * a fresh reactor is trivially fed and now runs near its rated cadence whatever the
+ * sliders say, while a six-mount cruiser cannot be fed at all and has to choose. The
+ * old form gave every fit in the game the same 1.0 at an even split, which is precisely
+ * why the widget never mattered. The CEILING is unchanged — `DEMAND.overdriveMax` 2.0
+ * is exactly what `actual/even` returned at a 50% share — so nothing can be driven past
+ * where it could already go.
+ *
+ * `overdriveGain` 0.45 IS A MEASURED FLOOR, NOT A PREFERENCE. I tried 0.25, which is
+ * the more principled number — a gun bank fed past its rated draw is mostly wasting the
+ * power — and it takes the light-fit row above down to +47% at balanced. It also takes
+ * `src/sim/selftest.mjs`'s "the status word actually changes" from ELEVATED to NOMINAL:
+ * the fixture's three-mount hull under assault routing drops from factor 1.83 to 1.46,
+ * fires fewer shots at less heat each, and no longer crosses `THERMAL.elevatedAt` 0.50
+ * in its 30-second scenario. That is a gate regression, so 0.45 stands. Anyone lowering
+ * it has to move `elevatedAt` or the fixture with it, and should know that is the
+ * coupling before they start.
  *
  * This layer stays locked until the player installs their first reactor module. A new
  * player gets arcs and subsystem targeting first; handing over both layers at once is
@@ -71,15 +94,20 @@ import { EV } from '../core/events.js';
  *                   makes it cost power too, on the same number.
  *
  * CALIBRATION, against the real registry rather than a guess. `tools/systems.mjs`
- * prints the table; the two ends of it are:
+ * section 1 prints this table and asserts both ends of it:
  *
- *   light  (reactor + one broadside)          demand  73 of 146 PU   strain 0.50
- *   heavy  (reactor, shields, 2x heavy
- *           broadside, bow lance, hold)       demand 158 of 134 PU   strain 1.18
+ *   FIT       CAPACITY   DEMAND   STRAIN   DEFICIT  shields  weapons  engines  sensors
+ *   light       146.0 PU     64.8     0.44       0.0      8.0     12.6     27.2     17.0
+ *   working     134.0 PU    126.4     0.94       0.0     47.0     30.2     29.2     20.0
+ *   heavy       134.0 PU    158.5     1.18      24.5     47.0     57.7     30.8     23.0
  *
- * So a new hull feels nothing and a fought-out one is 24 PU short no matter how the
+ * So a new hull feels nothing and a fought-out one is 24.5 PU short no matter how the
  * sliders are set. The shortfall arrives as capability does, which is the only shape
- * of this mechanic that does not punish a player for being early.
+ * of this mechanic that does not punish a player for being early. `tools/systems.mjs`
+ * also sweeps all 1771 allocations on a 5% grid and asserts that ZERO of them feed
+ * every channel on the heavy fit, and that the best one still leaves its worst channel
+ * at 0.81 — under the brownout line. That check is the one that fails if anybody ever
+ * normalises demand against capacity and turns this back into a split.
  */
 export const DEMAND = {
   /** Hotel load per channel, in reactor units, before anything is installed. */

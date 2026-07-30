@@ -87,14 +87,27 @@ const HEAT_PER_SHOT = {
  * (`broadside.js` port_broadside_battery, damage 340, cannon):
  *
  *   perShot   = HEAT_PER_SHOT.cannon 0.030 x clamp(340/45, 0.4, 2.2) = 0.066
- *   balanced  = 0.066 x (0.75 + 0.35 x 1.10) x 1.15 = 0.0855/shot = 0.342 for four guns
- *               shed over the 5.0 s cooldown at 0.085 x (0.4 + 0.65 x 0.82) = 0.078/s
- *               -> 0.39 shed against 0.34 added. Sustainable.
- *   assault   = weapons factor 2.0 -> 0.110/shot = 0.440 per salvo against a 2.5 s
- *               window -> net positive. The fourth broadside cooks the battery.
+ *   balanced  = 0.066 x (0.75 + 0.35 x 1.05) x 1.15 = 0.0848/shot = 0.339 for four guns
+ *               shed over the 5.0/1.05 = 4.76 s cooldown at
+ *               0.085 x (0.4 + 0.65 x 0.82) = 0.078/s -> 0.37 shed against 0.34 added.
+ *               Sustainable.
+ *   assault   = weapons factor 1.55 -> 0.0981/shot = 0.393 per salvo against a 3.23 s
+ *               window -> 0.25 shed against 0.39 added, net +0.14 a cycle. The fourth
+ *               broadside cooks the battery.
  *
- * That gap IS the alpha-versus-sustain decision, and it falls out of two numbers
- * because `update()` below already couples radiator budget to reactor load.
+ * THE SECOND NUMBER USED TO BE 2.0 AND IT IS NOT ANY MORE, which is the one place this
+ * file has to be re-read after `power.js` grew a demand side. `factor()` was
+ * `actual/(1/4)`, so assault routing returned 2.0 on every hull in the game and this
+ * block could quote one number. It is now `supply/demand`, so the assault factor is a
+ * property of the FIT: 2.00 on a light hull, 1.55 on a working one, 1.07 on a heavy
+ * one (`tools/systems.mjs` section 1, and the table in `power.js`'s header). The
+ * figures above are the WORKING fit, which is what this table was always describing.
+ *
+ * That makes the interlock deeper rather than weaker. Heat per shot is
+ * `0.75 + 0.35 x factor`, so a hull that cannot feed its weapons channel also cannot
+ * cook itself as fast — an oversubscribed cruiser fires slowly and runs cool, and a
+ * light one fires flat out and burns. Alpha-versus-sustain is now a question you answer
+ * at the refit screen as well as in the fight.
  */
 export const SALVO_THERMAL = {
   /** A committed salvo runs the guns harder than trickle fire. Heat per shot x this. */
