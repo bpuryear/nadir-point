@@ -139,7 +139,7 @@ reason. A table that names imaginary files is not a contract.
 | Salvage | `src/sim/salvage.js`, `src/sim/subparts.js`, `src/sim/condition.js` |
 | Progression | `src/sim/meta/**` |
 | Ship & refit | `src/sim/ship.js`, `src/sim/refit.js`, `src/sim/strikecraft.js` |
-| World sim & AI | `src/sim/ai/**`, `src/world/poi/**`, `src/world/system.js`, `src/world/travel.js` |
+| World sim & AI | `src/sim/ai/**`, `src/world/poi/**`, `src/world/system.js`, `src/world/travel.js`, `src/world/factionWar.js`, `src/world/discovery.js` |
 | Camera & controls | `src/input/**`, `src/camera/**` |
 | UI | `src/ui/**` |
 | VFX | `src/vfx/**` |

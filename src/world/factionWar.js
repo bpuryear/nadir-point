@@ -188,6 +188,52 @@ export class POIWarState {
     this.visited = false;
   }
 
+  /**
+   * GIVE THIS PLACE A PAST.
+   *
+   * `hulks` is filled by battles the war has FOUGHT, so at t = 0 every node in the system
+   * is spotless. The player's first frame was therefore an empty one: The Graveyard, whose
+   * own blurb reads "the centre of the war, it has changed hands eleven times and shows
+   * all eleven", materialised as open space with nothing in it. Measured on the shipped
+   * page before this existed: 1 ship, 0 hostiles, 0 wrecks.
+   *
+   * The fiction and the simulation simply disagreed, and the fiction was right. A war that
+   * has been running long enough to have a graveyard has left wreckage in it.
+   *
+   * The count is derived, not authored per node, so it stays true if the system table is
+   * edited: `heat` is how hard this place is fought over and `value` is how much is worth
+   * fighting for, and their product is how much has died here. The graveyard (heat 0.72,
+   * value 0.90) seeds the most; a quiet anchorage seeds none.
+   *
+   * Age matters and is not cosmetic. `integrity` is what a hull yields when cut, so old
+   * wrecks are picked-over and poor while recent ones are rich — which is the reason to
+   * chase a fresh battle rather than farm the graveyard forever. Everything is forked off
+   * the node id so a seed reproduces exactly.
+   */
+  seedHistory(rng) {
+    if (this.hulks.length) return 0;
+    const pressure = this.node.initialHeat * this.node.value;
+    const count = Math.round(pressure * 9);
+    if (count <= 0) return 0;
+
+    const r = rng.fork(`history:${this.id}`);
+    for (let i = 0; i < count; i++) {
+      // Older wrecks sit at the back of the queue and have been stripped hardest.
+      const age = (i + 1) / count;
+      const faction = r.next() < (this.control + 1) * 0.5 ? 'concord' : 'coalition';
+      this.hulks.push({
+        faction,
+        role: r.next() < 0.22 ? 'capital' : r.next() < 0.55 ? 'line' : 'escort',
+        // 0.18 at the oldest, 0.72 at the freshest, with real spread inside that.
+        integrity: 0.18 + (1 - age) * 0.42 + r.next() * 0.12,
+        seed: r.int(0, 1 << 28),
+        age,
+      });
+    }
+    this.battlesFought = Math.max(this.battlesFought, Math.round(count * 0.6));
+    return count;
+  }
+
   get contested() {
     return Math.abs(this.control) < 0.45
       && this.garrison.coalition > 120 && this.garrison.concord > 120;
@@ -236,7 +282,18 @@ export class FactionWarSystem {
 
     /** @type {Map<string, POIWarState>} */
     this.states = new Map();
-    for (const node of system.nodes) this.states.set(node.id, new POIWarState(node));
+    /*
+     * Seeded at construction rather than on first visit, so the war's history is a
+     * property of the seed and not of the order the player happens to travel in. Two
+     * runs of the same seed put the same wrecks in the same places whether or not
+     * anybody went and looked.
+     */
+    const historyRng = this.rng.fork('history');
+    for (const node of system.nodes) {
+      const st = new POIWarState(node);
+      st.seedHistory(historyRng);
+      this.states.set(node.id, st);
+    }
 
     /** Strategic reserves waiting to be committed somewhere. */
     this.reserve = { coalition: 900, concord: 900 };

@@ -245,6 +245,65 @@ export async function bootGame(world, params) {
     },
   });
 
+  /**
+   * THE ARRIVAL FIT.
+   *
+   * Until this existed the player booted with `weapons: []` and every hardpoint empty.
+   * Measured on the shipped page: 1 ship, 0 hostiles, 0 weapons, 0 wrecks. So the
+   * broadside scheduler, the thermal model, the magazines, the recoil heave, the flank
+   * readout and the whole salvage chain were reachable only from harnesses and probes —
+   * pressing the salvo key answered `NO ARMAMENT FITTED` and nothing else. Three
+   * independent critics scored "feel" 5/10 and each named the same cause: the systems
+   * are better than the game they are in, because none of them reach the player's hands.
+   *
+   * It is also a deadlock and not merely a gap: you fit modules by cutting them off
+   * wrecks, and cutting needs a cutter. An empty hull cannot earn its first module.
+   *
+   * WHAT THIS IS NOT: a tutorial loadout or a difficulty setting. It is the working kit
+   * of a salvager who has been doing this a while — tier 1 everywhere, nothing rare, and
+   * every piece justified by the job rather than by combat:
+   *
+   *   bow       mining array        the cutter. Without it there is no salvage loop.
+   *   ventral   salvage tractor     how a cut section gets to the hold.
+   *   dorsal    sensor mast         the graveyard is the worst place in the system to
+   *                                 work out what just arrived (world/system.js:54).
+   *   port/stbd cannon bank x2      enough to defend the tow. TWO banks deliberately:
+   *                                 one flank is a stat, two flanks is the side-select
+   *                                 decision the salvo spec exists for, and it exercises
+   *                                 the refit mirror path that used to resolve both
+   *                                 flanks to port.
+   *   engine    thruster upgrade    a loaded hold handles like a loaded hold.
+   *
+   * Skipped entirely when a save is being restored, when any hardpoint is already
+   * occupied, or with `?fit=none`, so it can never overwrite a player's own loadout.
+   */
+  const refitSys = world.systems.refit;
+  if (refitSys && params.get('fit') !== 'none') {
+    const occupied = [...player.hardpoints.values()].some((hp) => hp.module);
+    if (!occupied) {
+      const ARRIVAL_FIT = [
+        ['bow', 'bow_mining_array'],
+        ['ventral', 'ventral_salvage_tractor'],
+        ['dorsal', 'dorsal_sensor_mast'],
+        ['port', 'port_cannon_bank'],
+        ['starboard', 'port_cannon_bank'],
+        ['engine', 'engine_thruster_upgrade'],
+      ];
+      const fitted = [];
+      for (const [hardpoint, moduleId] of ARRIVAL_FIT) {
+        // Worn, not pristine. `condition` runs the whole chain — fire rate, traverse,
+        // passive grants, what a section is worth when you cut it off again — so a fit
+        // at 1.0 would quietly present as the best equipment in the game.
+        const uid = `arrival:${hardpoint}`;
+        world.inventory.push({ moduleId, condition: 0.82, uid });
+        const res = refitSys.install(hardpoint, uid);
+        if (res?.ok) fitted.push(hardpoint);
+        else console.warn(`[boot] arrival fit refused ${moduleId} on ${hardpoint}:`, res?.reason);
+      }
+      note('arrival-fit', fitted.length === ARRIVAL_FIT.length);
+    }
+  }
+
   // ------------------------------------------------------------- world sim / AI
   const worldSimMod = await optional('./world/index.js', 'world-sim')
     ?? await optional('./sim/ai/index.js', 'world-sim-alt');
