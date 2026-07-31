@@ -178,13 +178,174 @@ const GradeShader = {
  * is the only thing that fixes a high-contrast geometric silhouette (see the note in
  * the constructor); on one that cannot, it is the first thing to drop. 0 falls back
  * to SMAA alone, which is what shipped before.
+ *
+ * ===========================================================================
+ * A-2: `msaa` AND `renderScale` HAD NEVER BEEN READ, AND `msaa` IS 31% OF THE FRAME
+ * ===========================================================================
+ *
+ * `docs/review/perf-bisect.md` §5 found it: `setQuality` below read `gtao`, `godrays`,
+ * `godraySamples`, `bloom` and `smaa` and NOTHING ELSE. The sample count was hard-coded
+ * `samples: 4` in the constructor and `renderScale` was matched by `grep -rn` in exactly
+ * two places tree-wide — this table, and a comment describing what it would do if
+ * anything read it. So `low` and `medium` paid 4x MSAA on a 2560x1440 half-float target,
+ * which this table says they should not, and `low`'s `renderScale: 0.85` never rendered
+ * a single frame at 0.85.
+ *
+ * This is the same defect `renderer.js:128-139` documents one layer up — `?quality=`
+ * doing nothing for the life of the project because `PostChain` was constructed before
+ * `opts.quality` resolved. That was fixed at `c9bfd00`. Two knobs in the same table were
+ * left dead by the fix. Both are read now: `msaa` in `_setSamples`, `renderScale` in
+ * `setSize`.
+ *
+ * AND `high` DROPS 4 -> 2, WHICH IS A LOOK DECISION AND IS MEASURED, NOT ASSUMED.
+ * `perfattrib`'s `msaa:samples=2`, A-B-A against local baselines, 3 passes, spread 0.70:
+ * **4.52 ms of a 14.1 ms frame, 31%.** It is the cheapest quality-per-millisecond trade
+ * in the whole chain and there is nothing else in the frame close to it. What is NOT
+ * given up: SMAA stays enabled at `high` behind it, so a silhouette still gets a
+ * coverage resolve AND a morphological one. `ultra` keeps 4 — that is the preset whose
+ * entire job is to spend fill on the frame the owner judges captures with, and the 4x
+ * coverage the constructor's note argues for lives there now rather than nowhere.
+ *
+ * `perf-bisect.md` §6 #2 also prices dropping SMAA at `high` at a further 3.13 ms. THAT
+ * ONE IS NOT TAKEN HERE and the reason is in the constructor's note: SMAA and MSAA are
+ * the two halves of the answer to a round-one review complaint about stair-stepped
+ * silhouettes, and halving the coverage samples AND deleting the morphological pass in
+ * one commit would leave nobody able to say which of the two moved the edge. The number
+ * is recorded so the owner can take it as a second step against a capture; see
+ * §"what was measured and not taken" in the commit.
  */
 export const QUALITY_PRESETS = {
   low:    { gtao: false, godrays: false, bloom: true,  smaa: true,  msaa: 0, bloomRes: 0.5,  godraySamples: 0,  renderScale: 0.85 },
   medium: { gtao: false, godrays: true,  bloom: true,  smaa: true,  msaa: 2, bloomRes: 0.5,  godraySamples: 16, renderScale: 1.0 },
-  high:   { gtao: true,  godrays: true,  bloom: true,  smaa: true,  msaa: 4, bloomRes: 0.6,  godraySamples: 24, renderScale: 1.0 },
+  high:   { gtao: true,  godrays: true,  bloom: true,  smaa: true,  msaa: 2, bloomRes: 0.6,  godraySamples: 24, renderScale: 1.0 },
   ultra:  { gtao: true,  godrays: true,  bloom: true,  smaa: true,  msaa: 4, bloomRes: 0.75, godraySamples: 40, renderScale: 1.0 },
 };
+
+/**
+ * The HDR buffer the whole frame is composed in, plus the depth texture GTAO reads.
+ *
+ * `depthTexture` is not decoration and it is not free-floating: it is the entire
+ * mechanism of `SceneDepthGTAOPass` below. `RenderPass` writes colour AND depth into
+ * this target; attaching a texture rather than a renderbuffer is what makes that depth
+ * SAMPLEABLE afterwards, and three resolves it out of the multisample framebuffer for
+ * us (`WebGLTextures.js:2323-2342` blits with `DEPTH_BUFFER_BIT` whenever
+ * `resolveDepthBuffer` is true, which is the default).
+ *
+ * `stencilBuffer: false`, so the depth texture is `DepthFormat`/`UnsignedIntType`
+ * (DEPTH_COMPONENT24) rather than the packed depth-stencil GTAOPass allocates for
+ * itself. Both sample their depth in `.x`, which is what `DEPTH_SWIZZLING` selects.
+ */
+function makeHdrTarget(samples) {
+  return new THREE.WebGLRenderTarget(1, 1, {
+    type: THREE.HalfFloatType,
+    colorSpace: THREE.LinearSRGBColorSpace,
+    samples,
+    depthBuffer: true,
+    stencilBuffer: false,
+    depthTexture: new THREE.DepthTexture(1, 1),
+  });
+}
+
+/**
+ * GTAO WITHOUT ITS OWN DEPTH-NORMAL PREPASS. THIS IS THE DRAW-CALL FIX.
+ *
+ * `docs/review/perf-bisect.md` §3.1 ledgers the busiest frame of the benchmark scene:
+ *
+ *     farPass (celestials)         calls   10
+ *     mainPass (gameplay+shadow)   calls  200
+ *     gtao                         calls  190     <- 45% of the frame's draw calls
+ *     everything after gtao        calls   19
+ *     TOTAL                        calls  419     against a ceiling of 320
+ *
+ * The scene's OWN geometry has been inside the 320 ceiling the whole time. 190 of the
+ * 419 are stock `GTAOPass` re-rendering every mesh in the scene a second time under
+ * `MeshNormalMaterial` to fill a G-buffer — and `perf-bisect.md` §3.3 prices halving the
+ * AO RESOLVE at 0.31 ms against 2.62 ms for the whole pass, which says the cost is the
+ * redraw and not the resolve.
+ *
+ * `mainPass` already wrote exactly that depth, one pass earlier, into the composer's own
+ * target. `GTAOPass.setGBuffer()` exists for precisely this and sets `_renderGBuffer =
+ * false` when handed a depth texture. Two details make it work here and both are checked
+ * rather than assumed:
+ *
+ *   1. WHICH BUFFER. `EffectComposer` ping-pongs, and which of `renderTarget1`/`2` holds
+ *      the scene depth depends on how many `needsSwap` passes ran before us — a parity
+ *      that is NOT stable frame to frame. So the depth is taken from the `readBuffer`
+ *      ARGUMENT this pass is handed, which is by definition the buffer the two
+ *      `RenderPass`es just drew into, whatever the parity. Nothing here reaches into the
+ *      composer's internals.
+ *   2. WHAT IS IN IT. `mainPass.clearDepth = true`, so the depth under GTAO is the
+ *      gameplay scene alone and the celestial backdrop is not in it — the same set stock
+ *      GTAOPass's prepass renders. It differs in one way and the difference is in our
+ *      favour: the prepass draws every mesh regardless of `depthWrite`, while the real
+ *      depth buffer honours it, and every VFX material in `src/vfx/**` is
+ *      `depthWrite: false` (shields:158, engines:326, rings:170, weapons:160 and :315,
+ *      damage:72, particles:175). Additive plumes therefore cannot occlude anything in
+ *      the AO, which they could before. The only `THREE.Points` in the project is the
+ *      starfield (`celestials/starfield.js:351`) and it is in the FAR scene, so the
+ *      point/line exclusion stock GTAOPass does with `_overrideVisibility` is moot.
+ *
+ * WHAT IS GIVEN UP: the normal buffer. With no `tNormal`, `GTAOShader`'s
+ * `NORMAL_VECTOR_TYPE 0` path reconstructs the view normal from depth. That is the
+ * edge-aware variant — it takes two taps either side on each axis and picks the side
+ * with the smaller second derivative (`GTAOShader.js:120-140`), which is the standard
+ * defence against smearing a normal across a silhouette. On a hull made of large flat
+ * plates the reconstruction is exact, because a plane's normal IS its depth gradient.
+ * It costs eight extra depth fetches per AO pixel, which is why the measured saving
+ * below is not the full 2.62 ms bound.
+ */
+class SceneDepthGTAOPass extends GTAOPass {
+  constructor(scene, camera, width, height) {
+    super(scene, camera, width, height);
+
+    // Stop the prepass, and free the full-resolution half-float RGBA normal target it
+    // was allocating (2560x1440 x RGBA16F = 29.5 MB) plus its own depth-stencil texture.
+    // `setSize` below keeps it pinned at 1x1; it is kept rather than nulled only because
+    // `GTAOPass.setSize`/`dispose` dereference it unconditionally.
+    this._renderGBuffer = false;
+    this.normalRenderTarget.dispose();
+    this.normalRenderTarget.setSize(1, 1);
+    this.normalTexture = null;
+    this.depthTexture = null;
+    this._boundDepth = undefined;
+    this._depthComplained = false;
+
+    for (const m of [this.gtaoMaterial, this.pdMaterial]) {
+      m.defines.NORMAL_VECTOR_TYPE = 0;   // reconstruct from depth
+      m.defines.DEPTH_SWIZZLING = 'x';    // DepthFormat, not packed depth-stencil
+      m.uniforms.tNormal.value = null;
+      m.needsUpdate = true;
+    }
+  }
+
+  setSize(width, height) {
+    super.setSize(width, height);
+    this.normalRenderTarget.setSize(1, 1);
+  }
+
+  render(renderer, writeBuffer, readBuffer, deltaTime, maskActive) {
+    const depth = readBuffer?.depthTexture ?? null;
+    if (!depth) {
+      // Loud rather than silent: `tools/smoke.mjs` treats a console error as a defect,
+      // so a composer target built without a depth texture fails a gate instead of
+      // quietly shipping a frame with no ambient occlusion in it.
+      if (!this._depthComplained) {
+        this._depthComplained = true;
+        console.error('[postfx] GTAO read buffer has no depthTexture; disabling ambient occlusion');
+      }
+      this.enabled = false;
+      return;
+    }
+    if (depth !== this._boundDepth) {
+      this._boundDepth = depth;
+      this.depthTexture = depth;
+      this.gtaoMaterial.uniforms.tDepth.value = depth;
+      this.pdMaterial.uniforms.tDepth.value = depth;
+      this.depthRenderMaterial.uniforms.tDepth.value = depth;
+    }
+    super.render(renderer, writeBuffer, readBuffer, deltaTime, maskActive);
+  }
+}
 
 export class PostChain {
   constructor(rendererWrapper, quality = 'high') {
@@ -216,14 +377,17 @@ export class PostChain {
      * 4 samples, not 8: this is a fill-rate cost on every pixel of a half-float
      * target and 4 already removes the staircase. SMAA stays in the chain after the
      * grade, where it now only has sub-pixel work left to do.
+     *
+     * A-2: THE SAMPLE COUNT IS NO LONGER WRITTEN HERE. It comes from
+     * `QUALITY_PRESETS[quality].msaa` via `_setSamples`, which is what that field was
+     * always for and what nothing had ever read. The paragraphs above stay true of
+     * `ultra`, which keeps 4; `high` is 2 and the header on the preset table has the
+     * measurement that moved it.
      */
-    this.composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, {
-      type: THREE.HalfFloatType,
-      colorSpace: THREE.LinearSRGBColorSpace,
-      samples: 4,
-      depthBuffer: true,
-      stencilBuffer: false,
-    }));
+    this._samples = (QUALITY_PRESETS[quality] ?? QUALITY_PRESETS.high).msaa ?? 4;
+    this.composer = new EffectComposer(renderer, makeHdrTarget(this._samples));
+    this.composer.renderTarget1.texture.name = 'EffectComposer.rt1';
+    this.composer.renderTarget2.texture.name = 'EffectComposer.rt2';
     this.composer.renderToScreen = true;
 
     // 1. celestial backdrop, clears the buffer
@@ -247,7 +411,7 @@ export class PostChain {
      * METRES, so 60 is the scale of the gaps between a cruiser's masses - a radius
      * tuned on a 1 m test scene does nothing here at all.
      */
-    this.gtao = new GTAOPass(rendererWrapper.scene, rendererWrapper.camera, 1, 1);
+    this.gtao = new SceneDepthGTAOPass(rendererWrapper.scene, rendererWrapper.camera, 1, 1);
     this.gtao.output = GTAOPass.OUTPUT.Default;
     this.gtao.blendIntensity = 1.0;
     this.gtao.updateGtaoMaterial({
@@ -372,6 +536,28 @@ export class PostChain {
     if (tint) this.godrays.uniforms.tint.value.copy(tint);
   }
 
+  /**
+   * Rebuild the composer's two HDR buffers at a new sample count.
+   *
+   * It has to be a rebuild. `samples` is read once, when three allocates the
+   * framebuffer (`WebGLTextures#setupRenderTarget`, guarded on
+   * `__webglFramebuffer === undefined`), so assigning `renderTarget.samples` on a
+   * live target changes a number nobody reads a second time — which is the same shape
+   * of bug as the dead preset field this method exists to honour.
+   */
+  _setSamples(n) {
+    if (n === this._samples) return;
+    this._samples = n;
+    // `EffectComposer#reset` disposes both buffers and clones the replacement, and
+    // `RenderTarget#copy` clones `depthTexture` rather than aliasing it, so rt1 and rt2
+    // end up with one depth texture each. Verified, because two ping-pong buffers
+    // sharing one depth attachment would be a silent one-frame-late AO.
+    this.composer.reset(makeHdrTarget(n));
+    this.composer.renderTarget1.texture.name = 'EffectComposer.rt1';
+    this.composer.renderTarget2.texture.name = 'EffectComposer.rt2';
+    if (this._w) this.composer.setSize(this._w, this._h);
+  }
+
   setQuality(name) {
     const q = QUALITY_PRESETS[name] ?? QUALITY_PRESETS.high;
     this.quality = name;
@@ -381,17 +567,36 @@ export class PostChain {
     this.godrays.uniforms.samples.value = q.godraySamples;
     this.bloom.enabled = q.bloom;
     this.smaa.enabled = q.smaa;
+    this._setSamples(q.msaa ?? 4);
     if (this._w) this.setSize(this._w, this._h, this._pr);
   }
 
+  /**
+   * `renderScale` shrinks the INTERNAL chain and leaves the canvas alone.
+   *
+   * Every pass runs at `pixelRatio * renderScale`; the final pass writes to the
+   * default framebuffer, which is still at the canvas's own size, so the hardware
+   * scales once on the way out. That is what makes it a fill-rate knob rather than a
+   * window-size knob: `perf-bisect.md` §3.2 fits the frame at
+   * `0.0102 + 0.9859 x (pixel share)`, so 0.85 scale is 0.72 of the pixels and about
+   * 0.73 of the frame. It is 1.0 at `medium`, `high` and `ultra` and changes nothing
+   * there; it exists so `low` means what its row says.
+   */
   setSize(width, height, pixelRatio = 1) {
     this._w = width;
     this._h = height;
     this._pr = pixelRatio;
-    const w = Math.max(1, Math.floor(width * pixelRatio));
-    const h = Math.max(1, Math.floor(height * pixelRatio));
-    this.composer.setSize(width, height);
-    this.composer.setPixelRatio(pixelRatio);
+    const scale = this.preset.renderScale ?? 1;
+    const w = Math.max(1, Math.floor(width * pixelRatio * scale));
+    const h = Math.max(1, Math.floor(height * pixelRatio * scale));
+    // The composer is driven in whole PIXELS with a ratio of 1, rather than in logical
+    // units with the ratio folded in. `EffectComposer#setSize` multiplies its arguments
+    // by `_pixelRatio` and hands the product straight to `RenderTarget#setSize` and to
+    // every pass, and `renderScale: 0.85` is the first setting in this project able to
+    // make that product fractional. A fractional render-target width is not a size any
+    // GL call can take, so it would be silently truncated somewhere downstream of here.
+    this.composer.setPixelRatio(1);
+    this.composer.setSize(w, h);
     this.gtao.setSize(w, h);
     this.bloom.setSize(Math.floor(w * this.preset.bloomRes), Math.floor(h * this.preset.bloomRes));
     this.grade.uniforms.resolution.value.set(w, h);
@@ -424,6 +629,14 @@ export class PostChain {
   get godrayIntensity() { return this._godrayIntensity ?? 0.42; }
 
   dispose() {
+    // `EffectComposer#dispose` frees its two buffers and nothing else — it does not walk
+    // `passes`. GTAO and SMAA each own render targets, and GTAO's are full-resolution, so
+    // they are disposed here by name rather than left to a composer that never looks at
+    // them. (`SceneDepthGTAOPass` keeps `normalRenderTarget` at 1x1 alive precisely so
+    // that `GTAOPass#dispose` can dereference it here without a null check.)
+    this.gtao.dispose?.();
+    this.smaa.dispose?.();
+    this.bloom.dispose?.();
     this.composer.dispose?.();
   }
 }

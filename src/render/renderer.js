@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CAMERA, FAR_SCENE } from '../core/units.js';
 import { PostChain } from './postfx.js';
+import { runPendingBakes } from './bakes.js';
 
 /**
  * OPTION B-PRIME — far-camera pitch compression. `space-backgrounds.md` §7.
@@ -185,6 +186,26 @@ export class Renderer {
   }
 
   render() {
+    /**
+     * ONE-SHOT OFFSCREEN BAKES, DRAINED BEFORE `info.reset()` AND NOT AFTER.
+     *
+     * `bakes.js` queues work that needs a renderer — today, the sky dome's
+     * field cube (`space-backgrounds.md` item 4). It cannot happen where item 4 puts
+     * it, inside `buildCelestials`, because none of the five call sites for that
+     * function holds a renderer; it happens here instead, which reaches the game and
+     * every probe by the same path. `runPendingBakes` returns immediately on an empty
+     * queue, so the steady-state cost is a length check.
+     *
+     * THE ORDER OF THESE TWO LINES IS THE WHOLE CONTRACT. `info.autoReset` is false
+     * (see the constructor), so counters accumulate until something resets them. A
+     * bake issues six draws. Drained BEFORE the reset, those six are wiped and never
+     * appear in a frame's statistics; drained after, they would land in the counters
+     * `tools/bench.mjs` takes the PEAK of, and a one-frame +6 on a peak is permanent.
+     * That is `space-backgrounds.md` item 4's landmine 2, and `bakes.js#withBakeState`
+     * also resets `info` on its own way out, so it is guarded twice.
+     */
+    runPendingBakes(this.renderer);
+
     this.renderer.info.reset();
     this.syncFarCamera();
     this.post.render();

@@ -184,11 +184,47 @@
  * So: shipped live for now, because it passes the frame budget on hardware (65.6 fps
  * mean, 60.2 fps at p99 at 2560x1440, both PASS) and the look is the wave's whole
  * point — but item 4 now has a measured mandate and 3.4 ms of headroom waiting for it.
+ *
+ * ===========================================================================
+ * A-2: ITEM 4 IS TAKEN. THE FIELD IS BAKED, AND NOTHING ABOVE IS UNTRUE.
+ * ===========================================================================
+ *
+ * Everything in this header still describes what the sky IS. The construction below is
+ * unchanged line for line — the band, the lobe, the galactic core and halo, the
+ * mean-preserving structure term, the coloured absorption, the bounded warm scatter.
+ * What changed is WHEN it runs: once, into a cube map, instead of ten noise evaluations
+ * on every pixel of every frame.
+ *
+ * `docs/review/perf-bisect.md` §4.3 re-measured F3 a third time and independently on
+ * different hardware, and got the same verdict: `far:dome-flat` **-2.44 ms**, against
+ * F3's 2 ms mandatory line. It also measured the thing that makes the bake capture all
+ * of it rather than some of it — `far:dome-hidden` recovers LESS (-2.32 ms) than drawing
+ * the dome with a constant colour, so the geometry, the draw call and the full-screen
+ * fill are already free and 100% of the cost is the taps.
+ *
+ * THE BAKE IS A COST CHANGE AND NOT A LOOK CHANGE, which item 4 asks to be said out
+ * loud so that nobody "improves the look" inside it. See `render/bakes.js` for why it is exact
+ * (a pure function of `normalize(vDir)` is exactly what a cube stores) and for why 512
+ * texels a face is oversampling by an order of magnitude against `field.glsl.js`'s own
+ * 8-degree band limit. `fieldcheck` on all four shots, before and after, is in the
+ * commit message; the largest movement in any of the twelve graded statistics is inside
+ * the instrument's run-to-run noise.
+ *
+ * `bake: false` KEEPS THE LIVE SHADER, and that is not a leftover: it is the A/B control
+ * for anyone re-measuring F3, in the same spirit as `structure: 0` compiling the field
+ * out entirely two paragraphs up. A control that cannot be switched on measures nothing.
+ *
+ * The live-tuning handles — `setScale`, `setTerms`, `setField`, `setGain` — all still
+ * work. They mutate the SOURCE material's uniforms and then queue a re-bake, so a
+ * console session solving gains against a measured frame behaves exactly as it did
+ * before, one frame later. Anything else would have left four handles that silently
+ * stopped doing anything, which is the defect `perf-bisect.md` §5 was written about.
  */
 
 import * as THREE from 'three';
 import { ORDER, markCelestial, col } from './common.js';
 import { FIELD_GLSL, FIELD_TAPS } from './field.glsl.js';
+import { requestBake, bakeDirectionCube } from '../../render/bakes.js';
 
 export { FIELD_TAPS };
 
@@ -241,6 +277,9 @@ function unitLuma(c) {
  * @param {number} [p.warm]        palette hex: rust/amber for lanes and outer bands
  * @param {number} [p.warmGain]    emission gain on the warm term
  * @param {number} [p.segments]
+ * @param {boolean} [p.bake]       bake the field to a cube map at first render. `false`
+ *                                 keeps the live shader — the A/B control for F3.
+ * @param {number} [p.bakeSize]    texels per cube face
  * @returns {{object:THREE.Mesh, material:THREE.ShaderMaterial,
  *            setGain:Function, dispose:Function}}
  */
@@ -270,6 +309,8 @@ export function buildSkyDome({
   warm = 0x000000,
   warmGain = 0.0,
   segments = 32,
+  bake = true,
+  bakeSize = 512,
 } = {}) {
   const geo = new THREE.SphereGeometry(radius, segments, Math.max(8, segments >> 1));
   geo.name = 'sky-dome';
@@ -336,15 +377,24 @@ export function buildSkyDome({
     });
   }
 
-  const mat = new THREE.ShaderMaterial({
-    uniforms,
-    vertexShader: /* glsl */`
+  /**
+   * ONE vertex shader for both the live material and the baked one.
+   *
+   * `vDir` is the object-space vertex direction and it is the ONLY input either
+   * fragment shader has. That is the property `render/bakes.js` depends on and it is why the
+   * bake is exact rather than an approximation — see its header.
+   */
+  const DOME_VERTEX = /* glsl */`
       varying vec3 vDir;
       void main() {
         vDir = normalize(position);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
-    `,
+  `;
+
+  const mat = new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: DOME_VERTEX,
     fragmentShader: /* glsl */`
       uniform vec3 uAxis, uCore, uZenith, uGround;
       uniform vec2 uLobe;
@@ -508,13 +558,93 @@ ${structured ? `
   mesh.matrixAutoUpdate = false;
   mesh.updateMatrix();
 
+  /**
+   * THE BAKE. Only when there is something worth baking.
+   *
+   * `bake && structured` and not `bake` alone: the ten noise evaluations are the
+   * entire measured cost (`perf-bisect.md` §4.3, and `field.glsl.js:120`'s per-eval
+   * figure from the other direction). An unstructured dome's fragment is two
+   * smoothsteps, a mix and — at a banded POI — two exponentials, none of which has a
+   * measurable cost at any resolution, so baking one would spend 12.6 MB to buy
+   * nothing. `structure: 0` domes therefore keep the live shader and behave exactly as
+   * they did, which also keeps them usable as the control they already are.
+   */
+  const bakeable = bake && structured;
+  let bakedMat = null;
+  let bakedCube = null;
+  let bakeQueued = false;
+  let bakeMs = 0;
+  let disposed = false;
+
+  function applyBake(renderer) {
+    bakeQueued = false;
+    if (disposed) return;
+    const previous = bakedCube;
+    const { target, ms } = bakeDirectionCube(renderer, mat, bakeSize);
+    bakedCube = target;
+    bakeMs = ms;
+    if (bakedMat) {
+      bakedMat.uniforms.uSky.value = target.texture;
+    } else {
+      bakedMat = new THREE.ShaderMaterial({
+        uniforms: { uSky: { value: target.texture } },
+        vertexShader: DOME_VERTEX,
+        fragmentShader: /* glsl */`
+          uniform samplerCube uSky;
+          varying vec3 vDir;
+          void main() {
+            // The whole point. Ten noise evaluations became one fetch, and because the
+            // cube was written at the same directions this reads it at, the value is
+            // the one the live shader would have computed.
+            gl_FragColor = vec4(textureCube(uSky, normalize(vDir)).rgb, 1.0);
+          }
+        `,
+        side: THREE.BackSide,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: true,
+        fog: false,
+      });
+      markCelestial(bakedMat, 'sky-dome');
+      mesh.material = bakedMat;
+    }
+    // Only after the swap: disposing the old cube while it is still the bound texture
+    // of the visible material would show one frame of nothing.
+    previous?.dispose();
+  }
+
+  /** Queue a (re-)bake. Idempotent inside one frame; a no-op on a live-shader dome. */
+  function queueBake() {
+    if (!bakeable || disposed || bakeQueued) return;
+    bakeQueued = true;
+    requestBake(applyBake);
+  }
+
+  queueBake();
+
   return {
     object: mesh,
     material: mat,
-    /** Per-pixel noise evaluations this dome compiled in. 0 when `structure` is 0. */
+    /**
+     * Per-pixel noise evaluations this dome compiled in. 0 when `structure` is 0.
+     *
+     * This still reports what the SOURCE shader costs, because that is what the number
+     * has always meant and what `field.glsl.js`'s tables are indexed by. What the
+     * dome costs per frame once baked is one `textureCube`, and `baked` below says
+     * whether that is what is on the mesh.
+     */
     taps: structured ? FIELD_TAPS.noiseEvals : 0,
+    /** True once the cube is on the mesh. False on a live-shader dome, and for the
+     *  one frame between construction and the renderer draining the bake queue. */
+    get baked() { return bakedMat !== null && mesh.material === bakedMat; },
+    /** Wall-clock of the last bake, milliseconds. F4's falsifier is 400 ms. */
+    get bakeMs() { return bakeMs; },
+    /** Texels per cube face, or 0 on a live-shader dome. */
+    bakeSize: bakeable ? bakeSize : 0,
+    /** Force a re-bake. The live-tuning handles below call it for you. */
+    rebake: queueBake,
     /** Live handle for probes and for anything that wants to prove the dome is the source. */
-    setGain(k) { mat.uniforms.uGain.value = k; },
+    setGain(k) { mat.uniforms.uGain.value = k; queueBake(); },
     /**
      * Scale every emissive term of the dome by one factor, live.
      *
@@ -533,6 +663,7 @@ ${structured ? `
       u.uGain.value = gain * k;
       u.uBase.value = baseGain * k;
       if (u.uGal) u.uGal.value.y = galGain * k;
+      queueBake();
     },
     /**
      * The three emissive terms independently, for solving their RATIO. `setScale`
@@ -543,6 +674,7 @@ ${structured ? `
       if (g != null) u.uGain.value = g;
       if (base != null) u.uBase.value = base;
       if (gal != null && u.uGal) u.uGal.value.y = gal;
+      queueBake();
     },
     /**
      * The structural knobs, live, for the same reason `setTerms` exists: the
@@ -553,14 +685,21 @@ ${structured ? `
     setField({ structure: s, laneDepth: ld, lane: lw, fieldScale: fs, coreBias: cb, galHeight: gh } = {}) {
       const u = mat.uniforms;
       if (gh != null && u.uGal) u.uGal.value.x = gh;
-      if (!u.uStructure) return false;
+      if (!u.uStructure) { queueBake(); return false; }
       if (s != null) u.uStructure.value = s;
       if (cb != null) u.uCoreBias.value = cb;
       if (fs != null) u.uField.value.x = fs;
       if (ld != null) u.uLaneShape.value.z = ld;
       if (lw) u.uLaneShape.value.set(lw[0], lw[1], u.uLaneShape.value.z, u.uLaneShape.value.w);
+      queueBake();
       return true;
     },
-    dispose() { geo.dispose(); mat.dispose(); },
+    dispose() {
+      disposed = true;
+      geo.dispose();
+      mat.dispose();
+      bakedMat?.dispose();
+      bakedCube?.dispose();
+    },
   };
 }
