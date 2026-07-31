@@ -98,7 +98,24 @@
  *   warp shape lane   noiseEvals   mean frame   delta vs field-off
  *    -    -     -         0          11.8 ms       baseline
  *    1    4     3        13          14.2 ms       +2.4 ms
- *    2    4     3        19          15.2 ms       +3.4 ms   <- SHIPPED
+ *    2    4     3        19          15.2 ms       +3.4 ms   <- W6, no longer shipped
+ *    1    2     2        10          (see below)             <- SHIPPED
+ *
+ * W7 RE-MEASURED THE WHOLE FRAME RATHER THAN THIS DELTA, because the wave changed
+ * more than the tap count. `NP_RASTER=hardware npm run bench -- --width 2560
+ * --height 1440`, HEAD `0d9d58e` measured by stashing `src/` on the same machine in
+ * the same session:
+ *
+ *   HEAD  mean 39.2 ms  median 39.2  p99 47.1   draw calls 511  programs 62
+ *   W7    mean 36.6 ms  median 36.3  p99 44.8   draw calls (smoke) 262  programs 60
+ *
+ * **-2.6 ms and -2 programs**, from 19 taps to 10 over the dome's 100%-of-frame
+ * fill, minus the nebula's 9 draw calls and 3 materials, plus 3 dust quads that pay
+ * 10 taps over a quarter of the frame. Note the absolute numbers are far off the
+ * 11.8/15.2 ms above: that pair was measured on different hardware, so the DELTA
+ * there and the DELTA here are comparable and the levels are not. The budget gate
+ * fails on both sides and failed before this wave — it is a pre-existing 511-draw
+ * -call bench scene, not a backdrop cost.
  *
  * That is 0.185 and 0.179 ms per evaluation — linear to 3%, so this table extrapolates
  * and the dial is honest. **F3's verdict is therefore BAKE, and it is structural:** a
@@ -108,11 +125,43 @@
  *
  * RAISING `warp` IS THE EXPENSIVE KNOB — it is multiplied by six. Raising `shape` or
  * `lane` costs one eval each.
+ *
+ * ===========================================================================
+ * W7: THE OCTAVE COUNTS ARE ALSO THE BAND-LIMIT, AND THAT IS WHY THEY DROPPED
+ * ===========================================================================
+ *
+ * `docs/design/skybox-spec.md` §7 measured an octave-band contrast pyramid on the
+ * shipped field and named the failure in two numbers:
+ *
+ *   * mid-frequency contrast energy at 1.6-26 degrees is **2.08x** the plain-stars
+ *     control's (0.05603 vs 0.02695). That band is the marble.
+ *   * the STAR band's share of total field contrast falls from 20.8% to 8.3% when
+ *     the dome is on — the subject losing 2.5x of its share of the frame's
+ *     structure to the backdrop.
+ *
+ * `{warp: 2, shape: 4, lane: 3}` = 19 taps, and **octaves 3 and 4 of the shape
+ * field ARE the r=4..r=16 bands** the pyramid measures as the problem. They are not
+ * detail that happens to be too strong; they are detail that must not exist. Cut to
+ * `{warp: 1, shape: 2, lane: 2}` = 10 taps.
+ *
+ * THE RULE THAT OUTLIVES THE OCTAVE COUNTS, because octave counts drift: **the
+ * field must contain no feature smaller than 8 degrees of arc.** At the shots' own
+ * 46 deg / 900 px that is 156 px, i.e. the field must survive a blur of radius 78 px
+ * essentially unchanged. Anyone raising `shape` past 2 has to show that blur test,
+ * not an opinion about detail.
+ *
+ * THE WARP STAYS AT TWO LEVELS AND DROPS TO ONE OCTAVE, which is not the same
+ * decision. Two LEVELS is what makes the lanes thread the emission instead of
+ * landing beside it (three curls into an intestinal look; one is a nudge). One
+ * OCTAVE per level is what keeps the displacement low-frequency, which is all a
+ * warp should ever be. The research's own measurement backs the second half: curl
+ * noise is a trap at 4 octaves (coherence 0.161) and fine at 1 (0.892), because
+ * velocities scale as O(1/L) and the finest octave dominates. Same arithmetic here.
  */
 export const FIELD_TAPS = Object.freeze({
-  warp: 2,
-  shape: 4,
-  lane: 3,
+  warp: 1,
+  shape: 2,
+  lane: 2,
   get warpCalls() { return 6; },
   get noiseEvals() { return 6 * this.warp + this.shape + this.lane; },
 });
@@ -167,20 +216,40 @@ ${fbm('npFbmShape', FIELD_TAPS.shape)}
 ${fbm('npFbmLane', FIELD_TAPS.lane)}
 
 // ---------------------------------------------------------------------------
-// The 2-level warp, verbatim from IQ's article lifted into 3D. q displaces the
-// domain, r displaces the displaced domain; the 4.0 amplitudes are his. This is
-// where the strands come from — one level is a nudge, three curls into intestines.
+// The 2-level warp, IQ's article lifted into 3D. q displaces the domain, r
+// displaces the displaced domain. Two levels is what makes the lanes thread the
+// emission rather than land beside it; one is a nudge, three curls into intestines.
+//
+// THE AMPLITUDE IS 0.85, NOT IQ's 4.0, AND THAT IS THE SINGLE LINE THAT WAS
+// MAKING THE MARBLE.
+//
+// npField builds its domain as d * scale, so ONE unit of p is ONE feature of the
+// base octave. IQ's 4.0 therefore displaces the domain by FOUR base features
+// before a single sample is taken - at the shipped fieldScale of 3.0 that is 1.33
+// times the entire domain radius. That is not a warp, it is a scramble, and a
+// scrambled smooth field has energy at every frequency including the 1.6-6.5
+// degree marble zone skybox-spec.md 7.2 measures as the failure. Cutting the
+// octave counts alone could never have fixed it: the octaves were being FOLDED
+// into finer structure than they contain.
+//
+// 0.85 keeps the displacement under one base feature, which is what a warp is for
+// - it bends the strands and threads the lanes through the emission without
+// inventing detail smaller than the thing being warped. IQ's number is right for
+// his domain and wrong for ours, and it is the amplitude and not the article that
+// is the project-specific decision.
 // ---------------------------------------------------------------------------
+const float NP_WARP_AMP = 0.85;
+
 vec3 npWarp(vec3 p) {
   vec3 q = vec3(
     npFbmWarp(p),
     npFbmWarp(p + vec3(5.2, 1.3, 2.8)),
     npFbmWarp(p + vec3(1.7, 9.2, 4.4)));
   vec3 r = vec3(
-    npFbmWarp(p + 4.0 * q + vec3(8.3, 2.8, 6.1)),
-    npFbmWarp(p + 4.0 * q + vec3(3.4, 7.1, 1.9)),
-    npFbmWarp(p + 4.0 * q + vec3(6.7, 4.3, 9.8)));
-  return p + 4.0 * r;
+    npFbmWarp(p + NP_WARP_AMP * q + vec3(8.3, 2.8, 6.1)),
+    npFbmWarp(p + NP_WARP_AMP * q + vec3(3.4, 7.1, 1.9)),
+    npFbmWarp(p + NP_WARP_AMP * q + vec3(6.7, 4.3, 9.8)));
+  return p + NP_WARP_AMP * r;
 }
 
 /**

@@ -54,9 +54,9 @@
  */
 
 import * as THREE from 'three';
-import { getPOIPalette, NEUTRAL, mix, shade, saturate } from '../../art/palette.js';
+import { getPOIPalette, NEUTRAL, mix, saturate } from '../../art/palette.js';
 import { buildStarfield } from './starfield.js';
-import { buildNebula } from './nebula.js';
+import { buildDustLanes } from './dust.js';
 import { buildGasGiant } from './gasgiant.js';
 import { buildStar } from './star.js';
 import { buildSkyDome } from './skydome.js';
@@ -87,19 +87,24 @@ export const CELESTIAL_SPECS = {
     // giant AND a hard raking key on the fleet. Low (20 deg) for long shadows.
     sunDir: V(0.776, 0.347, -0.526),
     background: NEUTRAL.spaceBlack,
-    starfield: { count: 7000, gain: 0.95, bandDensity: 0.50, bandAxis: [0.28, 0.82, -0.50] },
-    star: { direction: V(0.776, 0.347, -0.526), distance: 26000, angularRadius: 0.0085, coreGain: 30, haloGain: 2.0, shells: 3 },
     /**
-     * Centre y was +0.19 and is now -0.20: at the `wide` pose the band sat 55.2 deg
-     * off the view axis, i.e. over the top of the frame. Below the horizon it comes to
-     * 49.7 deg and its near edge crosses the frame. `close` (yaw 2.35) still cannot
-     * see it at all — 138.7 deg — and nothing about a directional band can fix that;
-     * the dome below is what carries that framing.
+     * 13 000, and the band is narrow. See the graveyard's block below for why the
+     * pole is the frame's SCREEN-UP and what the old one measured.
+     *
+     * Solved against this POI's own `wide` framing, whose far-camera forward was
+     * read off the live game at `(-0.6098, -0.1987, -0.7673)`; world +Y with that
+     * component projected out is `(-0.1236, 0.9801, -0.1555)`, dot with forward
+     * exactly 0. `close` is a different yaw (2.35) and sees the band edge-on rather
+     * than across, which is a framing this POI accepts: the gas giant is the
+     * subject at `close` and it fills the frame.
      */
-    nebula: {
-      centre: [0.2094, -0.20, -0.9572], spread: 0.58, layers: 10, dustLayers: 3,
-      intensity: 0.72, radius: 22000, frontRadius: 4600, scale: 1.0,
+    starfield: {
+      count: 13000, gain: 0.95, bandDensity: 0.88, bandHeight: 0.060,
+      bandAxis: [-0.1236, 0.9801, -0.1555],
     },
+    star: { direction: V(0.776, 0.347, -0.526), distance: 26000, angularRadius: 0.0085, coreGain: 30, haloGain: 2.0, shells: 3 },
+    /** LIGHTING DATA ONLY — see the delete note at the build site. */
+    nebula: { centre: [0.2094, -0.20, -0.9572], intensity: 0.72 },
     /**
      * Cold blue field. Lobe on the band, ecliptic floor in the same hue.
      *
@@ -115,7 +120,18 @@ export const CELESTIAL_SPECS = {
       core: saturate(mix(0x24406e, 0x8fb4ff, 0.34), 1.30),
       zenith: saturate(mix(0x0a1024, 0x24406e, 0.72), 1.25),
       ground: saturate(mix(0x070b16, 0x24406e, 0.62), 1.25),
-      gain: 0.276, baseGain: 1.35,
+      /**
+       * 0.276 / 1.35 -> 0.0386 / 0.189. The same uniform 0.14x linear cut as the
+       * graveyard, for the same reason and off the same solve — see that POI's
+       * block. This field is blue rather than green but the arithmetic that made
+       * the wall is hue-independent: `wide` measured field median 0.1405 with the
+       * gas giant, THE reference frame, sitting at 0.0827 on its own footprint,
+       * i.e. 78.8% of the hero body darker than the sky behind it. A body cannot be
+       * a hero and a hole at the same time.
+       */
+      gain: 0.0386, baseGain: 0.189,
+      galGain: 0.050,
+      galCore: saturate(mix(0x8fb4ff, NEUTRAL.ice, 0.18), 1.15),
       /**
        * STRUCTURE HERE. THE SECOND HUE DOES NOT SURVIVE A BLUE FIELD, AND THAT IS A
        * MEASUREMENT, NOT A PREFERENCE.
@@ -167,17 +183,22 @@ export const CELESTIAL_SPECS = {
        * brighter — and `close` reading 0.1071 against HEAD's 0.1053 is the check on
        * that claim, not the sentence before it.
        */
-      structure: 0.40,
-      coreBias: 0.35,
-      fieldScale: 2.2,
+      structure: 0.26,
+      coreBias: 0.55,
+      fieldScale: 1.5,
       fieldStretch: 3.0,
       density: [0.38, 0.68],
-      lane: [0.52, 0.68],
-      laneDepth: 1.90,
+      lane: [0.46, 0.82],
+      laneDepth: 1.55,
       laneScale: 0.45,
       absorb: [0.86, 0.98, 1.22],
       warm: saturate(NEUTRAL.rockOre, 1.20),
       warmGain: 0.40,
+    },
+    /** See the graveyard's block. `radius` 5200 sits inside the giant's 9000. */
+    dust: {
+      count: 3, radius: 5200, spread: 0.80,
+      absorb: [0.20, 0.44, 0.74], depth: 1.15, lane: [0.42, 0.74],
     },
     giant: {
       // 34 degrees across at a 99 degree elongation: about a third of a 16:9 frame,
@@ -198,56 +219,60 @@ export const CELESTIAL_SPECS = {
     // Low, cold, and almost edge on. Everything here is silhouette and rim.
     sunDir: V(-0.905, 0.145, 0.400),
     background: 0x000000,
-    starfield: { count: 7200, gain: 1.25, bandDensity: 0.62, bandAxis: [-0.20, 0.72, 0.66] },
+    /**
+     * THE GALACTIC BAND WAS AIMED 58.6 DEGREES OFF THE FRAME, AND THIS FILE ALREADY
+     * KNOWS WHY THAT HAPPENS. The header above records exactly this defect for the
+     * NEBULA band — "every nebula band in this file was aimed at or above the
+     * horizon on a bearing nobody had checked against a camera" — and re-aimed it.
+     * Nobody then checked the STARFIELD's band, which is a separate axis.
+     *
+     * `bandAxis` is the POLE of the band, so the band itself is the great circle
+     * 90 degrees from it and it crosses the frame when the pole is PERPENDICULAR to
+     * the view direction. Measured on this tree at the shipped `engagement` pose,
+     * whose far-camera forward is `(-0.3160, -0.5861, -0.7461)`:
+     *
+     *   old pole [-0.20, 0.72, 0.66]   dot(pole, forward) = -0.8537
+     *                                  -> band plane 58.6 deg off the view axis
+     *
+     * i.e. the Milky Way was over the camera's shoulder, in the same way and for the
+     * same reason as the nebula was. A band you cannot see is worth exactly as much
+     * as no band.
+     *
+     * The pole below is the frame's own SCREEN-UP at that pose — world +Y with the
+     * forward component projected out, `(-0.2286, 0.8103, -0.5396)`, dot with
+     * forward exactly 0. That is the KSP skybox tutorial's instruction stated as a
+     * vector: align to the galactic plane so the band runs FLAT ACROSS the frame
+     * rather than over the top of it.
+     *
+     * `bandDensity` 0.62 -> 0.86 and the rejection is now exponential
+     * (`starfield.js` header (c)). 0.62 against a straight line was a 2.6:1
+     * plane-to-pole density ratio spread over the whole sky, which is a brightening,
+     * not a band. 0.86 against `exp(-|sin b|/0.13)` is 7:1 concentrated inside about
+     * 8 degrees of latitude, which is what the naked-eye band looks like.
+     *
+     * 13 000 stars, from 7 200. One draw call, one program, one buffer either way;
+     * EF-Map's shipped three.js starfield runs 24 000 instanced. This is second in
+     * order behind the amplitude fix on purpose — more stars at the OLD amplitude is
+     * more grey haze, which is the failure this file's header is written against.
+     */
+    starfield: {
+      count: 13000, gain: 1.25, bandDensity: 0.88, bandHeight: 0.060,
+      bandAxis: [-0.2286, 0.8103, -0.5396],
+    },
     star: { direction: V(-0.905, 0.145, 0.400), distance: 30000, angularRadius: 0.0022, coreGain: 26, haloGain: 0.55, shells: 3 },
     /**
-     * RE-AIMED, AND THIS IS THE SINGLE MEASURED CAUSE OF "THE BACKGROUND IS BLACK".
-     *
-     * The centre was `[-0.62, 0.10, 0.78]`. The tactical camera at the shipped
-     * `engagement` pose looks along `(-0.316, -0.586, -0.746)`: the band was **116.4
-     * degrees off the view axis**, which is to say behind the player's shoulder. All
-     * fourteen layers of it rendered every frame into pixels nobody was looking at.
-     *
-     * It now runs on the bearing to `giant-orbit` — the graveyard sits at map
-     * `[-190, 60]` and giant-orbit at `[-120, -700]`, and `world/system.js:312` maps
-     * `pos` to `(x, 0, z)`, so that bearing is `(70, -760)` normalised to
-     * `(0.0917, 0, -0.9958)` — dropped 14 degrees below the plane. Two reasons, both
-     * of them checkable rather than aesthetic:
-     *
-     *   * BELOW, because `nebula.js` elongates the band along `centre x (0,1,0)`, so a
-     *     low centre lays the band ACROSS a camera that is looking down at the plane
-     *     instead of hanging it over the frame's top edge.
-     *   * ON THAT BEARING, because the giant below is on it too. The nebula bank, the
-     *     planet and the fill light are then one direction and one composition rather
-     *     than three unrelated facts, and `world/lighting/pois.js` points the
-     *     graveyard's fill at this same vector — which is what the palette's own
-     *     comment ("the nebula IS the fill here") always claimed and never did.
+     * LIGHTING DATA ONLY — the 19 quads that used to draw this bank are deleted;
+     * see the note at the build site. The BEARING is still load-bearing and it is
+     * still the one this file solved: the graveyard sits at map `[-190, 60]` and
+     * `giant-orbit` at `[-120, -700]`, and `world/system.js:312` maps `pos` to
+     * `(x, 0, z)`, so that bearing is `(70, -760)` normalised to
+     * `(0.0917, 0, -0.9958)`, dropped 14 degrees below the plane. The bank, the
+     * gas giant and the fill light are one direction and one composition rather
+     * than three unrelated facts — which is what the palette's own comment ("the
+     * nebula IS the fill here") always claimed. `world/lighting/poi.js:237-239`
+     * reads exactly the two fields below and nothing else.
      */
-    nebula: {
-      centre: [0.0890, -0.2419, -0.9662], spread: 0.78, layers: 14, dustLayers: 5,
-      intensity: 1.30, radius: 20000, frontRadius: 4000, scale: 1.15,
-      /**
-       * Explicit tints, NOT derived from `fill` and `ibl.horizon` the way the other
-       * POIs are. The graveyard palette's fill (0x4c6a4a) and horizon (0x14202e) are
-       * near-black by design, so the generic derivation produces a nebula that is
-       * literally invisible — and this is the one location whose fill light is
-       * supposed to be coming from the nebula.
-       *
-       * THE COLD BLUE TINT IS GONE, and it cost the location its identity. R2 asks for
-       * one hue owning the field inside a band 60 degrees wide. Measured on the hexes
-       * that were here, the three tints sat at hue **88.3, 91.5 and 212.0 degrees** —
-       * a 124 degree spread, because `mix(0xb6c6da, 0x1b2a3a, 0.55)` is a cold blue and
-       * `r.int(0, 2)` gave it a third of every layer. Three greens at 86.9, 89.6 and
-       * 128.2 degrees span 41. `saturate()` is the only thing raising chroma; every
-       * hue below is a graveyard palette hue untouched, because saturate is
-       * luminance-preserving and hue-preserving by construction.
-       */
-      tints: [
-        saturate(mix(0x8fb04a, NEUTRAL.ice, 0.32), 1.30),
-        saturate(mix(0x4c6a4a, 0x8fb04a, 0.45), 1.25),
-        saturate(mix(0x14202e, 0x4c6a4a, 0.80), 1.25),
-      ],
-    },
+    nebula: { centre: [0.0890, -0.2419, -0.9662], intensity: 1.30 },
     /**
      * Derelict green owns this field. `core` is the palette's own accent pushed on
      * chroma alone; the floor is the same family two stops down, so even the part of
@@ -256,6 +281,12 @@ export const CELESTIAL_SPECS = {
      */
     dome: {
       axis: [0.0890, -0.2419, -0.9662], spread: 1.30,
+      /**
+       * NOT REPEATED FROM `starfield` ABOVE — `buildCelestials` copies the
+       * starfield's own `bandAxis`/`bandHeight` into the dome, so the diffuse band
+       * and the resolved stars cannot drift apart in a later edit. See the
+       * `spec.starfield` read at the dome build site.
+       */
       /**
        * THE FLOOR IS BUILT FROM THE ACCENT, NOT FROM `fill`, AND THAT IS A CHROMA
        * DECISION WITH A NUMBER BEHIND IT.
@@ -316,7 +347,81 @@ export const CELESTIAL_SPECS = {
        * rather than re-printed under numbers it no longer describes. Every figure above
        * is from a run of the command named above against the tree as committed.)
        */
-      gain: 0.092, baseGain: 0.318,
+      /**
+       * ===================================================================
+       * W7: THESE WERE 0.092 / 0.318 AND EVERY GATE PASSED AND IT LOOKED LIKE
+       * GREEN MARBLE. THE GATES WERE THE BUG.
+       * ===================================================================
+       *
+       * The block below this one is a correct account of a wave that measured
+       * `engagement` at median luma 0.1271 with 89.9% of the frame above 0.06 and
+       * called both PASS, because R1 was a FLOOR with nothing above it bounded.
+       * `docs/design/skybox-spec.md` §2.2 puts the number on it: **59.18% of the
+       * shipped field sat in the 0.10-0.28 luma band reserved for a nebula core and
+       * a planet's lit face.** The band that is supposed to be the subject was the
+       * background. §2.6 puts the consequence on it: 43.5% of hull pixels and 78.8%
+       * of the gas giant were DARKER than the sky behind them.
+       *
+       * R1 is replaced by R1' — median luma **0.028-0.045**, two-sided — and the
+       * dome has to fall to roughly a seventh of its linear output to reach it.
+       * **A 3.5x cut in display median needs a 7x cut in linear output**, because
+       * `index.js:218-226`'s fitted response is `out = 1.111 * L^0.643` and ACES
+       * compresses hard in this range. Halving the gains lands at 0.081, still 1.8x
+       * over the top of the band. That factor of two is the specific trap that
+       * produced two overshoots in a row.
+       *
+       * SOLVED, NOT ASSUMED, and the solve was run three times because the first
+       * two answers were wrong for reasons the numbers showed. Every row below is
+       * `skydome.js#setTerms` driven live against the `engagement` FIELD at
+       * 2560x1440, N = 3 686 400 px, with the starfield fix already in — F8 says the
+       * starfield changes what the CONTROL is, so it lands first:
+       *
+       *   gain   base    gal  |   p50   >0.06   VOID  STRUCT | R7 margin  darker
+       *   0.0129 0.0445 0.030 | 0.0580 47.34%  33.8%  14.45% |  +0.0924   17.9%
+       *   0.0045 0.0150 0.060 | 0.0502 41.04%  44.6%  17.83% |  +0.0834   19.5%
+       *   0.0025 0.0075 0.042 | 0.0339 13.80%  71.2%   0.72% |  +0.1239    5.3%
+       *   0.0025 0.0075 0.055 | 0.0331 13.42%  74.3%   1.84% |  +0.1183    7.4%
+       *   0.0025 0.0075 0.068 | 0.0328 14.22%  74.2%   3.55% |  +0.1109    9.7%  <- SHIPPED
+       *   0.0025 0.0075 0.080 | 0.0345 19.42%  67.9%   6.32% |  +0.0986   14.1%
+       *   0.0025 0.0075 0.105 | 0.0370 24.77%  62.2%  10.32% |  +0.0843   18.3%
+       *
+       * **THE BINDING CONSTRAINT IS R7's `darker <= 10%`, NOT R1'.** Read the last
+       * two columns against the STRUCT one: every row that reaches R1's 5-12%
+       * STRUCTURE band puts 14-18% of hull and debris pixels DARKER than the sky
+       * behind them, which is the exact failure this whole wave exists to undo.
+       * `skybox-spec.md` §2.6 says R7 outranks R1' and R2' on conflict, so the
+       * shipped row takes STRUCT 3.55% against a 5-12% target and keeps R7 green.
+       * That miss is real and it is deliberate; it is reported, not hidden.
+       *
+       * AND §3.1's INSTRUCTION IS WRONG ABOUT WHICH DIAL TO TURN. It says to scale
+       * `baseGain` alone because "`baseGain` is the multiplier on the whole field".
+       * It is not: `skydome.js`'s fragment body multiplies the ECLIPTIC BAND by
+       * `uBase` and the LOBE by `uGain`, separately. Scaling `baseGain` alone leaves
+       * the lobe at full output over a field cut to a seventh — a green blob, not a
+       * uniform scale. Both moved, in one ratio, which is what preserves the hue.
+       */
+      gain: 0.0025, baseGain: 0.0075,
+      /**
+       * THE DIFFUSE GALACTIC BAND — new, and it is the layer that makes the frame
+       * worth looking at rather than merely dark.
+       *
+       * `skybox-spec.md` §4.2(f): "put the band's DIFFUSE component in layer 1 (the
+       * dome), not in the point sprites". Same pole and same scale height as
+       * `starfield.js`'s rejection function above, so the resolved stars and the
+       * unresolved glow are one disc seen two ways rather than two Milky Ways that
+       * disagree. `galCore` is the location's own accent pulled most of the way to
+       * ice: unresolved starlight is near-white, tinted by what it shines through.
+       *
+       * `bandHeight` 0.060, from 0.13, and the profile is two exponentials rather
+       * than one — both graded on the frame. A single exp at the scale height that
+       * gives the right core has wings out to +-23 degrees against a 46 degree
+       * vertical FOV, so the "band" covered the frame and read as FOG; measured,
+       * looked at, and rejected. Narrow enough to have an edge is what makes it a
+       * band, and a narrow band also lets the core be BRIGHTER for the same R7
+       * cost, because there is less lit sky for debris to silhouette against.
+       */
+      galGain: 0.068,
+      galCore: saturate(mix(0x8fb04a, NEUTRAL.ice, 0.12), 1.45),
       /**
        * ===================================================================
        * THE OWNER'S RUST-AND-GREEN RULING, AS FIVE NUMBERS
@@ -413,17 +518,40 @@ export const CELESTIAL_SPECS = {
        * **29**, both inside the ceiling with room; that headroom is what the number is
        * spending, and anyone raising it should watch the band column and not the luma.
        */
-      structure: 0.34,
-      coreBias: 0.30,
-      fieldScale: 3.0,
+      structure: 0.22,
+      coreBias: 0.55,
+      fieldScale: 1.8,
       fieldStretch: 3.4,
       density: [0.22, 0.84],
-      lane: [0.50, 0.68],
-      laneDepth: 1.75,
+      lane: [0.44, 0.80],
+      laneDepth: 1.45,
       laneScale: 0.42,
       absorb: [0.15, 1.10, 1.90],
       warm: saturate(NEUTRAL.rockOre, 1.35),
       warmGain: 0.34,
+    },
+    /**
+     * DUST LANES, IN FRONT — the capability the deleted nebula uniquely had.
+     *
+     * `radius` 7000 against the giant's `distance` 24000: these MUST sit inside the
+     * body they are meant to occlude or the far-scene depth test rejects them and
+     * the file does nothing. `common.js:18-27` calls that occlusion "the strongest
+     * depth cue the backdrop has" and it is the reason `nebula.js`'s delete could
+     * not simply be a delete.
+     *
+     * `absorb` is blue-heaviest so the lane REDDENS the green it crosses: at full
+     * depth the framebuffer keeps 0.86 / 0.50 / 0.14 of red / green / blue, which is
+     * a 6.1:1 red-to-blue survival ratio. That is the same rust-versus-green
+     * separation the dome's own absorption term carries, applied by a layer that can
+     * genuinely pass in front of the gas giant.
+     *
+     * THREE quads, not five. The old module drew five at the graveyard and the
+     * spec's replacement budget is 2-4; three is enough to cross the frame at this
+     * spread and cheap enough that the field taps only land on a quarter of it.
+     */
+    dust: {
+      count: 3, radius: 7000, spread: 0.85,
+      absorb: [0.14, 0.50, 0.86], depth: 1.25, lane: [0.42, 0.74],
     },
     /**
      * THE OWNER RULED: KEEP THE GRAVEYARD, DRESS IT UP. THIS IS THE DRESSING.
@@ -470,10 +598,8 @@ export const CELESTIAL_SPECS = {
       direction: V(0.560, 0.300, -0.772), distance: 16000, angularRadius: 0.042,
       coreGain: 40, haloGain: 1.7, shells: 3, wideHalo: true,
     },
-    nebula: {
-      centre: [0.2951, -0.24, -0.9245], spread: 0.85, layers: 8, dustLayers: 2,
-      intensity: 0.36, radius: 19000, frontRadius: 4200, scale: 1.35,
-    },
+    /** LIGHTING DATA ONLY — see the delete note at the build site. */
+    nebula: { centre: [0.2951, -0.24, -0.9245], intensity: 0.36 },
     /**
      * Hot dust. One warm hue, and the floor is the same rust two stops down.
      *
@@ -509,18 +635,35 @@ export const CELESTIAL_SPECS = {
        * introducing a second one. That is a different job from the graveyard's and it
        * is why the number differs. **Shoot this POI before quoting anything.**
        */
-      gain: 0.489, baseGain: 1.78,
-      structure: 0.42,
-      coreBias: 0.35,
-      fieldScale: 2.5,
+      /**
+       * 0.489 / 1.78 -> 0.0685 / 0.249, the same 0.14x. **STILL NOT MEASURED**, and
+       * that stays true: no shot in `tools/shots.json` visits `near-star`, so
+       * `fieldcheck` cannot see it and nobody should quote a number for it. The
+       * claim being carried across is one ratio, not a solve. Shoot this POI.
+       *
+       * `galGain` is 0 here on purpose, which compiles the diffuse band out of this
+       * dome entirely. A sky with the primary five degrees across is washed out;
+       * this POI's own spec block says "almost no visible stars", and a Milky Way
+       * you could see through that glare would be the one dishonest thing in frame.
+       */
+      gain: 0.0685, baseGain: 0.249,
+      galGain: 0,
+      structure: 0.28,
+      coreBias: 0.55,
+      fieldScale: 1.7,
       fieldStretch: 3.2,
       density: [0.37, 0.69],
-      lane: [0.52, 0.68],
-      laneDepth: 1.90,
+      lane: [0.46, 0.82],
+      laneDepth: 1.55,
       laneScale: 0.45,
       absorb: [0.32, 0.98, 1.70],
       warm: saturate(mix(0x5a2c12, 0xff7a2a, 0.55), 1.15),
       warmGain: 0.35,
+    },
+    /** No giant here, so these read against the primary's halo rather than a body. */
+    dust: {
+      count: 2, radius: 6000, spread: 0.95,
+      absorb: [0.18, 0.48, 0.82], depth: 0.85,
     },
     giant: null,
   },
@@ -554,7 +697,23 @@ export function buildCelestials(poiId, { rng, far = null, overrides = {} } = {})
    * ordering is `ORDER.dome` (-1) with depth test off, not insertion order.
    */
   if (spec.dome) {
-    parts.dome = buildSkyDome(spec.dome);
+    /**
+     * THE DIFFUSE BAND INHERITS THE STARFIELD'S POLE, IT DOES NOT RESTATE IT.
+     *
+     * `skybox-spec.md` §4.2(f) splits the galactic band across two layers: the
+     * resolved stars in `starfield.js` and the unresolved glow in the dome. Two
+     * layers drawing the same physical disc from two independently authored axes is
+     * a defect waiting for the first person who re-aims one of them — which is
+     * precisely what this file's own header records happening to the nebula band
+     * and what the `starfield` block above records happening to the star band. One
+     * source of truth, copied at build time. An explicit `galAxis` in a dome block
+     * still wins, so a POI that genuinely wants them apart can say so.
+     */
+    parts.dome = buildSkyDome({
+      galAxis: spec.starfield?.bandAxis,
+      galHeight: spec.starfield?.bandHeight,
+      ...spec.dome,
+    });
     root.add(parts.dome.object);
   }
 
@@ -562,22 +721,50 @@ export function buildCelestials(poiId, { rng, far = null, overrides = {} } = {})
   parts.starfield = buildStarfield({ rng: r, ...spec.starfield });
   root.add(parts.starfield.object);
 
-  // --- nebula --------------------------------------------------------------
-  if (spec.nebula) {
-    // Emission tints: the POI accent, the fill (its bounce colour) and one cooled
-    // deep tone. Three hues, no more — the sky must not out-colour the ships.
-    const tints = spec.nebula.tints ?? [
-      mix(pal.accent, NEUTRAL.ice, 0.20),
-      pal.fill.color,
-      mix(pal.ibl.horizon, pal.accent, 0.35),
-    ];
-    parts.nebula = buildNebula({
+  /*
+   * --- the emission nebula: DELETED, and `spec.nebula` is now LIGHTING DATA ----
+   *
+   * `nebula.js` and its 19 quads at the graveyard (14 emission behind, 5 dust in
+   * front) are gone. `docs/design/skybox-spec.md` §5 measured them at **0.0017 of
+   * field median luma and, to four decimal places, exactly zero chroma**, with
+   * three defects still live on `6ae7df9` — a `smoothstep(1.02, 0.18, rr)` that
+   * reaches 1.0 over 2.5% of a quad, an absolute threshold against an
+   * approximately Gaussian field, and a two-tone core/edge feature gated at alpha
+   * >= 0.30 on a texture whose brightest texel of 65 536 is 0.1451, i.e. **a
+   * feature that has never once rendered.**
+   *
+   * THE PICTURE IS WHY IT WENT, NOT THE MEDIAN. With the dome's lobe and band terms
+   * set to zero this wave, the nebula was still there and it was the loudest thing
+   * in frame: a hard-edged curdled green cloud across the top of `engagement`, at
+   * exactly the 1.6-6.5 degree scale §7 measures as the marble. It was invisible
+   * before only because a brighter wall was sitting on top of it. A layer worth
+   * 0.0017 of median that dominates the frame the moment the frame gets dark is not
+   * a layer that needs repairing.
+   *
+   * **`spec.nebula` STAYS, TRIMMED TO `centre` AND `intensity`, AND THAT IS NOT
+   * LEFTOVER.** `world/lighting/poi.js:237-239` builds an `envNebula` IBL lobe from
+   * those two fields and `:399-400` falls back to `centre` for the fill direction.
+   * The nebula BANK is a real fact about a location — the graveyard palette's own
+   * comment is "the nebula IS the fill here" — and that fact still lights the
+   * scene. What is deleted is the 19 quads that were supposed to draw it and
+   * measurably did not. Every other key in those blocks was consumed by
+   * `buildNebula` alone and went with it.
+   */
+
+  // --- dust lanes, in front of the bodies -----------------------------------
+  if (spec.dust) {
+    parts.dust = buildDustLanes({
       rng: r,
-      tints,
-      dustTint: shade(pal.shadow, 0.75),
-      ...spec.nebula,
+      axis: spec.dome?.axis ?? spec.nebula?.centre,
+      bandAxis: spec.starfield?.bandAxis,
+      // Inherit the dome's own field settings by default, so the near lanes are
+      // the same cloud as the far ones rather than a second unrelated noise.
+      fieldScale: spec.dome?.fieldScale,
+      fieldStretch: spec.dome?.fieldStretch,
+      laneScale: spec.dome?.laneScale,
+      ...spec.dust,
     });
-    root.add(parts.nebula.object);
+    root.add(parts.dust.object);
   }
 
   // --- the primary ---------------------------------------------------------
@@ -635,6 +822,37 @@ export function buildCelestials(poiId, { rng, far = null, overrides = {} } = {})
     palette: pal,
     /** Order constants, so callers can slot their own celestials into the stack. */
     ORDER,
+    /**
+     * THE CONTROL, AS A RUNTIME SWITCH — `docs/design/skybox-spec.md` §8.
+     *
+     * The acceptance test for this backdrop is not a number. It is: **the backdrop
+     * must beat plain stars on black in a blind comparison.** That control is a real
+     * thing this scene can render — hide the dome and the dust lanes and what is
+     * left is the starfield, the primary and the gas giant, i.e. exactly the frame
+     * the owner said looked better than the wash that replaced it.
+     *
+     * It lives here rather than in a review script because a control that only one
+     * scratchpad file knows how to build is a control nobody can re-run. One call:
+     *
+     *   window.__NADIR.world.systems.celestials.setFieldControl(true)
+     *
+     * Returns the ids it toggled, so a caller can assert it actually did something
+     * rather than trusting that the parts it expected exist. It deliberately does
+     * NOT touch the starfield, the star or the giant: those are the control.
+     *
+     * @param {boolean} on true hides the backdrop layers
+     * @returns {string[]} the part ids that were toggled
+     */
+    setFieldControl(on) {
+      const hidden = [];
+      for (const id of ['dome', 'dust', 'nebula']) {
+        const o = parts[id]?.object;
+        if (!o) continue;
+        o.visible = !on;
+        hidden.push(id);
+      }
+      return hidden;
+    },
     /** Refresh view-dependent uniforms. Cheap; safe to skip on a static shot. */
     update(farCamera) {
       parts.giant?.refresh(farCamera);
@@ -687,4 +905,4 @@ export function installCelestials(world, poiId = 'giant-orbit', ctx = {}) {
   return api;
 }
 
-export { buildStarfield, buildNebula, buildGasGiant, buildStar, buildSkyDome, ORDER };
+export { buildStarfield, buildDustLanes, buildGasGiant, buildStar, buildSkyDome, ORDER };

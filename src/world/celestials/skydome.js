@@ -213,6 +213,14 @@ function unitLuma(c) {
  * @param {number} p.ground        palette hex: the band's tint below the plane
  * @param {number} [p.gain]        multiplier on the lobe
  * @param {number} [p.baseGain]    multiplier on the ecliptic band
+ * @param {[number,number,number]} [p.galAxis] pole of the GALACTIC band. Pass the
+ *                                 starfield's own `bandAxis` — the diffuse band and
+ *                                 the resolved stars must be the same band or the
+ *                                 frame contains two Milky Ways.
+ * @param {number} [p.galHeight]   scale height of the diffuse band in |sin b|. Pass
+ *                                 the starfield's `bandHeight`, for the same reason.
+ * @param {number} [p.galGain]     multiplier on the diffuse band. 0 compiles it out.
+ * @param {number} [p.galCore]     palette hex: the band's unresolved starlight
  * @param {number} [p.bandY]       sin(elevation) the ecliptic band is centred on. 0 is
  *                                 the combat plane and is the shipped value; see
  *                                 `docs/review/field-baseline.md` §3 for why moving it
@@ -246,6 +254,10 @@ export function buildSkyDome({
   gain = 1.0,
   baseGain = 1.0,
   bandY = 0.0,
+  galAxis = null,
+  galHeight = 0.13,
+  galGain = 0.0,
+  galCore = 0xffffff,
   structure = 0.0,
   coreBias = 0.4,
   fieldScale = 2.6,
@@ -264,6 +276,23 @@ export function buildSkyDome({
 
   const a = new THREE.Vector3(axis[0], axis[1], axis[2]).normalize();
   const structured = structure > 0;
+  const banded = galGain > 0 && !!galAxis;
+
+  /**
+   * The galactic band's own "towards the centre" direction.
+   *
+   * It is the POI's lobe axis with the band pole projected out, i.e. the component
+   * of the location's composition axis that lies IN the band plane. That is not a
+   * shortcut for lack of a better idea: it means the brightest stretch of the Milky
+   * Way and the direction the location's colour comes from are one bearing rather
+   * than two unrelated facts, which is the same argument `index.js:210-224` makes
+   * for putting the nebula bank on the bearing to the gas giant. Degenerate only if
+   * the lobe axis IS the band pole, and the fallback covers that.
+   */
+  const gp = banded ? new THREE.Vector3(galAxis[0], galAxis[1], galAxis[2]).normalize() : null;
+  const gc = banded ? a.clone().addScaledVector(gp, -a.dot(gp)) : null;
+  if (gc && gc.lengthSq() < 1e-6) gc.set(1, 0, 0).addScaledVector(gp, -gp.x);
+  gc?.normalize();
 
   const uniforms = {
     uAxis: { value: a },
@@ -277,6 +306,16 @@ export function buildSkyDome({
     uBase: { value: baseGain },
     uBandY: { value: bandY },
   };
+
+  if (banded) {
+    Object.assign(uniforms, {
+      uGalAxis: { value: gp },
+      uGalCentre: { value: gc },
+      uGalCore: { value: col(galCore) },
+      // x = scale height in |sin b|, y = gain
+      uGal: { value: new THREE.Vector2(galHeight, galGain) },
+    });
+  }
 
   if (structured) {
     Object.assign(uniforms, {
@@ -311,6 +350,9 @@ export function buildSkyDome({
       uniform vec2 uLobe;
       uniform float uGain, uBase, uBandY;
       varying vec3 vDir;
+${banded ? `
+      uniform vec3 uGalAxis, uGalCentre, uGalCore;
+      uniform vec2 uGal;` : ''}
 ${structured ? `
       uniform float uStructure, uWarmGain, uCoreBias;
       uniform vec2 uField, uDensity;
@@ -337,6 +379,43 @@ ${structured ? `
         //    keeps it reading as distant gas and not as a vignette.
         float t = smoothstep(uLobe.x, uLobe.y, dot(d, uAxis));
         c += uCore * (t * t) * uGain;
+${banded ? `
+        // 2b. THE GALACTIC BAND, DIFFUSE. skybox-spec.md 4.2(f): 13 000 point
+        //     sprites cannot make a band read, so the band's UNRESOLVED component
+        //     belongs here and its resolved component belongs in the sprites. Same
+        //     pole, same scale height, same exponential profile as
+        //     starfield.js's rejection function, because it is the same disc seen
+        //     two ways - a disc's column density falls off exponentially out of the
+        //     plane, which is why the naked-eye band is a narrow stripe.
+        //
+        //     THIS IS THE ONE LAYER ALLOWED TO BE A STRIPE AND IT IS STILL
+        //     BAND-LIMITED. exp(-|sin b|/h) has no spatial frequency at all across
+        //     the band; the only variation along it is one lobe towards the
+        //     galactic centre, which is a 90-degree feature. Nothing here can land
+        //     in the 1.6-6.5 degree marble zone that skybox-spec.md 7.2 measures as
+        //     the failure.
+        //     TWO EXPONENTIALS, NOT ONE, AND THAT IS WHAT MAKES IT A BAND RATHER
+        //     THAN A HAZE. A single exp(-sb/h) at the scale height that gives the
+        //     right core width has wings reaching +-23 degrees, so the "band" is a
+        //     soft brightening across half the frame - measured, and it looked like
+        //     fog. A disc seen edge-on is a bright thin CORE inside a faint wide
+        //     HALO, so it is summed as two: 0.82 of the light inside one scale
+        //     height and 0.18 spread over three. Both terms are still exponentials
+        //     in |sin b| with no spatial frequency across the band at all.
+        //
+        //     THE SPLIT IS GRADED ON THE FRAME, NOT ON THE MEDIAN. At 0.74/0.26
+        //     over four scale heights the halo reached +-31 degrees against a 46
+        //     degree vertical FOV, so the "band" covered the whole frame and read
+        //     as fog - a wall again, quieter. Moving 0.08 of the light from the
+        //     halo into the core is what gives it an EDGE, which is the thing that
+        //     makes it a band.
+        float sb = abs(dot(d, uGalAxis));
+        float band = 0.82 * exp(-sb / uGal.x) + 0.18 * exp(-sb / (uGal.x * 3.0));
+        // Towards the centre it is brighter, away from it thinner: one lobe, not a
+        // texture. Real bands are not uniform along their length and a uniform one
+        // reads as a painted stripe.
+        float lon = 0.26 + 0.74 * smoothstep(-0.70, 0.95, dot(d, uGalCentre));
+        c += uGalCore * (band * lon * uGal.y);` : ''}
 ${structured ? `
         // 3. NEGATIVE SPACE FIRST. The structure and the dust below are both weighted
         //    towards the LOBE, i.e. towards the nebula bank, and away from the rest of
@@ -354,7 +433,18 @@ ${structured ? `
         //    construction, and \`uCoreBias\` is deliberately BELOW 1 at every POI.
         //    **Neither R1 nor R2 can see this decision. Do not let a green fieldcheck
         //    talk anyone into raising it to 1.**
-        float g = mix(uCoreBias, 1.0, t);
+        //
+        //    W7: THE WEIGHT IS THE LOBE **OR THE BAND**, WHICHEVER IS STRONGER, AND
+        //    THAT IS NOT A RELAXATION OF THE RULE ABOVE. \`uCoreBias\` is unchanged
+        //    and still below 1 at every POI, so the negative space is still negative
+        //    space. What changed is WHERE the light is: the diffuse galactic band is
+        //    now the brightest thing in the sky and it is on a DIFFERENT AXIS from
+        //    the lobe, so a dust weight that keys only on the lobe puts the lanes
+        //    everywhere except across the one feature they are supposed to cross.
+        //    Interstellar dust lies IN the galactic plane — that is what the Great
+        //    Rift is — so weighting the lanes onto the band is the physically honest
+        //    version of the same negative-space decision, not a weakening of it.
+        float g = mix(uCoreBias, 1.0, ${banded ? 'max(t, band * lon)' : 't'});
 
         // 4. STRUCTURE on the green emission, MEAN-PRESERVING about dens = 0.5. This
         //    is the term that has to not move R1: it multiplies by 1 + s*(2*dens-1),
@@ -425,6 +515,52 @@ ${structured ? `
     taps: structured ? FIELD_TAPS.noiseEvals : 0,
     /** Live handle for probes and for anything that wants to prove the dome is the source. */
     setGain(k) { mat.uniforms.uGain.value = k; },
+    /**
+     * Scale every emissive term of the dome by one factor, live.
+     *
+     * THIS IS THE HANDLE §6.2's "single uniform scale" ACTUALLY NEEDS, and
+     * `skybox-spec.md` §3.1 is wrong about how to get it. It says to "scale
+     * `baseGain` and leave `gain` alone: `baseGain` is the multiplier on the whole
+     * field". Read the fragment body: `uBase` multiplies the ECLIPTIC BAND term
+     * only and `uGain` multiplies the LOBE term only. Scaling `baseGain` alone
+     * leaves the lobe at 100% of an output the rest of the sky has been cut to 14%
+     * of, which is not a uniform scale — it is a bright green blob on a dark field.
+     * Every emissive term moves together here, which is what preserves the channel
+     * ratios and therefore every hue exactly.
+     */
+    setScale(k) {
+      const u = mat.uniforms;
+      u.uGain.value = gain * k;
+      u.uBase.value = baseGain * k;
+      if (u.uGal) u.uGal.value.y = galGain * k;
+    },
+    /**
+     * The three emissive terms independently, for solving their RATIO. `setScale`
+     * solves the level; this solves the mix. Absolute values, not multipliers.
+     */
+    setTerms(g, base, gal) {
+      const u = mat.uniforms;
+      if (g != null) u.uGain.value = g;
+      if (base != null) u.uBase.value = base;
+      if (gal != null && u.uGal) u.uGal.value.y = gal;
+    },
+    /**
+     * The structural knobs, live, for the same reason `setTerms` exists: the
+     * frequency content of this field is graded by looking at a frame, and a knob
+     * you have to rebuild to move is a knob nobody sweeps. No-op on an unstructured
+     * dome.
+     */
+    setField({ structure: s, laneDepth: ld, lane: lw, fieldScale: fs, coreBias: cb, galHeight: gh } = {}) {
+      const u = mat.uniforms;
+      if (gh != null && u.uGal) u.uGal.value.x = gh;
+      if (!u.uStructure) return false;
+      if (s != null) u.uStructure.value = s;
+      if (cb != null) u.uCoreBias.value = cb;
+      if (fs != null) u.uField.value.x = fs;
+      if (ld != null) u.uLaneShape.value.z = ld;
+      if (lw) u.uLaneShape.value.set(lw[0], lw[1], u.uLaneShape.value.z, u.uLaneShape.value.w);
+      return true;
+    },
     dispose() { geo.dispose(); mat.dispose(); },
   };
 }
