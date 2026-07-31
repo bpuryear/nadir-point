@@ -255,9 +255,37 @@ export const CELESTIAL_SPECS = {
      * order behind the amplitude fix on purpose — more stars at the OLD amplitude is
      * more grey haze, which is the failure this file's header is written against.
      */
+    /*
+     * ...AND THEN AIMED 14 DEGREES OFF IT, WHICH IS THE POINT THREE JUDGES MADE.
+     *
+     * A pole at exactly screen-up has `dot(pole, forward) = 0`, and a band is the great
+     * circle 90 degrees from its pole — so a pole perpendicular to the view axis puts the
+     * band THROUGH the view axis. Dead centre. Which is where the ship is.
+     *
+     * All three independent judges of the rebuilt sky named the same worst thing, and
+     * they measured it: hull-and-debris pixels darker than the field behind them went
+     * 1.35% (plain stars on black) to 9.65%, against this spec's own <= 10% ceiling. Zero
+     * margin, on the exact axis that produced the green marble — the subject paying the
+     * largest local-background penalty of anything in frame. The band's peak lift is
+     * 0.0442 at frame band y 0.50-0.56 and the ship occupies y 0.395-0.590.
+     *
+     * Fixing it does not mean dimming the band; it means not putting it behind the
+     * subject. The pole is tilted 14 degrees out of screen-up, toward the view axis:
+     *
+     *   pole' = normalize(pole * cos 14 - forward * sin 14)
+     *         = (-0.1454, 0.9280, -0.3431),  dot(pole', forward) = -0.2420 = -sin 14
+     *
+     * so the band still runs FLAT ACROSS the frame — the KSP tutorial's instruction and
+     * the reason the old over-the-shoulder aim was wrong — but its bright core clears the
+     * hull instead of sitting behind it. The band is meant to be the thing you see PAST
+     * the ship, not the thing you see THROUGH it.
+     *
+     * `skydome.js` inherits this axis at build time (see galAxis/bandAxis at the build
+     * site below), so the diffuse half moves with the stars and the two cannot drift.
+     */
     starfield: {
       count: 13000, gain: 1.25, bandDensity: 0.88, bandHeight: 0.060,
-      bandAxis: [-0.2286, 0.8103, -0.5396],
+      bandAxis: [-0.1454, 0.9280, -0.3431],
     },
     star: { direction: V(-0.905, 0.145, 0.400), distance: 30000, angularRadius: 0.0022, coreGain: 26, haloGain: 0.55, shells: 3 },
     /**

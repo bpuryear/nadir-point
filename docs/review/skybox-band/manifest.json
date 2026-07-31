@@ -1,0 +1,34 @@
+[
+  {
+    "id": "engagement",
+    "ok": true,
+    "warnings": [],
+    "frame": {
+      "samples": 14400,
+      "sampleSize": "160x90",
+      "meanLuma": 0.0445,
+      "contrast": 0.0424,
+      "clippedPct": 0,
+      "nearBlackPct": 8.25
+    },
+    "description": "Cruiser under way with hostiles on the plane. Tests scale cues and the fight read.",
+    "hud": true,
+    "file": "docs/review/skybox-band/engagement.png",
+    "stats": {
+      "fps": 25.590551181102363,
+      "cpuMs": 9.899999999999636,
+      "stepMs": 0.19999998807907104,
+      "renderMs": 1.5,
+      "steps": 2,
+      "calls": 204,
+      "triangles": 99265,
+      "points": 13000,
+      "lines": 0,
+      "programs": 60,
+      "geometries": 125,
+      "textures": 129
+    },
+    "consoleErrors": [],
+    "pageErrors": []
+  }
+]
