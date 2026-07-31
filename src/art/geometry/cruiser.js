@@ -728,33 +728,42 @@ function skinPlate({
   return G.loft(stations);
 }
 
+/**
+ * The three proud plates a side, below the knuckle. Now a thin wrapper on `skinPlate`,
+ * and the reason is a bug that had them BURIED IN THE HULL rather than proud of it.
+ *
+ * `greeble.js#facetProfile` winds counter-clockwise with the index increasing UP the
+ * starboard side, so for an edge i -> j the outward normal is `(dy, -dx)` ONLY WHEN
+ * j > i. This function was called with the facet written `[2, 1]` — knuckle down to the
+ * keel chamfer, i.e. DECREASING — and applied `(dy/l, -dx/l)` with no sign correction,
+ * which is the INWARD normal.
+ *
+ * MEASURED at z = -500 (maxHalf 114, top 57, bottom -50, knuckle 0.48, deckFlat 0.53,
+ * flare 0.90), knuckle P[2] at (114.0, 5.6):
+ *
+ *   facet [2,1], no sign   offset 13 m lands at (104.5,  14.6)   INSIDE the section
+ *   facet [1,2], signed    offset 13 m lands at (123.5,  -3.3)   proud, correct
+ *
+ * confirmed by point-in-polygon against the section itself. So all three strakes a side
+ * sat 13 m inside the hull with their outer faces exactly COPLANAR with the skin. They
+ * carry the `dark` surface — the ship's entire second value, the near-black below the
+ * knuckle — so that value was being rendered by whichever of two coplanar faces won the
+ * depth test. A z-fight waiting to flicker, and the visible cause of the striping in the
+ * hull renders.
+ *
+ * `skinPlate` already does this correctly: it takes `sgn` from the index order at its
+ * line 702 and applies it to the normal. Delegating rather than duplicating the fix means
+ * there is now ONE place in this file that knows how to offset along a facet normal.
+ *
+ * NOT a cosmetic change: it moves the hull's own outline by up to 9 m in x over 620 m of
+ * flank, so it is re-measured against the section/surface audit, the R2.6 enclosed-
+ * background band and the loadout separation rather than assumed safe.
+ *
+ * The 6%/94% band is the old inset, preserved: a plate that reaches both chines is not a
+ * plate, it is the flank. Expressed from the keel end because the facet now reads upward.
+ */
 function flankStrake(z0, z1, side, out, full) {
-  const zs = [z0];
-  for (const r of HULL_STATIONS) if (r[0] > z0 && r[0] < z1) zs.push(r[0]);
-  zs.push(z1);
-  const thin = full ? zs : zs.filter((z, i) => i === 0 || i === zs.length - 1 || i % 2 === 0);
-  const stations = thin.map((z) => {
-    const c = sectionAt(z);
-    const P = G.facetProfile({
-      maxHalf: c.half, top: c.top, bottom: c.bot,
-      knuckle: c.knuckle, deckFlat: c.deckFlat, flare: c.flare,
-    });
-    const a = P[2], b = P[1];                       // knuckle, keel-chamfer break
-    const dx = b[0] - a[0], dy = b[1] - a[1];
-    const l = Math.hypot(dx, dy) || 1;
-    const nx = (dy / l) * out, ny = (-dx / l) * out;
-    // Inset 6% at each end of the facet so the plate has a visible margin of bare
-    // flank above and below it: a plate that reaches both chines is not a plate.
-    const ax = a[0] + dx * 0.06, ay = a[1] + dy * 0.06;
-    const bx = b[0] - dx * 0.06, by = b[1] - dy * 0.06;
-    return {
-      z,
-      points: side < 0
-        ? [[-ax, ay], [-bx, by], [-(bx + nx), by + ny], [-(ax + nx), ay + ny]]
-        : [[ax, ay], [ax + nx, ay + ny], [bx + nx, by + ny], [bx, by]],
-    };
-  });
-  return G.loft(stations);
+  return skinPlate({ z0, z1, side, out, full, facet: [1, 2], t0: 0.06, t1: 0.94 });
 }
 
 /** A hex beam from a to b. Right-handed basis, so winding and shadows stay correct. */
