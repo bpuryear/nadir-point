@@ -22,7 +22,10 @@
  * here; this tool counts the buckets `partsFor` produces, which is the pessimistic
  * figure and the right one to hold a budget against.
  */
+import * as THREE from 'three';
 import { RNG } from '../../../core/rng.js';
+import * as G from '../greeble.js';
+import { hullParts, HULL_STATIONS as CRUISER_HULL_STATIONS } from '../cruiser.js';
 import { ALL_SHIP_CLASSES } from './index.js';
 import {
   auditParts, silhouetteSignature, silhouetteDivergence, CLASS_DIVERGENCE,
@@ -208,6 +211,159 @@ for (const faction of ['coalition', 'concord']) {
   }
 }
 if (intraFailed) console.log('  *** INTRA-FACTION SEPARATION FAILED ***');
+
+// ---------------------------------------------------------------------------
+// SECTION AND SURFACE — the measurement that says "box stack" as a number
+// ---------------------------------------------------------------------------
+//
+// `docs/probes/cruiser.png` read as a stack of rectangular prisms for four art rounds
+// and every review said so in prose. Prose does not survive the next edit. This does.
+//
+// Weight every LOD0 triangle by AREA and bin its face normal. A stack of axis-aligned
+// boxes is ~100% within 5 degrees of a cardinal axis with six normal directions; a
+// faceted hull is far lower with many more. Two supporting columns:
+//
+//   prims  separate primitives in the build, and tris/prim. NOT a draw count - draws
+//          are (damage group x surface) and every one of these merges into a bucket -
+//          but the mean piece of the old cruiser was 18.7 triangles, i.e. a box, and
+//          there were ninety-nine of them. That number IS the diagnosis.
+//   top6   area share held by the six largest normal directions.
+//
+// ONE IMPLEMENTATION NOTE, because it changes every figure. The normals are taken from
+// the MERGED geometry, i.e. AFTER each part's `pos`/`rot`/`scale` has been applied.
+// A prototype of this script measured `bucket.parts[].geo` directly, which is the
+// primitive in its own local frame before placement, so every part placed with a `rot`
+// scored as axis-aligned. On the same tree that reads the player cruiser at 74.0% and
+// `derelict_ancient_hulk` - which is built almost entirely from rotated pieces - at
+// 52.3%. Measured after placement they are 67.8% and 7.2%. The post-placement figure
+// is the one that describes what is on screen.
+//
+// REPORTING ONLY. The bars are printed and flagged; they do not set the exit code,
+// because eleven of the fourteen hulls in this fleet fail them today and the wave that
+// lands the faction redesigns is the wave that flips this to fail. The red baseline is
+// the point: it is written down here so it cannot be quietly forgotten.
+
+const BOX = { axis: 0.45, cruiserAxis: 0.40, clusters: 24, top6: 0.45 };
+
+function surfaceStats(buckets) {
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), n = new THREE.Vector3();
+  const AXIS_COS = Math.cos(5 * Math.PI / 180);
+  let total = 0, axis = 0, tris = 0, prims = 0;
+  const bins = new Map();
+  for (const bk of buckets) {
+    prims += bk.parts.length;
+    const geo = G.mergeParts(bk.parts, { uv: bk.uv });
+    if (!geo) continue;
+    const pos = geo.getAttribute('position');
+    for (let i = 0; i + 2 < pos.count; i += 3) {
+      a.fromBufferAttribute(pos, i);
+      b.fromBufferAttribute(pos, i + 1);
+      c.fromBufferAttribute(pos, i + 2);
+      e1.subVectors(b, a); e2.subVectors(c, a);
+      n.crossVectors(e1, e2);
+      const twice = n.length();
+      if (twice <= 1e-9) continue;
+      n.divideScalar(twice);
+      const area = twice * 0.5;
+      total += area; tris++;
+      if (Math.max(Math.abs(n.x), Math.abs(n.y), Math.abs(n.z)) >= AXIS_COS) axis += area;
+      // 1/8 quantisation of the unit normal: about 7 degrees, which is fine enough to
+      // separate two facets of one plate family and coarse enough that a loft's own
+      // sweep does not shatter one plane into twenty directions.
+      const k = `${Math.round(n.x * 8)},${Math.round(n.y * 8)},${Math.round(n.z * 8)}`;
+      bins.set(k, (bins.get(k) ?? 0) + area);
+    }
+    geo.dispose();
+  }
+  const sorted = [...bins.values()].sort((x, y) => y - x);
+  return {
+    tris,
+    prims,
+    perPrim: prims ? tris / prims : 0,
+    axisFrac: total ? axis / total : 0,
+    clusters: sorted.filter((v) => v / total >= 0.01).length,
+    top6: sorted.slice(0, 6).reduce((s2, v) => s2 + v, 0) / (total || 1),
+  };
+}
+
+console.log('\nSECTION AND SURFACE  (LOD0, area-weighted face normals, measured AFTER placement)');
+console.log(`  axis  fraction of surface area within 5 deg of +-X/+-Y/+-Z.`
+  + `  bar <= ${(BOX.axis * 100).toFixed(0)}% (cruiser ${(BOX.cruiserAxis * 100).toFixed(0)}%)`);
+console.log(`  clus  distinct normal directions holding >= 1% of area.   bar >= ${BOX.clusters}`);
+console.log(`  top6  area share of the six largest normal directions.    bar <= ${(BOX.top6 * 100).toFixed(0)}%`);
+console.log('  REPORTING ONLY — see the note in this file. A "!" is a hull still to be redesigned.\n');
+
+{
+  const measured = [];
+  const cr = hullParts({ rng: new RNG('audit:cruiser:0'), lod: 0 });
+  measured.push({ id: 'player_cruiser', bar: BOX.cruiserAxis, ...surfaceStats(cr.buckets) });
+  for (const def of ALL_SHIP_CLASSES) {
+    const p = def.partsFor({ rng: new RNG(`audit:${def.id}:0`), lod: 0 });
+    measured.push({ id: def.id, bar: BOX.axis, ...surfaceStats(p.buckets) });
+  }
+  for (const m of measured) {
+    const f = (ok) => (ok ? ' ' : '!');
+    console.log(`  ${m.id.padEnd(24)} tris ${String(m.tris).padStart(5)}`
+      + `  prims ${String(m.prims).padStart(4)} at ${m.perPrim.toFixed(1).padStart(5)} each`
+      + `  axis ${(m.axisFrac * 100).toFixed(1).padStart(5)}%${f(m.axisFrac <= m.bar)}`
+      + ` clus ${String(m.clusters).padStart(3)}${f(m.clusters >= BOX.clusters)}`
+      + ` top6 ${(m.top6 * 100).toFixed(1).padStart(5)}%${f(m.top6 <= BOX.top6)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// THE PLAYER CRUISER'S OWN LINES — station count, flatness, sweep, non-parallel
+// ---------------------------------------------------------------------------
+//
+// The cruiser is not in `ALL_SHIP_CLASSES` (it is not a faction class and it has its
+// own builder), so nothing in this file used to look at it at all. These are the four
+// numbers `docs/design/ship-redesign.md` §3-§4 turns the words "flat" and "sleek" into,
+// checked straight off the station table with no rendering.
+
+console.log('\nPLAYER CRUISER LINES  (ship-redesign.md §3 S4, §4 L1/L2/L5)');
+{
+  const T = CRUISER_HULL_STATIONS;
+  const bh = T.map((r) => (2 * r[1]) / (r[2] - r[3]));
+  const worstBH = Math.min(...bh);
+  const meanBH = bh.reduce((a2, b2) => a2 + b2, 0) / bh.length;
+
+  let worstPara = Infinity, worstParaZ = 0;
+  // L2: the half-beam must change by >= 0.8% of the local half-beam per 10 m of z,
+  // EXCEPT inside at most two declared calm runs of <= 120 m. The exception is the
+  // whole point of the rule: a hull with no calm anywhere has no rest in it, and a
+  // hull with one 500 m calm run is the prismatic barge this redesign replaced. So
+  // count the runs rather than the worst single pair.
+  const calm = [];
+  let run = null;
+  for (let i = 0; i < T.length - 1; i++) {
+    const dz = T[i + 1][0] - T[i][0];
+    const dTop = (T[i + 1][2] - T[i][2]) / dz;
+    const dBot = (T[i + 1][3] - T[i][3]) / dz;
+    const para = Math.abs(dTop - dBot);
+    if (para < worstPara) { worstPara = para; worstParaZ = T[i][0]; }
+    const rate = Math.abs((T[i + 1][1] - T[i][1]) / T[i][1]) / (dz / 10);
+    if (rate < 0.008) {
+      if (run && run.z1 === T[i][0]) run.z1 = T[i + 1][0];
+      else { run = { z0: T[i][0], z1: T[i + 1][0] }; calm.push(run); }
+    } else run = null;
+  }
+  const longestCalm = calm.length ? Math.max(...calm.map((c2) => c2.z1 - c2.z0)) : 0;
+  const calmDesc = calm.length
+    ? `${calm.length} calm run(s), longest ${longestCalm} m at z ${calm.find((c2) => c2.z1 - c2.z0 === longestCalm).z0}`
+    : 'no calm runs';
+
+  const checks = [
+    ['L1  stations >= 26', T.length >= 26, `${T.length}`],
+    ['S4  section B:H >= 1.70 worst', worstBH >= 1.70, `worst ${worstBH.toFixed(2)}  mean ${meanBH.toFixed(2)}`],
+    ['L2  <= 2 calm runs, each <= 120 m', calm.length <= 2 && longestCalm <= 120, calmDesc],
+    ['L5  deck and keel never parallel', worstPara >= 0.04, `closest ${worstPara.toFixed(3)} at z ${worstParaZ}`],
+  ];
+  for (const [name, ok, detail] of checks) {
+    if (!ok) failed = true;
+    console.log(`  ${name.padEnd(34)} ${ok ? 'PASS' : 'FAIL'}   ${detail}`);
+  }
+}
 
 console.log(`\n${rows.length} classes   ${failed ? '*** AUDIT FAILED ***' : 'ALL CLASSES WITHIN BUDGET AND ON LINE'}`);
 process.exit(failed ? 1 : 0);

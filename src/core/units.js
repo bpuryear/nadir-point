@@ -73,14 +73,56 @@ export const FAR_SCENE = {
   parallax: 2.2e-4,      // how much the far camera tracks main camera translation
 };
 
-/** Committed performance budget. Enforced by tools/bench.mjs. */
+/**
+ * Committed performance budget. Enforced by tools/bench.mjs.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE GEOMETRY CEILINGS ARE FIVE TIMES WHAT THEY WERE
+ * ---------------------------------------------------------------------------
+ * They were set when nobody had measured which of the two ceilings was actually
+ * binding. `docs/review/benchmark.json`, hardware rasterisation, 2560x1440, quality
+ * high, is the measurement:
+ *
+ *     peak.triangles   138,315  against  1,900,000    7.3% USED
+ *     peak.calls          506   against        320    158% used, FAIL
+ *
+ * So there are 1.76 MILLION triangles of headroom and the scene is 186 draw calls over
+ * its ceiling. Triangles are not the constraint. Draw calls are, and GTAO renders every
+ * one of them a second time.
+ *
+ * THE RULE THAT FOLLOWS, and it is the whole performance balance of this wave: SPEND
+ * TRIANGLES FREELY, SPEND DRAW CALLS ALMOST NOT AT ALL. More detail inside the SAME
+ * merged meshes and the same materials is nearly free; a new mesh or a new material is
+ * expensive. Every hull in this game merges its parts into one THREE.Mesh per
+ * (damage group x surface) - `cruiser.js#buildCruiser`, `ships/common.js#buildShip` -
+ * so stations, facets, recesses and primitives inside an existing surface cost exactly
+ * zero draws. A sixth surface costs one draw per damage group per hull, forever.
+ *
+ * Sanity check on the new ceilings. Force EVERY hull in the benchmark scene to LOD0 at
+ * its ceiling: 1 cruiser at 9,000 + 6 modules at 1,200 + 12 combat ships at 5,000 =
+ * 76,200 triangles of ship geometry. The whole scene today peaks at 138,315 including
+ * 930 instanced debris objects and the skybox. The redesign cannot plausibly take the
+ * scene past ~210,000 triangles, which is 11% of the ceiling. Triangles remain a
+ * non-issue by a factor of nine.
+ *
+ * MEASURED AFTER THE CRUISER REDESIGN, so these are not aspirational numbers:
+ * LOD0 5,241 triangles across 11 draws, against 1,989 across 11 before it. Five times
+ * the geometry, THE SAME ELEVEN DRAW CALLS. That equality is the point of this comment.
+ */
 export const BUDGET = {
   drawCalls: 320,
   triangles: 1_900_000,
   programs: 90,
-  cruiserCoreTris: 2000,
-  moduleTris: 400,
-  fighterTris: 150,
+  /** Player cruiser LOD0 core hull, running lights included. Measured: 5,241. */
+  cruiserCoreTris: 9000,
+  /** One fitted module at LOD0. */
+  moduleTris: 1200,
+  /** A strike craft, 18 m. Still the one class where triangles are worth counting. */
+  fighterTris: 400,
+  /** A faction hull >= 300 m at LOD0. */
+  capitalTris: 5000,
+  /** A faction hull 95-210 m at LOD0. */
+  escortTris: 2000,
   targetFPS: 60,
   minLowFPS: 50,
 };

@@ -156,7 +156,13 @@ import { mirrorGeometryX } from './greeble.js';
  */
 export const CRUISER_ANCHORS = {
   bow: [0, 32, 420],        // the foredeck, ahead of the armour spine, on the sheer
-  dorsal: [0, 94, -40],     // top of the raised dorsal armour spine, over the shoulder
+  // THE ONLY ANCHOR THE HULL REDESIGN MOVED, and it moved 30 m in y and nothing else.
+  // It now sits on the dorsal barbette that stands on the ridge crown at this station
+  // (cruiser.js, "THE DORSAL BARBETTE"), which is what a capital's dorsal bed sits on
+  // and what restores `modules/audit.mjs`'s rail_battery / missile_cells separation to
+  // 149 m against its 140 m bar. Every other anchor is byte-identical: move one, re-run
+  // the module audit, then move the next.
+  dorsal: [0, 124, -40],    // top of the dorsal barbette, on the ridge crown
   ventral: [0, -78, 0],     // roof of the salvage bay throat; the module hangs down
   port: [-158, 46, 60],     // top face of the port sponson shelf, and the sponson
                             // sits on the salvage cradle's second transverse frame

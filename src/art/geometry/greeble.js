@@ -27,6 +27,7 @@
  * MEASURED TRIANGLE COSTS at detail = 2, fully optioned (scratch/kit.mjs prints
  * these; they are ceilings, not targets):
  *   panelledSlab 12 plain / 28 chamfered / 52 with plates
+ *   bevelBox     28 chamfered / 60 drafted    facetProfile   0 (a profile, not a solid)
  *   taperedWedge 12 plain / 28 chamfered      hexStrut       20
  *   pipeRun      44 with two flanges          radiatorFin    12 plain / 36 with ribs
  *   sensorDish   32                           thrusterBell   60 (inner shell + collar)
@@ -230,6 +231,135 @@ export function hullProfile({
   ];
 }
 
+/**
+ * THE FACETED HULL SECTION — a 12-gon of SIX LARGE PLANES PER SIDE, and the reason
+ * the fleet stopped being boxes.
+ *
+ * `hullProfile` (above) is an 8-gon: four big orthogonal planes and four thin
+ * chamfers, which measures out at 86% of the section perimeter in four facets whose
+ * normals are +-X and +-Y. Stack a few of those and you get a shape whose surface is
+ * two-thirds axis-aligned, which is what a stack of boxes IS. That is a measurable
+ * property, not a matter of taste - see `ships/audit.mjs`, section SECTION AND SURFACE,
+ * for the number on every hull in the game.
+ *
+ * This profile is built the other way round: from a PLATE FAMILY of six facet angles
+ * per side, chosen so that
+ *
+ *   1. NO FACET IS WITHIN 5 DEGREES OF AN AXIS. Not one, at any station in the hull's
+ *      whole beam-to-depth range. The deck is CAMBERED and the keel has DEADRISE, so
+ *      even the two faces that "want" to be flat sit 8-15 degrees off horizontal and
+ *      take different values from each other under one key.
+ *   2. Every dihedral is either SMALL (6-7 degrees - a fair panel break inside one
+ *      plane family) or a HARD CHINE (36-79 degrees). Nothing in the 12-28 degree
+ *      band, which is the band that reads as a modelling accident under any key.
+ *   3. The widest point of the section is a KNUCKLE about 43% of the section depth
+ *      below the deck, never the deck edge and never the keel. A hull whose widest
+ *      point is its deck edge is a box with a lid; a hull with a beltline a third of
+ *      the way down is the EVE / Homeworld / EVE Frontier read, and it is one number.
+ *
+ * WHY SIX AND NOT MORE. The first build of this function used EIGHT facets per side.
+ * It passed every number - 33% axis-aligned, fifteen normal clusters - and rendered as
+ * a SUBMARINE: sixteen facets around a section is close enough to a circle that the
+ * shading has no edge to break on, and "angular" became "smooth". The brief is large
+ * flat planes meeting at hard angles, and the count of planes is the whole difference
+ * between a faceted hull and a fair one. Six per side is three big planes (lower flank,
+ * upper flank, deck chamfer) plus a deck flat, a keel flat and a deadrise.
+ *
+ * The six angles, walking up the starboard side from the keel crown, are
+ * 14 / 24 / 64 / 116 / 152 / 169 degrees BEFORE the section's own aspect ratio squashes
+ * them. At the hull's working beam-to-depth of 2.0-2.7 they land at
+ * 8.1 / 14.3 / 49.6 / 130.4 / 163.1 / 173.7, so the dihedrals are
+ * 6.2 / 35.3 / 80.8 / 32.6 / 10.6 — every one either under 12 degrees (a fair panel
+ * break inside one plane family) or over 28 (a chine that catches a rim light), and
+ * nothing in between. The closest any facet comes to a cardinal axis is 5.7 degrees,
+ * at the transom, where the section is at its flattest.
+ *
+ * MEASURED at maxHalf 168, depth 140: perimeter 784 m, LARGEST FACET 86 m = 11.0% of
+ * it (the rule asks for under 18%; the old 8-gon's worst was 32%), and the four
+ * chamfer and knuckle facets carry 65.8% (the rule asks for 34%; the old 8-gon
+ * carried 11-14%).
+ *
+ * Point order and winding match `hullProfile` exactly - counter-clockwise starting at
+ * the starboard keel edge and going UP - so the two are interchangeable inside one
+ * `loft` provided the cardinality matches. They do NOT match in cardinality, which is
+ * deliberate: `hullProfile` is unchanged and every faction hull, the derelict and all
+ * twenty-four modules still call it.
+ *
+ * Returned indices, which `cruiser.js` decimates by name at LOD2:
+ *   0 keel flat (S)   1 keel chamfer (S)   2 KNUCKLE (S)   3 deck chamfer (S)
+ *   4 deck flat (S)   5 deck crown         6..10 the port mirror of 4..0
+ *   11 keel crown
+ *
+ * @param {Object} p
+ * @param {number} p.maxHalf   half-beam AT THE KNUCKLE, i.e. the widest point
+ * @param {number} p.top       deck plate level (the crown sits above it)
+ * @param {number} p.bottom    keel plate level (the crown sits below it)
+ * @param {number} [p.knuckle] knuckle depth as a fraction of (top-bottom) below the
+ *                             deck. 0.30..0.55; deep aft, high forward.
+ * @param {number} [p.deckFlat] deck flat half-width as a fraction of maxHalf
+ * @param {number} [p.flare]   scales the two points below the knuckle. < 1 is
+ *                             TUMBLEHOME (flanks slope inward going down), > 1 is
+ *                             FLARE. The same free curve `hullProfile#keelHalf` carries.
+ * @param {number} [p.camber]  deck crown rise as a fraction of (top-bottom)
+ * @param {number} [p.deadrise] keel crown drop as a fraction of (top-bottom)
+ * @param {number[]} [p.keep]  indices to emit, for LOD cardinality reduction. Ascending,
+ *                             and must include 0 so the winding is stable.
+ */
+export function facetProfile({
+  maxHalf, top, bottom, knuckle = 0.4234, deckFlat = 0.5085, flare = 1,
+  camber = 0.0679, deadrise = 0.0486, keep = null,
+}) {
+  const M = Math.max(1e-3, maxHalf);
+  const d = Math.max(1e-3, top - bottom);
+  const k = Math.min(0.55, Math.max(0.30, knuckle));
+
+  // y as a fraction of the section depth BELOW the deck plate. The two points above
+  // the knuckle and the two below are remapped when the knuckle moves, so moving it
+  // moves the whole beltline rather than shearing one facet.
+  const K0 = 0.4234;
+  const up = (t) => t * (k / K0);
+  const dn = (t) => k + (t - K0) * ((1 - k) / (1 - K0));
+
+  // xFrac, yFracBelowTop. Derived from the plate-family walk described above; the walk
+  // is reproduced in `ships/audit.mjs` so these five numbers are checkable.
+  const side = [
+    [0.2835 * flare, dn(1.0000)],                        // 0 keel flat edge
+    [0.6760 * (1 + (flare - 1) * 0.6), dn(0.8799)],      // 1 keel chamfer
+    [1.0000, k],                                         // 2 THE KNUCKLE - widest point
+    [0.7664, up(0.0943)],                                // 3 deck chamfer
+    [deckFlat, 0],                                       // 4 deck flat edge
+  ];
+
+  const P = new Array(12);
+  for (let i = 0; i < 5; i++) {
+    P[i] = [side[i][0] * M, top - side[i][1] * d];
+    P[10 - i] = [-side[i][0] * M, top - side[i][1] * d];
+  }
+  P[5] = [0, top + camber * d];              // deck crown
+  P[11] = [0, bottom - deadrise * d];        // keel crown
+
+  if (!keep) return P;
+  return keep.map((i) => P[i]);
+}
+
+/**
+ * Index maps for `facetProfile#keep`. LOD collapses cardinality by NAME, never by
+ * dropping every other point.
+ *
+ * There is only ONE map, and that is a finding rather than an omission. With eight
+ * facets per side the two small-dihedral points could be dropped at LOD1 for under 4 m
+ * of outline movement; with six, every point carries a 36-degree chine or more, and
+ * dropping the keel chamfer moves the outline 41 m. So LOD1 keeps all twelve and the
+ * saving comes from stations instead — which is the right axis anyway, since a station
+ * is 12 points and a facet is 2. LOD2 drops both chamfers, at 30-41 m, which is under
+ * one pixel at the 43 m/px max-zoom read this level exists for.
+ */
+export const FACET_LOD = {
+  full: null,                             // 12
+  mid: null,                              // 12 — see above
+  far: [0, 2, 4, 5, 6, 8, 10, 11],        // 8: both chamfers collapsed
+};
+
 /** Regular n-gon. `rotation` in radians; a flat top wants rotation = PI/n. */
 export function ngonProfile(radius, sides = 6, rotation = 0) {
   const pts = [];
@@ -354,6 +484,72 @@ export function panelledSlab({
     parts.push({ geo: pg, pos: [0, height * 0.5 + 0.6, -depth * 0.5 + step * (i + 1)] });
   }
   return mergeParts(parts);
+}
+
+/**
+ * 1b. BEVEL BOX — what `panelledSlab` should have been for anything over 40 metres.
+ *
+ * A `panelledSlab` is a rectangular prism. Even chamfered it keeps its two ENDS as
+ * flat +-Z rectangles and its four long faces exactly on +-X / +-Y, so 100% of its
+ * surface area is axis-aligned. Ninety-nine of those in a stack is what
+ * `docs/probes/cruiser.png` was, and it is why the player cruiser measured 74% of its
+ * area within 5 degrees of a cardinal axis - boxier than any faction capital in its
+ * own fleet.
+ *
+ * This is the same mass with all twelve edges taken off AND both ends drafted, so the
+ * end caps stop being square to the axis. A rail 320 m long with a 6% end draft has
+ * its two ends 3.4 degrees off - not enough. `draft` is therefore authored as an
+ * ANGLE-equivalent inset per end and the default is deliberately generous.
+ *
+ * It costs 60 triangles against `panelledSlab`'s 12, which under the lifted triangle
+ * budget is nothing, and it is most of why the player cruiser moved from 67.8% of its
+ * surface area within 5 degrees of a cardinal axis to 32.1%. The other half is the
+ * hull loft itself; these are the bolt-ons.
+ *
+ * @param {number} [p.chamfer]  corner cut on the four long edges, metres
+ * @param {number} [p.draft]    how far each end face is inset, metres. The end cap
+ *                              shrinks by this much in x and y, so the end is a
+ *                              raked frustum face rather than a square transom.
+ * @param {number} [p.cant]     roll of the SECTION about +Z, radians. This is the
+ *                              cheapest single number in the kit: at 0.10 rad every
+ *                              one of the four long faces is 5.7 degrees off its
+ *                              axis, for exactly zero extra triangles, and a plate
+ *                              that is not square to the world is what separates
+ *                              "assembled from salvage" from "extruded in CAD".
+ * @param {number} [p.rake]     y-shift of the +Z end relative to the -Z end, metres.
+ *                              A mass whose top is not parallel to its bottom.
+ * @returns {THREE.BufferGeometry} 28 chamfered, 60 with draft or rake, 12 at DETAIL.FAR
+ */
+export function bevelBox({
+  width = 40, height = 20, depth = 60, chamfer = 6, draft = 0, cant = 0, rake = 0,
+  detail = DETAIL.FULL,
+} = {}) {
+  const c = Math.min(chamfer, width * 0.45, height * 0.45);
+  const roll = (pts) => {
+    if (!cant) return pts;
+    const s = Math.sin(cant), k = Math.cos(cant);
+    return pts.map(([x, y]) => [x * k - y * s, x * s + y * k]);
+  };
+  if (detail < DETAIL.MID || c <= 0) {
+    return prism(roll(rectProfile(width, height)), -depth * 0.5, depth * 0.5);
+  }
+  const sec = (w, h, cc) => roll(octProfile(w * 0.5, h * 0.5, -h * 0.5, cc, cc, cc));
+  const dr = Math.max(0, Math.min(draft, width * 0.4, height * 0.4));
+  if (dr <= 0 && rake === 0) return prism(sec(width, height, c), -depth * 0.5, depth * 0.5);
+  const sx = (width - dr * 2) / width;
+  const sy = (height - dr * 2) / height;
+  const mid = sec(width, height, c);
+  const end = sec(width - dr * 2, height - dr * 2, c * Math.min(sx, sy));
+  const off = (pts, dy) => pts.map(([x, y]) => [x, y + dy]);
+  // Four stations, so the draft is a real bevel at each end rather than a taper over
+  // the whole length: the mass keeps its section for the middle 80% of its run.
+  const q = depth * 0.5, m = depth * 0.4;
+  return loft([
+    { z: -q, points: off(end, -rake * 0.5) },
+    { z: -m, points: off(mid, -rake * 0.4) },
+    { z: m, points: off(mid, rake * 0.4) },
+    { z: q, points: off(end, rake * 0.5) },
+  ]);
 }
 
 /**

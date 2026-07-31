@@ -3,182 +3,197 @@
  *
  * This is the object the player looks at for the entire run, so every decision here is
  * a decision about the whole game. The numbers below execute
- * `docs/design/ship-language.md`; where a rule from that document is being satisfied
- * the rule id is quoted, because a proportion you cannot check is a proportion that
- * drifts.
+ * `docs/design/ship-redesign.md`, which supersedes parts of `ship-language.md`; where a
+ * rule is being satisfied the rule id is quoted, because a proportion you cannot check
+ * is a proportion that drifts.
  *
  * ---------------------------------------------------------------------------
- * WHAT WAS WRONG WITH THE OLD HULL, so it does not come back
+ * WHAT WAS WRONG WITH THE LAST HULL, so it does not come back
  * ---------------------------------------------------------------------------
- * The primary mass was a CONSTANT-SECTION RECTANGULAR BOX: half-beam 112-116 m from
- * z = -330 to z = +180, i.e. 510 m of the 1400 held inside a +-2% band, with the deck
- * line moving six metres over that whole run. Detail was then bolted to its flanks.
- * There was no mass hierarchy, no taper, no negative space, and the prow was a
- * truncated slab with a plank under it. It read as a barge with greebles, and no
- * amount of surface treatment rescues a barge.
+ * It was a STACK OF RECTANGULAR BOXES, and that was measurable rather than a matter of
+ * taste. Weighting every LOD0 triangle by area and binning its face normal:
+ *
+ *     BEFORE  1849 tris   99 primitives at 18.7 each   67.8% axis-aligned   12 clusters
+ *     AFTER    5101 tris  118 primitives at 43.2 each   32.1% axis-aligned   16 clusters
+ *
+ * Sixty-eight per cent axis-aligned, and 99 separate primitives averaging 18.7
+ * triangles - a plain box is 12 - is a stack of boxes stated as a number. The section
+ * was an 8-gon whose largest facet carried 25-32% of the section perimeter while the
+ * four chamfers, "where every rim light in the frame comes from", carried 11-14%. So
+ * 86% of the hull skin was four orthogonal planes. Eleven stations over 1400 m is one
+ * every 127 m, which is too coarse to sweep or taper anything. And the envelope was
+ * 490 wide by 618 tall - TALLER THAN IT WAS WIDE - where every ship in the reference
+ * fleets is the opposite.
+ *
+ * The instrument that says all of this is `ships/audit.mjs`, section SECTION AND
+ * SURFACE. It runs in node, it takes two seconds, and it is why this cannot silently
+ * come back. Every figure quoted in this header is one it prints.
+ *
+ * ---------------------------------------------------------------------------
+ * THE BRIEF: FLAT, ANGULAR, SLEEK, REALISTIC
+ * ---------------------------------------------------------------------------
+ * EVE Online, Homeworld, EVE Frontier. Four words, and each one is a number here:
+ *
+ *   FLAT       envelope beam : height >= 1.5 : 1, and >= 1.9 : 1 in every hull
+ *              section. Was 0.79 : 1. Is 1.63 : 1.
+ *   ANGULAR    NOT "has hard edges" - the old hull had nothing but hard edges. It
+ *              means MANY LARGE PLANES MEETING AT MANY DIFFERENT ANGLES, and the
+ *              metric that separates the two is normal-direction count, not edge
+ *              sharpness. Adding boxes adds edges and adds no normal directions,
+ *              which is what had been happening for four art rounds.
+ *   SLEEK      30 stations instead of 11, section area monotone forward of the
+ *              shoulder, deck line and keel line never parallel anywhere.
+ *   REALISTIC  every feature over 20 m names a function. Detail is SUBTRACTIVE:
+ *              cut the recess first, then put the machinery in it.
  *
  * ---------------------------------------------------------------------------
  * THE READ, in the order the eye gets it
  * ---------------------------------------------------------------------------
- * 1. FOUR MASSES, RANKABLE (ship-language.md §1). Measured off the geometry, not
- *    intended - z extent, then the mass's own L : B : H:
+ * 1. ONE BODY WITH A SPINE, not four stacked masses. The hull is a single 1400 m
+ *    loft through THIRTY stations of a SIXTEEN-SIDED faceted section
+ *    (greeble.js#facetProfile), and the dorsal ridge is a second loft that RISES OUT
+ *    OF THE DECK PLANE AND FALLS BACK INTO IT over 490 m - 0.35 of the ship's length -
+ *    rather than a ziggurat of inset boxes sitting on top of it. The old superstructure
+ *    was three boxes and a 118 m mast reaching y +366; §0's own pixel budget measured
+ *    that mast as a 2.7 x 0.2 px hair at max zoom, so 366 m of envelope height bought
+ *    nothing. It is deleted and the sensors are flush apertures.
  *
- *      M1  spine                   z -700..+700  1400 m   8.5 : 1.6 : 1  long and thin
- *      M2  ventral assembly        z -230..+664   894 m   2.0 : 1.6 : 1  long, wide, shallow
- *      M3  dorsal spine + bridge   z -540.. +40   580 m   2.7 : 0.9 : 1  tall and blocky
- *      M4  stern block + drives    z -700..-400   300 m   1.4 : 2.3 : 1  short and wide
+ * 2. THE SECTION IS A PLATE FAMILY, NOT A BOX. SIX facet angles per side -
+ *    14 / 24 / 64 / 116 / 152 / 169 degrees before the section's own aspect ratio
+ *    squashes them, 8.1 / 14.3 / 49.6 / 130.4 / 163.1 / 173.7 after. Consequences,
+ *    all measured by `ships/audit.mjs`:
+ *      - NO FACET IS WITHIN 5 DEGREES OF AN AXIS. The deck is CAMBERED and the keel
+ *        has DEADRISE, so even the two faces that want to be flat are 6-14 degrees
+ *        off horizontal and take different values from each other under one key.
+ *      - the largest facet is 11.0% of the section perimeter, against 25-32% before.
+ *      - the four chamfer and knuckle facets carry 65.8%, against 11-14% before.
+ *      - every dihedral is 6.2 / 35.3 / 80.8 / 32.6 / 10.6 degrees: each one either
+ *        under 12 (a fair panel break inside one plane family) or over 28 (a chine
+ *        that catches a rim light), never between. That band is what reads as a
+ *        modelling accident under any key.
+ *      - SIX AND NOT EIGHT, and that is a correction rather than a first choice. The
+ *        first build of this hull used eight facets a side. It measured BETTER - 33%
+ *        axis-aligned against 32%, sixteen normal clusters - and rendered as a
+ *        SUBMARINE, because sixteen facets around a section is close enough to a
+ *        circle that the shading has no edge to break on. The count of large planes is
+ *        the whole difference between a faceted hull and a fair one, and no metric in
+ *        this repository could have caught it. Somebody had to look at the picture.
  *
- *    The size ladder on z extent is 1.65x, 1.63x, 1.73x - every step clears the 1.6
- *    the rule asks for, so the eye can rank them instead of giving up and seeing one
- *    lumpy object. No two share an aspect ratio within 20%. ONE HONEST EXCEPTION: M4's
- *    widest dimension is not its 300 m length but its 396 m beam across the drive pods,
- *    and 520/396 is 1.31, under the step. The pods have to be outboard of the block's
- *    156 m half-beam or the outrigger gap they exist to create does not exist, so this
- *    is a trade taken deliberately and recorded rather than hidden.
+ * 3. THE WIDEST POINT IS A KNUCKLE, NOT THE DECK EDGE. It sits 47% of the section
+ *    depth below the deck amidships, rising to 34% at the bow (which reads as flare)
+ *    and falling to 53% at the transom (which reads as a slab stern). A hull whose
+ *    widest point is its deck edge is a box with a lid. A hull with a beltline a
+ *    third of the way down is a plated warship, and it is one number.
  *
- * 2. THE SECTION NEVER HOLDS STILL. Half-beam runs 150 -> 94 -> 136 -> 16: a maximum
- *    at the transom, a visible WAIST at z = -470, a SHOULDER at z = -40, then a taper
- *    to a chisel. Exactly one interior minimum and one interior maximum in the plan
- *    curve (R2.2); the longest contiguous run inside +-4% of its own starting
- *    half-beam is 140 m against a 160 m limit - the old hull's was 510 (R2.1). The
- *    deck line has three inflections, so the profile is never one horizontal.
+ * 4. THE SECTION NEVER HOLDS STILL, AND IT MOVES IN STRAIGHT LINES. Half-beam runs
+ *    152 -> 96 -> 168 -> 16: a stern block, a visible WAIST at z -440, the maximum
+ *    under the ridge at z -150, then a strictly monotone taper 850 m to a chisel.
+ *    Exactly one interior minimum and one interior maximum (R2.2).
  *
- * 3. A PROW WITH MASS BEHIND IT, AND A KNUCKLE.
+ *    STRAIGHT LINES IS THE ART DECISION HIDING IN THAT SENTENCE. The plan curve, the
+ *    sheer and the keel line are each PIECEWISE LINEAR with six or seven named breaks,
+ *    not fair curves through thirty stations. A straight run in plan is a FLAT PLANE on
+ *    each of the six facet families; a curve that is fair everywhere has no plane
+ *    anywhere, and the first thirty-station build of this hull was fair and read as a
+ *    torpedo. The breaks are where the reading happens.
  *
- *    This is the correction the whole rebuild turns on, so it is worth stating what
- *    was wrong. The first attempt collapsed the beam from 134 m at the shoulder to
- *    74 m by z = +400 and hung an open A-frame in front of it. Reviewed blind against
- *    real reference art it read as a CRANE JIB, and with the aft fins covered the
- *    ship's heading was genuinely ambiguous: all the mass was aft and the forward
- *    third was two sticks.
+ *    THE DECK LINE AND THE KEEL LINE ARE NEVER PARALLEL: at every one of the 29
+ *    adjacent station pairs their slopes differ by at least 0.067 against a 0.04 bar,
+ *    and their breaks are at different z. There is no length of this ship over which
+ *    the section is merely being extruded. `ships/audit.mjs` prints all four numbers.
  *
- *    Now the hull carries its section forward. At z = +300 it is still 228 m across
- *    and 142 m deep - 84% of the shoulder beam, five hundred metres ahead of the
- *    bridge - and it holds that until a hard CHINE BREAK at z = +460, where the deck
- *    stops falling at 3.4 degrees and starts falling at 21.8. That knuckle is a
- *    single edge readable from any angle, and a flat foredeck visibly falls into it.
- *    Over the forward 200 m the hull silhouette falls 97 m and it falls
- *    ASYMMETRICALLY - deck at 18.2 degrees, keel at 9.6, a 1.9 : 1 ratio (R2.4) -
- *    which puts the point 45 m BELOW the axis (R2.5). The tip is a 32 x 18 m blade,
- *    not a needle: a needle reads as an antenna, a cone reads as a nose, a chisel
- *    reads as a bow.
+ * 5. HOLES YOU CAN SEE STARS THROUGH, IN BOTH VIEWS, AND THE BAY IS NOW WIDE AND
+ *    SHALLOW. The salvage bay used to be 210 m of clear span and 168 m deep, and that
+ *    depth was the single largest contributor to a 618 m envelope height. It is now
+ *    300 m of clear span and 92 m of clear depth: the same void AREA, a better
+ *    plan-view read, and 50 m of height given back. The rails moved outboard from
+ *    x +-242 to x +-278, which is what makes the ship 562 m wide and 348 m tall
+ *    instead of 490 by 618. Measured by `tools/silhouette.mjs`, enclosed background
+ *    went from side 6.47% / plan 6.30% to side 9.18% / plan 8.44%, both inside R2.6's
+ *    6-12% band and both further from its floor than they were.
  *
- *    THE HULL IS THE FORWARDMOST THING ON THE SHIP, at every LOD. The cutter yoke
- *    now stops 36 m short of the stem and its stays run up and FORWARD to meet it.
- *    Tooling hangs off a bow; it is not the bow.
- *
- * 4. HOLES YOU CAN SEE STARS THROUGH, AND NOW IN BOTH VIEWS. Voids rather than
- *    recesses, because each is open on at least two faces, so as the camera orbits,
- *    background passes through. Measured by tools/silhouette.mjs against R2.6's
- *    6-12% of the bounding box: SIDE 6.47%, PLAN 6.30%, widest clear spans 115 and
- *    88 m, so both read at the 43 m/px max-zoom limit (R2.7). The plan figure was
- *    0.65% at round-one review, which is what "the plan view is still a slug" meant,
- *    and the three changes that bought it are all the same change - MOVE MASS
- *    OUTBOARD, because a hole needs something on BOTH sides of it:
- *      - the bay rails stand 68 m clear of the flank, tied by five transverse frames
- *      - the drive pods stand 44 m clear of the stern block, on TWO pylons each, so
- *        the sky between the pylons is bounded on four sides instead of being a notch
- *      - the armour spine overhangs the waist by 32 m on three exposed frames
- *      - the salvage bay throat, 210 x 192 m, open ventral AND aft
- *      - the four uneven rail bays between the bay's five frames, and the slot above
- *        the tow track where it hangs clear of the keel
- *      - the cutter yoke's mouth, closed off by the forestay
- *      - the outrigger gaps fore and aft of the two drive pylons
- *      - the dorsal cutaway, where the armour spine stands clear on three frames
- *    A one-sided cavity always reads as a dark patch of hull. These do not.
- *
- * 5. IT IS A SALVAGER. Two cutter heads on a ventral A-frame at different z (+664
- *    port, +628 starboard) because a matched pair reads as a weapon mount and a
- *    mismatched pair reads as tooling. Four grapple arms on pivots unmatched port to
- *    starboard. A 54 x 34 m hangar mouth in the port flank. A salvaged fuel cylinder,
- *    a captured armour plate wired on seven degrees off the hull's plate grid, a
- *    spare drive bell lashed to the aft deck on a cradle, a section of flank with the
- *    skin missing. If a bare-hull render could be mistaken for a line ship with the
- *    paint removed, this has failed.
- *
- * 6. INCOMPLETE. The main drive well is a 108 x 72 m octagonal hole with nothing in
- *    it; the ship limps on two outrigger bells. Six mounts, all empty on a bare hull,
- *    all wearing one vocabulary. Every empty socket is an invitation.
+ * 6. IT IS A SALVAGER, and none of that is spent. Two cutter heads on a ventral
+ *    A-frame at different z. Grapple arms on unmatched pivots. A 54 x 34 m hangar
+ *    mouth in the port flank only. A captured armour plate wired on seven degrees off
+ *    the plate grid. An empty main drive well 108 m across with nothing in it, and two
+ *    outrigger pods the ship limps on - now with the THRUST FRAMES VISIBLE, the load
+ *    path from each bell back into the flank, which is the single most convincing
+ *    "real machine" cue the reference fleets share and which we had none of.
  *
  * ---------------------------------------------------------------------------
- * FEWER, LARGER, ASYMMETRIC - the other half of the round-one correction
+ * WHY THIS IS AFFORDABLE: TRIANGLES ARE FREE, DRAW CALLS ARE NOT
  * ---------------------------------------------------------------------------
- * Blind review counted "roughly eight features of near-equal visual weight" and it
- * was right: four identical aft fins, three bright tan mount pads, a bridge, a bow
- * gantry and a ventral truss, all competing. There was no first read, so the eye had
- * nowhere to land. What changed, all of it subtractive:
+ * The benchmark at 2560x1440 peaks at 138,315 triangles against a committed ceiling
+ * of 1,900,000 - 7.3% used - and fails on DRAW CALLS, 506 against 320. So triangles
+ * are not the constraint and draw calls are.
  *
- *   five radiator fins -> THREE, spans 200 / 140 / 92 m at four different z, two to
- *     port and one to starboard. No two the same size; a repeated element the eye can
- *     count adds nothing after the second one.
- *   mount pads moved from the `hull` surface to `plating`, so they stop reading as
- *     five bone-coloured patches spread evenly down a grey ship.
- *   the port bow derrick DELETED - the second thing at the bow that read as a crane.
- *   two bridge wings -> ONE, to port.
- *   `trim` deleted as a surface entirely: it existed for six bolt rings and one
- *     hazard patch, and it cost a whole draw call to put an out-of-family bone colour
- *     on the hull. LOD0 is now NINE draws, not ten.
+ * Draw calls on this hull are (damage groups x surfaces), NOT primitives: the bucket
+ * key is `${group}/${surface}` and every bucket collapses to exactly one THREE.Mesh
+ * in `buildCruiser` below. Adding stations, facets, recesses and primitives inside the
+ * existing surfaces therefore costs EXACTLY ZERO DRAW CALLS. Adding a surface costs
+ * one draw per damage group per hull, forever, at every LOD.
+ *
+ * So: `SURFACE` still has five entries, `GROUPS` is still two, and the draw counts are
+ * BYTE-FOR-BYTE UNCHANGED from the box-stack hull they replace - 11 / 6 / 3 before and
+ * 11 / 6 / 3 after, measured with the same stub registry at both commits. The triangle
+ * count is 2.6x what it was, and units.js#BUDGET.cruiserCoreTris says why that is
+ * nothing. Any future edit here that raises a draw count is a defect until it is
+ * justified in this comment.
  *
  * ---------------------------------------------------------------------------
  * SURFACE: 60 / 30 / 10, and it is enforced by where detail is ALLOWED to go
  * ---------------------------------------------------------------------------
- * Dense detail is allowed in exactly EIGHT places on this hull, and each one claims
- * one of the four justifications from §3 - a joint between two masses, a recess
- * deeper than 8 m, machinery, or functional edge structure:
+ * Dense detail is allowed only in a TROUGH or a RECESS, never on a proud face, and
+ * each band claims one of §3's four justifications - a joint between two masses, a
+ * recess deeper than 8 m, machinery, or functional edge structure. With the triangle
+ * budget lifted this is now the cheap option rather than the expensive one: a
+ * rectangular recess cut into a lofted face costs 24 triangles and REMOVES the face it
+ * replaces, and a recess 8 m deep self-shadows, so what sits in it reads as depth
+ * under a flat key instead of as noise on a plate.
  *
- *   drive-well rim band          machinery        exposed flank ribs, PORT ONLY  recess
- *   radiator roots + fairings    mass joint       dorsal cutaway ribs            recess
- *   cutter-head knuckles x2      machinery        bay diagonals + grapples       edge
- *   the six mount assemblies     machinery        mast and dish                  machinery
+ * Everything else is CALM RESERVE and nothing may be placed on it: the deck flats, the
+ * ridge crown, the four knuckle planes over their full length, the bay rails' outboard
+ * faces and the forward 200 m - the prow's job is convergence and detail there fights it.
  *
- * Everything else is CALM RESERVE and nothing may be placed on it: the two 640 m
- * flank belts, the dorsal armour spine, the sponson decks, the bay's outboard rail
- * faces, the whole foredeck and the forward 200 m - the prow's job is convergence and
- * detail there fights it.
- *
- * Nothing dense is mirrored. The cutter-head knuckles are 84 m apart in z, the rib
- * section and the hangar are port-only, the deck hatch is starboard-only, the hazard
- * patch is port-only, and the sponsons sit at different z. Mirror-matched greeble is
- * the strongest single tell of procedural placement, and a hull that is bilaterally
- * symmetric cannot read as repaired.
+ * Nothing dense is mirrored. The rib section and the hangar are port-only, the deck
+ * hatch is starboard-only, the hazard patch is port-only, the sponsons sit 170 m apart
+ * in z, and the three radiator panels are two to port and one to starboard at four
+ * different z. Mirror-matched greeble is the strongest single tell of procedural
+ * placement, and a hull that is bilaterally symmetric cannot read as repaired.
  *
  * ---------------------------------------------------------------------------
- * SCALE - three features whose size the player already knows
+ * SCALE - features whose size the player already knows
  * ---------------------------------------------------------------------------
  * Running lights at EXACTLY 40 m (units.js#SCALE_CUE) are necessary and not
  * sufficient: 40 m is not a distance anyone has stood next to, so on its own it
- * calibrates nothing and the hull reads as an indeterminate grey twig. Three
- * features carry a size the player DOES know:
- *
- *   hangar mouth, port flank      54 x 34 m   three fighters wide (a fighter is 18 m)
- *   boat-bay hatch, stbd foredeck 26 x 18 m   exactly one fighter
- *   bridge window bands            5 m tall   one storey
+ * calibrates nothing. Two features carry a size the player DOES know: the hangar
+ * mouth in the port flank at 54 x 34 m, which is three fighters wide, and the bridge
+ * window band at 5 m of glazing, which is one storey.
  *
  * ---------------------------------------------------------------------------
- * BUDGET
+ * EVERY LOD IS AUTHORED INWARD FROM LOD0's SILHOUETTE
  * ---------------------------------------------------------------------------
- * LOD0 core hull is 1989 triangles against units.js#BUDGET.cruiserCoreTris (2000),
- * running lights included.
+ * This is a rule because breaking it produced the worst finding of round one: the ship
+ * read as three different classes at three ranges. A faceted loft decimates on three
+ * axes and in this order:
  *
- * EVERY LOD IS AUTHORED INWARD FROM LOD0's SILHOUETTE. This is a rule now because
- * breaking it produced the worst finding of round one: the ship read as three
- * different classes at three ranges. LOD1 had two fins where LOD0 had four; LOD2
- * invented a downward spike prow that existed nowhere else, deleted the fins
- * entirely, and filled the bay voids in with solid boxes - deleting the one feature
- * nothing else in the game has. Concretely:
- *
- *   - LOD1's stations are PICKED BY HAND, not decimated every-other. The waist and
- *     all three prow stations survive, because they are the silhouette.
- *   - all five bay frames survive to LOD1. The four voids between them cost eight
- *     triangles each. Negative space is the LAST thing an LOD gives up.
- *   - LOD2 is built from `pick(HULL_STATIONS, ...)` plus proxies for the same four
- *     masses, including the bay slot as a real hole and two of the three fins.
- *
- * DRAW CALLS. The build is over its committed ceiling of 320 (docs/review/benchmark.md
- * measured 650), so this rebuild is draw-NEGATIVE: two damage groups instead of three
- * and THREE surfaces instead of six, giving 9 draws at LOD0 against the old 14 and
- * 5 at LOD1 against the old 12. The benchmark's camera sits at 7.2 km, which is LOD1,
- * so the LOD1 number is the one that pays.
+ *   1. STATIONS, BY NAME. 30 -> 16 -> 8, picked by hand. The transom, the stern step,
+ *      the waist, the maximum and the knuckle break survive to LOD2 because they ARE
+ *      the silhouette. A blind every-other decimation dropped the waist and two of
+ *      three prow stations, which is how the ship came to read as a different class at
+ *      5 km than at 3 km. The spine loft costs 706 / 370 / 118 triangles across the
+ *      three levels and the same ONE draw call at each. `tools/silhouette.mjs` scores
+ *      the result LOD1 0.954 and LOD2 0.787 against a 0.72 floor.
+ *   2. PROFILE CARDINALITY. 12-gon -> 12-gon -> 8-gon, by the fixed index map
+ *      greeble.js#FACET_LOD, never by a generic algorithm. LOD1 KEEPS ALL TWELVE, and
+ *      that is a measurement rather than laziness: with six facets a side every point
+ *      carries a 33-degree chine or more, and dropping the keel chamfer moves the
+ *      outline 41 m. At LOD1's 4.2 km switch that is eight pixels. LOD2 drops both
+ *      chamfers, at 30-41 m, which is under one pixel at the 43 m/px read that level
+ *      exists for. Cardinality is the axis that is safe only when the dihedral is
+ *      small; stations are the axis that pays here.
+ *   3. PRIMITIVES, LAST. Recesses go last of all, because they cost almost nothing
+ *      and they are the read.
  *
  * Everything else worth knowing is in ./hardpoints.js.
  */
@@ -202,178 +217,211 @@ export const RUNNING_LIGHT_AXIS_SPACING_M = SCALE_CUE.runningLightSpacingM;
 // ---------------------------------------------------------------------------
 
 /**
- * M1, THE SPINE. One loft, the full 1400 m, five zones and not one of them constant.
+ * M1, THE SPINE. One loft, the full 1400 m, THIRTY stations, and not one calm run.
  *
- * `[z, deckHalf, top, bottom, chamW, chamTop, chamBot, keelRatio]`
+ * `[z, half, top, bottom, knuckle, deckFlat, flare]`
  *
- * `keelRatio` is the keel half-beam as a fraction of the deck half-beam, and it is
- * where two of naval architecture's three free curves live:
- *   TUMBLEHOME (0.78-0.80) everywhere aft of the forefoot, so the flanks slope inward
- *     going down. The upper flank catches the key and the lower flank falls into
- *     shadow, which buys a two-value split on what is geometrically one surface.
- *   FLARE (1.15) forward of z = +400, so the widest part of the bow is down at the
- *     working gear rather than up at the deck.
- * The third curve, SHEER, is the `top` column: -24 at the stem, +72 under the
- * superstructure, dropping 22 m to +50 where the deck plating is missing at z = -400,
- * rising again to +78 at the stern block. Three inflections, no horizontals.
+ *   half      half-beam AT THE KNUCKLE, i.e. at the widest point of the section, which
+ *             is NOT the deck edge. See greeble.js#facetProfile.
+ *   top       deck plate level. The deck crown sits 4.8% of the section depth above it.
+ *   bottom    keel plate level. The keel crown sits 3.6% of the depth below it.
+ *   knuckle   how far below the deck the knuckle sits, as a fraction of section depth.
+ *             0.53 at the transom (a slab stern), 0.47 amidships, 0.34 at the bow
+ *             (which is what reads as flare). Bounded 0.30-0.55.
+ *   deckFlat  deck flat half-width over the knuckle half-beam. Wide aft where the
+ *             ship is a platform, narrow forward where it is a blade.
+ *   flare     scales the three points BELOW the knuckle. < 1 is tumblehome, the flanks
+ *             sloping inward going down so the upper flank catches the key and the
+ *             lower falls into shadow; > 1 is flare, forward of the forefoot, so the
+ *             widest part of the bow is down at the working gear. The same free curve
+ *             `hullProfile#keelHalf` carries on the faction fleet.
  *
- * The 34 m chamfer at the transom against 2 m at the tip is a free front/back cue at
- * every zoom: sharp forward, blunt aft.
+ * THIRTY STATIONS, MEAN SPACING 48 m. The old table had eleven at one every 127 m,
+ * which is simply too coarse to sweep or taper anything: the 220 m between z -260 and
+ * z -40 was a straight-line interpolation between two nearly identical rectangles.
+ *
+ * THE THREE FREE CURVES, and none of them is flat anywhere:
+ *   PLAN     152 at the transom, a WAIST of 96 at z -440, the maximum 168 under the
+ *            ridge at z -150, then strictly monotone down to a 32 m chisel over the
+ *            forward 850 m. One interior minimum, one interior maximum (R2.2).
+ *   SHEER    the `top` column. Rises to +66 over the stern block, DIPS 16 m through
+ *            the waist where the deck plating is missing, rises again to +65 under the
+ *            ridge, then falls 123 m to the stem. Three inflections, no horizontals.
+ *   KEEL     the `bottom` column, and it runs AGAINST the sheer almost everywhere. The
+ *            hull is deep at the transom, shoals hard through the waist, deepens to its
+ *            maximum under the ridge, shoals again through the forebody. At every one
+ *            of the 29 adjacent pairs the deck slope and the keel slope differ by at
+ *            least 0.04, so there is nowhere on this ship where the section is merely
+ *            being extruded.
+ *
+ * SECTION BEAM : DEPTH IS >= 1.95 AT EVERY STATION and averages 2.2. That is the
+ * "flat" word made checkable, and it is why the waist is shallow as well as narrow:
+ * a hull that pinches in plan and keeps its depth reads as a pinched box.
  */
-const HULL_STATIONS = [
-  // ZONE E — STERN BLOCK. Maximum beam is an ENDPOINT here, not a bump.
-  [-700, 150, 80, -86, 22, 13, 26, 0.72],
-  [-540, 124, 74, -78, 18, 12, 22, 0.72],
-  // ZONE W — WAIST. 30 m of beam lost in 70 m of length; the ship is visibly pinched.
-  [-470, 94, 58, -56, 14, 9, 18, 0.76],
-  [-400, 100, 52, -60, 14, 9, 18, 0.76],
-  // ZONE M — MIDBODY, rising to the shoulder.
-  // THE SHOULDER MOVED AFT, to z = -260, under the superstructure. It used to sit at
-  // z = -40, i.e. exactly where the salvage bay is, which meant the hull was at its
-  // widest precisely where the bay rails needed clear water outboard of it — and the
-  // plan view came out a slug with no background anywhere inside its outline. Widest
-  // under the island, narrowing steadily forward, is also the load path a real ship
-  // would have: the heaviest structure is under the heaviest thing on the deck.
-  [-260, 128, 74, -66, 16, 10, 20, 0.72],
-  [-40, 120, 70, -70, 17, 10, 20, 0.70],
-  // ZONE F — FOREBODY. THE FOREDECK. The section is carried forward nearly whole:
-  // at z = +300 the hull is still 224 m across and 136 m deep, i.e. 82% of the
-  // shoulder's beam and 97% of its depth, five hundred metres ahead of the bridge.
-  // This is the correction the first pass got wrong - it collapsed the beam to 74 m
-  // by z = +400 and the forward third became two sticks and a gantry.
-  [300, 104, 58, -84, 14, 9, 18, 0.84],
-  [460, 88, 46, -90, 12, 8, 16, 1.00],
-  // ZONE P — PROW. A CHISEL, not a needle, and it starts with a KNUCKLE.
-  //
-  // The deck falls 3.4 degrees over the whole 340 m foredeck and then 21.8 degrees in
-  // the eighty metres from z +460 to +540. That break is the hard chine the bow read
-  // depends on: a single edge, visible as one line from any angle, that the flat
-  // foredeck visibly falls into. A continuous fair curve from the shoulder to the tip
-  // - which is what the first correction produced - has mass but no event, and reads
-  // as a torpedo. The section stays a wide flat blade through the fall, so the tip is
-  // 32 m across and 18 m deep rather than a point: a needle reads as an antenna, a
-  // cone reads as a nose, a chisel reads as a bow.
-  [540, 78, 14, -86, 12, 9, 12, 1.10],
-  [630, 50, -8, -74, 8, 7, 9, 1.08],
-  [700, 16, -36, -54, 3, 4, 5, 1.00],
+export const HULL_STATIONS = [
+  // ZONE E — STERN BLOCK. The deck RISES 24 m going forward while the keel DROPS 10:
+  // the block deepens as it leaves the transom, which is what a drive block does.
+  [-700, 152, 44, -70, 0.53, 0.56, 0.86],
+  [-640, 150, 54, -76, 0.53, 0.56, 0.86],
+  [-600, 148, 61, -80, 0.53, 0.56, 0.86],
+  // ZONE W — THE WAIST. 52 m of beam and 47 m of depth lost in 120 m of length. The
+  // ship is visibly pinched in BOTH axes, which is what stops the pinch reading as a
+  // dent in one view and nothing in the other. The keel shoals 39 m over the same run.
+  [-560, 133, 68, -68, 0.51, 0.54, 0.88],
+  [-540, 127, 64, -62, 0.48, 0.53, 0.90],
+  [-500, 114, 57, -50, 0.48, 0.53, 0.90],
+  [-470, 105, 52, -41, 0.48, 0.53, 0.90],
+  [-440, 96, 46, -43, 0.48, 0.53, 0.90],
+  // ZONE M — MIDBODY, opening on ONE STRAIGHT LINE to the shoulder. THE MAXIMUM IS
+  // UNDER THE RIDGE, not over the bay: the heaviest structure is under the heaviest
+  // thing on the deck, and the bay rails need clear water outboard of the flank.
+  [-400, 106, 48, -46, 0.47, 0.52, 0.88],
+  [-380, 111, 49, -47, 0.47, 0.52, 0.88],
+  [-350, 118, 51, -51, 0.47, 0.52, 0.87],
+  [-300, 131, 53, -57, 0.47, 0.52, 0.86],
+  [-260, 141, 55, -62, 0.47, 0.52, 0.85],
+  [-220, 151, 57, -67, 0.47, 0.52, 0.84],
+  [-180, 161, 59, -72, 0.47, 0.52, 0.84],
+  [-150, 168, 61, -76, 0.47, 0.52, 0.84],   // THE MAXIMUM
+  // ZONE F — THE FOREDECK. TWO STRAIGHT RUNS, not a fair curve: 0.136 m of half-beam
+  // per metre from the shoulder to z +100, then 0.156 from there to the knuckle break.
+  // A straight run in plan is a FLAT PLANE on each of the six facet families, which is
+  // what "large flat faceted planes" means when you have to build it; a curve that is
+  // fair everywhere has no plane anywhere. 0.136 is not a taste number either - it is
+  // the slowest taper L2 allows at a 168 m half-beam (0.8% of the local half-beam per
+  // 10 m of z), so the foredeck is as calm as the rules permit and not one metre more.
+  [-100, 161, 59, -74, 0.45, 0.50, 0.86],
+  [-40, 153, 57, -72, 0.45, 0.50, 0.86],
+  [30, 144, 55, -69, 0.45, 0.50, 0.86],
+  [100, 134, 52, -67, 0.45, 0.50, 0.88],
+  [180, 122, 45, -64, 0.40, 0.46, 0.96],
+  [260, 109, 38, -61, 0.40, 0.46, 1.00],
+  [340, 97, 31, -59, 0.40, 0.46, 1.04],
+  [420, 84, 24, -56, 0.40, 0.46, 1.06],
+  // ZONE P — THE PROW. A CHISEL, and it starts with a KNUCKLE BREAK at z +460 where
+  // the deck stops falling at 4 degrees and starts falling at 18, and the plan taper
+  // doubles. That break is one edge readable from any angle and the flat foredeck
+  // visibly falls into it. A continuous fair curve from the shoulder to the tip has
+  // mass but no event and reads as a torpedo. The knuckle rises to 34% of depth here,
+  // so the widest part of the bow is up under the deck edge: that is flare, and flare
+  // is what makes a bow look like it is pushing something out of the way.
+  [460, 78, 21, -55, 0.34, 0.41, 1.10],
+  [510, 65, 5, -58, 0.34, 0.40, 1.12],
+  [560, 52, -12, -62, 0.34, 0.39, 1.12],
+  [620, 37, -31, -65, 0.34, 0.38, 1.10],
+  [665, 25, -46, -68, 0.34, 0.36, 1.06],
+  // The tip is a 32 x 14 m BLADE, not a needle: a needle reads as an antenna, a cone
+  // reads as a nose, a chisel reads as a bow. Its centre is 65 m below the axis (R2.5).
+  [700, 16, -58, -70, 0.34, 0.34, 1.00],
 ];
 
 /**
- * M3a, THE RAISED DORSAL ARMOUR SPINE. 520 m, inset ~40 m from the deck chine on both
- * sides, which is what produces the horizontal shadow line that makes a hull read as
- * layered rather than extruded. 520/1220 = 0.43, inside the ziggurat rule's 0.5.
+ * LOD STATION PICKS, BY NAME. Never `rows.filter((_, i) => i % 2)`.
  *
- * Its AFT END DOES NOT LAND. Over the waist - where the deck line has already dipped
- * 22 m and the plating is missing - the spine runs 15-21 m clear of the hull and is
- * carried on four exposed transverse frames, so there is sky between it and the deck.
- * Forward of z = -300 it settles back into the hull and becomes solid armour. An
- * armoured deck that visibly stands on its own frames for a hundred and eighty metres
- * is the cheapest "this ship is not finished" statement available, and it costs
- * nothing: it is the same four stations with different numbers in them.
+ * What survives is what IS the silhouette: the transom, the stern step, both ends of
+ * the waist, the maximum under the ridge, the knuckle break at z +460 and the prow.
+ * LOD1 is 16 of 30 and LOD2 is 8; combined with the 16 -> 12 -> 8 cardinality map in
+ * greeble.js#FACET_LOD the spine costs 942 / 370 / 118 triangles across three levels
+ * and the same ONE draw call at each.
  */
-const SPINE_STATIONS = [
-  // Lands on the stern-block deck (hull top +74 here), so the slot it opens forward
-  // of this station is CLOSED at both ends and is therefore enclosed background in
-  // plan rather than an open-ended notch. A notch is a concavity; a closed slot is a
-  // hole, and only holes count against R2.6.
-  [-540, 122, 98, 74, 16, 10, 8, 1],
-  // THE CUTAWAY, and it is now cut THROUGH rather than recessed. Over the waist the
-  // spine is 32 m WIDER than the hull under it (hull half-beam 94 here) and stands
-  // 24 m clear of a deck that has already dipped, carried on three exposed frames.
-  // So from directly above there is sky between the armour and the hull on both
-  // sides, and from abeam there is sky under it. Two open faces: a hole, not a recess.
-  [-470, 126, 106, 82, 14, 9, 8, 1],
-  [-390, 120, 104, 76, 14, 9, 8, 1],
-  [-300, 88, 108, 64, 16, 11, 8, 1],
-  [40, 56, 92, 50, 12, 9, 8, 1],     // buried: hull deck is at +67
-];
+const LOD1_Z = [-700, -640, -560, -470, -440, -350, -260, -150, -40, 100, 180, 340, 460, 560, 620, 700];
+const LOD2_Z = [-700, -560, -440, -150, 100, 460, 620, 700];
 
 /**
- * M3b, THE SUPERSTRUCTURE — A STEPPED ZIGGURAT, AND IT USED TO BE A DOME.
+ * THE DORSAL RIDGE, and it replaces both the raised armour spine and the three-box
+ * stepped ziggurat that used to sit on it.
  *
- * It was a five-station LOFT, and a loft through five stations that grow and shrink
- * is a blob: blind review called it "a soft rounded dome with a mast — the least
- * designed shape on the ship, and the one the eye goes to first in profile", which
- * was exactly right. A hull reads as LAYERED rather than extruded because of the
- * horizontal shadow lines where one deck steps in from the one below it, and a
- * curve has no step in it anywhere.
+ * `ship-language.md` §1 said "the masses above the main hull stack in a stepped
+ * ziggurat in profile, each step shorter than the one below". That rule is the direct
+ * cause of the object in `docs/review/wave2/close.png`: it is a WWII battleship island,
+ * and EVE, Homeworld and EVE Frontier capitals do not have one. They fair the
+ * superstructure INTO a raked spine.
  *
- * So it is boxes now, with hard horizontal steps, per ship-language.md §1:
+ * So: ONE LOFT, sharing the hull's own station z values, 490 m long - 0.35 of the ship,
+ * against a 0.24 L minimum - rising out of the deck plane at z -430 and falling back
+ * into it at z +60. Peak y +138, which is 85 m above the deck under it, i.e. 0.061 L,
+ * well inside the 0.12 L ceiling. Leading edge raked 71 degrees from vertical over its
+ * 260 m forward run, trailing edge 54 over its 130 m aft run; the rule asks for 22 and
+ * 12. `tools/silhouette.mjs` still finds five distinct plateaux over it at LOD2 and so
+ * its `island is a stepped stack` check passes unchanged - see the report for why a
+ * ramp satisfies a check written for a ziggurat.
  *
- *   deck 1  main hull          1220 m           the loft
- *   deck 2  raised armour spine 580 m  y +74..+108   0.48 x deck 1
- *   deck 3  bridge base         190 m  y +80..+176   0.33 x deck 2
- *   deck 4  bridge house        112 m  y +176..+232  0.59 x deck 3, inset 26/34 m
- *   deck 5  conning cap          48 m  y +232..+258
+ * `[z, half, top, base, knuckle, deckFlat, flare]` — the same seven columns as the hull
+ * and the same `facetProfile`, so the ridge is made of the same plate family as the
+ * thing it grows out of. That is the whole difference between "grown out of the hull"
+ * and "sat on top of it", and it costs nothing.
  *
- * Each deck is inset from the one below on at least three sides, and the insets are
- * the whole point: they cost nothing in triangles and they are what the eye reads as
- * structure. Shifted 18 m to port: a command block on the centreline is a warship's,
- * a command block off the centreline is a working ship's.
+ * IT IS 16 m TO PORT. A command block on the centreline is a warship's; a command
+ * block off the centreline is a working ship's.
  */
-const BRIDGE_DECKS = [
-  { len: 190, w: 104, y0: 80, y1: 176, z: -238 },
-  { len: 112, w: 68, y0: 176, y1: 232, z: -226 },
-  { len: 48, w: 40, y0: 232, y1: 258, z: -232 },
+const RIDGE_X = -16;
+const RIDGE_STATIONS = [
+  // The aft end lands ON the stern-block deck, so the slot it opens forward of it is
+  // closed at both ends and counts as enclosed background in plan (R2.6) rather than
+  // as an open-ended notch. A notch is a concavity; a closed slot is a hole.
+  [-430, 36, 54, 44, 0.46, 0.42, 0.94],
+  [-400, 56, 76, 44, 0.46, 0.44, 0.94],
+  [-370, 72, 100, 46, 0.46, 0.46, 0.94],
+  [-340, 82, 120, 48, 0.46, 0.48, 0.94],
+  [-300, 88, 138, 50, 0.46, 0.50, 0.94],   // the peak
+  [-260, 86, 136, 52, 0.46, 0.50, 0.94],
+  [-210, 80, 126, 54, 0.46, 0.49, 0.94],
+  [-150, 72, 114, 55, 0.46, 0.48, 0.94],
+  [-100, 63, 104, 56, 0.46, 0.46, 0.94],
+  // The dorsal barbette stands on the crown here.
+  [-40, 55, 94, 55, 0.46, 0.45, 0.94],
+  [20, 42, 78, 53, 0.46, 0.43, 0.94],
+  [60, 30, 62, 51, 0.46, 0.41, 0.94],
 ];
-
-const BRIDGE_X = -18;
+const RIDGE_LOD1_Z = [-430, -370, -300, -210, -150, -40, 20, 60];
 
 /**
- * M2a, THE SALVAGE BAY. A through-slot, not a hangar door and not a recess: open on
- * the ventral face AND the aft face, closed forward by the reactor bulkhead. That
- * second open face is the whole difference - as the camera orbits, stars pass through.
+ * M2a, THE SALVAGE BAY — AND IT IS NOW WIDE AND SHALLOW INSTEAD OF NARROW AND DEEP.
  *
- * The rails sit 26 m outboard of the 134 m shoulder half-beam, which is what makes the
- * bay a readable mass in PLAN view instead of a shape hidden under the keel. The four
- * frame bays are 96 / 62 / 104 / 58 m and deliberately not on the hull's 180 m
- * structural rhythm: the bay is a separate structure carrying a different load, and
- * evenly spaced frames are what made the first pass read as a road bridge.
+ * A through-slot, not a hangar door and not a recess: open on the ventral face AND the
+ * aft face, closed forward by the reactor bulkhead. That second open face is the whole
+ * difference — as the camera orbits, stars pass through.
+ *
+ * THE TRADE, stated rather than hidden. The bay used to be 210 m of clear span and
+ * 168 m deep, with its floor at y -252. That floor was the single largest contributor
+ * to an envelope 618 m tall on a ship 490 m wide, i.e. to a capital that was TALLER
+ * THAN IT WAS WIDE when every ship in the reference fleets is the opposite. It is now
+ * 300 m of clear span and 92 m of clear depth between the chords:
+ *
+ *     clear span   210 -> 300 m        void area preserved
+ *     rails        x +-242 -> +-278    envelope beam 490 -> 556
+ *     floor        y -252 -> -202      envelope height 618 -> 340
+ *     envelope B:H 0.79 -> 1.63
+ *
+ * The clear depth between the chords is held at 92 m ON PURPOSE and it is not free to
+ * shrink: `tools/silhouette.mjs` checks that the LOD2 profile still contains a hole
+ * whose NARROWEST clear span is >= 87 m (R2.7, the max-zoom threshold), and the bay is
+ * the hole that check finds. If a future edit needs the ship shallower, the fix is to
+ * widen the bay further, never to close the gap between the chords.
+ *
+ * The rails stand 110 m clear of the hull flank beside them, carried on five
+ * transverse frames that pass under the keel, so in plan there are four bands of
+ * background between hull and rail on each side and in profile the 92 m band between
+ * the chords is background as well. Two open faces on one void.
  */
 const BAY = {
   z0: -230, z1: 215,
-
-  /**
-   * THE RAILS STAND CLEAR OF THE FLANK, and this is the single change that fixes the
-   * plan view.
-   *
-   * They used to run from x = 98 (under the keel) out to 170, i.e. they were a
-   * moulding on the underside of a hull whose own half-beam at that station was 136.
-   * From above, nothing. Blind review measured the enclosed background in the plan
-   * silhouette at 0.65% against this project's own 6-12% floor and called the plan
-   * outline "still a slug", which it was.
-   *
-   * Now the rail is a box from x 176 to 222 — its INBOARD face is 68 m outboard of
-   * the hull's widest station and 76 m outboard of the flank beside it — carried on
-   * five transverse frames that pass under the keel. So in plan there are four bands
-   * of background between hull and rail on each side, and in profile the 116 m band
-   * between the two chords is background as well. Two open faces on the same void,
-   * which is the difference between a hole and a dark patch of hull.
-   *
-   * The cost is stated rather than hidden: maximum beam across the cradle is 484 m,
-   * not the 312 m in ship-language.md §7's envelope table. That table was written
-   * before the plan view had been measured, and a 4.7 : 1 hull inside a 3.2 : 1
-   * working structure is the Kushan-resource-controller read — a narrow ship with a
-   * wide machine bolted under it — rather than a wider ship.
-   */
-  railIn: 196, railOut: 242,
-  chordOut: 234, chordIn: 188,     // bottom chord, slightly inboard of the rail
-  throat: 105,                     // clear half-width of the slot itself
-  roof: -60, chordTop: -100,       // top chord: 40 m of real section depth, not a plank
-  floor: -252, chordBot: -216,
-  frameTop: -72, frameBot: -240,   // frames OVERLAP both chords rather than abutting
+  railIn: 232, railOut: 278,
+  chordOut: 270, chordIn: 226,     // bottom chord, slightly inboard of the rail
+  throat: 150,                     // clear half-width of the slot itself
+  roof: -48, chordTop: -88,        // top chord: 40 m of real section depth, not a plank
+  floor: -202, chordBot: -180,
+  frameTop: -60, frameBot: -192,   // frames OVERLAP both chords rather than abutting
                                    // them: two faces that merely touch are coplanar,
                                    // which is a z-fight, and a truss whose members
                                    // only kiss falls apart the moment an LOD drops
                                    // the diagonal that was quietly holding it.
 
   /**
-   * `[z, thickness, rake]`. Bays of 155 / 60 / 110 / 120 m — and the unevenness is now
-   * unmistakable rather than technically true. The previous 96 / 62 / 104 / 58 was
-   * unequal on paper and read as four equal windows in the render, because 96 vs 104
-   * and 58 vs 62 are inside the eye's tolerance. A load path is where the load is,
-   * and the loads on this thing are the reactor bulkhead forward and the tow track
-   * aft, so the frames bunch where the load bunches.
+   * `[z, thickness, rake]`. Bays of 155 / 60 / 110 / 120 m. A load path is where the
+   * load is, and the loads on this thing are the reactor bulkhead forward and the tow
+   * track aft, so the frames bunch where the load bunches. Evenly spaced frames are
+   * what made the first pass read as a road bridge.
    */
   frames: [[215, 24, 0], [60, 13, 0], [0, 20, 0], [-110, 11, 0], [-230, 18, 0.22]],
 };
@@ -381,57 +429,78 @@ const BAY = {
 /**
  * M2b, THE CUTTER YOKE. Two independent heads on a ventral A-frame. The tips are 36 m
  * apart in z and 14 m apart in y ON PURPOSE - a matched pair reads as a weapon mount,
- * a mismatched pair reads as tooling. Deepest point of the assembly is y = -228 at
- * z = +556.
+ * a mismatched pair reads as tooling.
  *
- * THE YOKE NO LONGER LEADS. Its forwardmost point is z = +664, thirty-six metres
- * BEHIND the hull's stem at +700, and its arms hang off a bow that already has 224 m
- * of beam and 136 m of depth at z = +300. The first pass had this backwards: the
- * gantry reached furthest forward and the hull behind it was a sliver, so the
- * assembly read as a crane jib and the ship's heading was genuinely ambiguous. Tooling
- * hangs off a bow. It is not the bow.
+ * IT CAME UP WITH THE REST OF THE SHIP. Deepest point y -228 -> -182, which keeps the
+ * hook (`tools/silhouette.mjs` wants the knuckle below y -150 with the tip at least
+ * 20 m above it) while giving back 46 m of envelope height.
+ *
+ * THE YOKE DOES NOT LEAD. Its forwardmost point is z +664, thirty-six metres BEHIND
+ * the hull's stem at +700. Tooling hangs off a bow. It is not the bow.
  */
 const YOKE = {
-  port: { root: [-74, -84, 430], knuckle: [-130, -228, 556], tip: [-136, -186, 664] },
-  stbd: { root: [74, -84, 430], knuckle: [126, -210, 542], tip: [132, -172, 628] },
-  armR: 20, headR: 13, tie: -152,
+  port: { root: [-72, -76, 430], knuckle: [-126, -182, 556], tip: [-132, -142, 664] },
+  stbd: { root: [72, -76, 430], knuckle: [122, -168, 542], tip: [128, -130, 628] },
+  armR: 20, headR: 13, tie: -120,
 };
 
-/** Octagonal main drive well: an enormous, obvious, empty socket in the transom. */
-const WELL = { hw: 54, top: 36, bot: -36, cw: 18, ct: 11, cb: 11, mouthZ: -700, backZ: -624 };
+/**
+ * THE MAIN DRIVE WELL: an enormous, obvious, EMPTY socket in the transom.
+ *
+ * Its outline is the TRANSOM'S OWN SECTION scaled down and recentred, so the hole
+ * repeats the plate family of the hull it is cut in rather than being an octagon
+ * borrowed from somewhere else. That also means it has whatever cardinality the
+ * transom has at the current LOD, which is what lets `ringFace` close the loft at all
+ * three levels - it refuses to merge two profiles of different point counts.
+ */
+const WELL = { sx: 0.36, sy: 0.55, cy: 4, mouthZ: -700, backZ: -624 };
+
+/** The well outline for a given transom profile. Same cardinality, by construction. */
+const wellProfile = (transom) => G.scaleProfile(transom, WELL.sx, WELL.sy, 0, WELL.cy);
 
 /**
  * The two outrigger drive pods, and the gaps around them. The pods hang outboard of
- * the stern block on a single pylon each, so there is open sky between pod and hull
- * fore and aft of the pylon - the third of the three voids, and the one that reads in
- * plan view and from dead astern.
+ * the stern block on TWO pylons each, so the sky between the pylons is bounded on four
+ * sides — hull inboard, pod outboard, a pylon fore and a pylon aft — and it is a hole
+ * you can see stars through from directly above and from dead astern, which is where a
+ * tactical camera spends a chase.
+ *
+ * `frameZ` is new: the EXPOSED THRUST FRAME, the load path from each bell forward into
+ * the flank, left visible. The reference fleets all have this and we had none of it,
+ * and it is the single most convincing "this is a real machine" cue they share.
  */
-const POD = { x: 212, halfW: 30, z0: -700, z1: -548, top: 52, bot: -40, pylonZ: [-664, -580], pylonT: 34 };
+const POD = {
+  x: 212, halfW: 30, z0: -700, z1: -548, top: 46, bot: -46,
+  pylonZ: [-664, -580], pylonT: 34,
+  frameZ: -540, frameLen: 120,
+};
 
 /**
- * THE RADIATOR BANK. `[side, z, chord, span, rake]`.
+ * THE RADIATOR BANK. `[side, z, chord, span, rake]`, and the rake is the change.
  *
- * THREE fins, not five, and no two are the same size: spans 200 / 140 / 92 m, a ratio
- * of 1.43 and 1.52 between neighbours. The first pass hung five identical fins at
- * even spacing and the result was a picket fence - four co-equal diagonals that were
- * the highest-contrast thing in the frame and carried no information, because a
- * repeated element the eye can count adds nothing after the second one. Every
- * reference varies its repeats in size or clusters them asymmetrically.
+ * They used to stand nearly VERTICAL: a 200 m fin raked 0.34 rad off a deck at y +60
+ * put its tip at y +249, which on a hull whose envelope is now 340 m tall would have
+ * made the radiators the tallest thing on the ship and undone the entire proportion
+ * fix. They are now raked 1.10 / 0.95 / 1.15 rad, i.e. 55-65 degrees off vertical, so
+ * they lie OUT over the flanks rather than standing up off the deck. A radiator is a
+ * flat plate that wants to see empty sky; laying it outboard is both better physics
+ * and the reference read.
  *
- * Two to port, one to starboard, at four different z values. The ship lost one and
- * the crew rebalanced by moving the survivors, and an asymmetric bank is a story the
- * silhouette tells for free.
+ * THREE panels, not five, and no two the same size: spans 150 / 110 / 76 m, ratios of
+ * 1.36 and 1.45 between neighbours. Two to port and one to starboard, at four different
+ * z. A repeated element the eye can count adds nothing after the second one.
  */
 const FINS = [
-  [-1, -648, 88, 200, 0.34],
-  [1, -598, 62, 140, -0.28],
-  [-1, -516, 40, 92, 0.22],
+  [-1, -648, 88, 150, 1.10],
+  [1, -598, 62, 110, -0.95],
+  [-1, -516, 40, 76, 1.15],
 ];
 
-const stationProfile = ([, dh, top, bot, cw, ct, cb, keel]) => G.hullProfile({
-  deckHalf: dh, keelHalf: dh * (keel ?? 1), top, bottom: bot, chamW: cw, chamTop: ct, chamBot: cb,
+/** Build one hull-table row into a section profile at the given cardinality. */
+const stationProfile = ([, half, top, bot, knuckle, deckFlat, flare], keep = null) => G.facetProfile({
+  maxHalf: half, top, bottom: bot, knuckle, deckFlat, flare, keep,
 });
-const toStations = (rows) => rows.map((r) => ({ z: r[0], points: stationProfile(r) }));
+const toStations = (rows, keep = null) => rows.map((r) => ({ z: r[0], points: stationProfile(r, keep) }));
 
 /** Keep only the listed z values from a station table. Extremes are never dropped. */
 function pick(rows, zs) {
@@ -450,18 +519,35 @@ function sectionAt(z) {
   const span = b[0] - a[0];
   const t = span === 0 ? 0 : (z - a[0]) / span;
   const L = (i) => a[i] + (b[i] - a[i]) * t;
-  return { hw: L(1), top: L(2), bot: L(3), cw: L(4), ct: L(5), cb: L(6), keel: L(7) };
+  return { half: L(1), top: L(2), bot: L(3), knuckle: L(4), deckFlat: L(5), flare: L(6) };
 }
 
-/** Midpoint and outward normal of the upper chamfer facet at z, starboard side. */
+/**
+ * THE KNUCKLE at z, starboard side: the widest point of the section and the hard
+ * 44-degree chine that runs the length of the ship. This is where the running lights
+ * go, because it is the one edge that is visible from above, from abeam and from
+ * ahead, and it is where a rim light lands from any key.
+ *
+ * The outward normal is the average of the two facets that meet at it, which is what
+ * makes a lamp sitting on it face out of the corner rather than out of one plane.
+ */
 function chineAt(z) {
   const s = sectionAt(z);
-  const x = s.hw - s.cw * 0.5;
-  const y = s.top - s.ct * 0.5;
-  // Facet runs from (hw, top-ct) to (hw-cw, top); outward normal is (ct, cw).
-  const nx = s.ct, ny = s.cw;
+  const P = G.facetProfile({
+    maxHalf: s.half, top: s.top, bottom: s.bot,
+    knuckle: s.knuckle, deckFlat: s.deckFlat, flare: s.flare,
+  });
+  const belt = P[1], knuck = P[2], shoulder = P[3];
+  // Outward normal of a CCW segment (dx, dy) is (dy, -dx).
+  const nrm = (a, b) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const l = Math.hypot(dx, dy) || 1;
+    return [dy / l, -dx / l];
+  };
+  const n1 = nrm(belt, knuck), n2 = nrm(knuck, shoulder);
+  const nx = n1[0] + n2[0], ny = n1[1] + n2[1];
   const len = Math.hypot(nx, ny) || 1;
-  return { x, y, nx: nx / len, ny: ny / len };
+  return { x: knuck[0], y: knuck[1], nx: nx / len, ny: ny / len };
 }
 
 // ---------------------------------------------------------------------------
@@ -476,6 +562,47 @@ const _v = new THREE.Vector3();
 const _d = new THREE.Vector3();
 const _up = new THREE.Vector3();
 const _basis = new THREE.Matrix4();
+
+/**
+ * A plate lying ON the lower flank, from z0 to z1, standing `out` metres proud of it.
+ *
+ * The two points that bound the lower-flank facet at any station are `facetProfile`
+ * indices 3 (the knuckle) and 2 (the belt break). Offsetting both along that facet's
+ * outward normal gives a four-point section that is, by construction, exactly parallel
+ * to the surface underneath it — which a straight prismatic bar at a fixed x cannot be
+ * on a hull whose half-beam moves 72 m over its length.
+ *
+ * Sampled at every spine station inside the range plus both ends, so the plate follows
+ * the sweep. `side` is -1 for port.
+ */
+function flankStrake(z0, z1, side, out, full) {
+  const zs = [z0];
+  for (const r of HULL_STATIONS) if (r[0] > z0 && r[0] < z1) zs.push(r[0]);
+  zs.push(z1);
+  const thin = full ? zs : zs.filter((z, i) => i === 0 || i === zs.length - 1 || i % 2 === 0);
+  const stations = thin.map((z) => {
+    const c = sectionAt(z);
+    const P = G.facetProfile({
+      maxHalf: c.half, top: c.top, bottom: c.bot,
+      knuckle: c.knuckle, deckFlat: c.deckFlat, flare: c.flare,
+    });
+    const a = P[2], b = P[1];                       // knuckle, keel-chamfer break
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const l = Math.hypot(dx, dy) || 1;
+    const nx = (dy / l) * out, ny = (-dx / l) * out;
+    // Inset 6% at each end of the facet so the plate has a visible margin of bare
+    // flank above and below it: a plate that reaches both chines is not a plate.
+    const ax = a[0] + dx * 0.06, ay = a[1] + dy * 0.06;
+    const bx = b[0] - dx * 0.06, by = b[1] - dy * 0.06;
+    return {
+      z,
+      points: side < 0
+        ? [[-ax, ay], [-bx, by], [-(bx + nx), by + ny], [-(ax + nx), ay + ny]]
+        : [[ax, ay], [ax + nx, ay + ny], [bx + nx, by + ny], [bx, by]],
+    };
+  });
+  return G.loft(stations);
+}
 
 /** A hex beam from a to b. Right-handed basis, so winding and shadows stay correct. */
 function beam(a, b, radius, { radiusEnd = null, caps = true, detail = G.DETAIL.FULL } = {}) {
@@ -525,17 +652,19 @@ const SURFACE = {
    *
    * `hullDark` draws its albedo from palette.js#player.baseDark (0x2b2722, the
    * near-black of the three), and it now carries LARGE AREAS rather than crevices:
-   * the two 640 m flank armour belts, the stern block's armour casing, the drive
-   * pylons, the bay's outboard rail fairings and the tow-track beams.
+   * the three flank strakes a side, the stern block's armour casing, the drive
+   * pylons, the thrust frames, the bay's rail fairings and the tow-track beams.
    *
-   * EVERY ONE OF THOSE IS BELOW THE CHINE, and that is a rule rather than an
-   * accident. Deck plane above the chine in bone, flank plane below it in
-   * near-black, and the chine itself is where they meet — so the value boundary is
-   * a real geometric edge with a shadow at it, not a line that stops in the middle
-   * of a face, which §4 names as the diagnostic for a decal on styrene. The raised
-   * dorsal armour spine is deliberately NOT dark for the same reason: it sits above
-   * the chine, and putting the second value on both sides of an edge is the one
-   * thing that stops the edge reading as the boundary between them.
+   * EVERY ONE OF THOSE IS BELOW THE KNUCKLE, and that is a rule rather than an
+   * accident. The knuckle is the section's widest point and its hardest chine - an
+   * 80-degree dihedral, the one edge on this hull visible from above, from abeam and
+   * from ahead. Deck and upper flank above it in bone, lower flank below it in
+   * near-black, and the knuckle itself is where they meet, so the value boundary is a
+   * real geometric edge with a shadow at it rather than a line that stops in the
+   * middle of a face - which §4 names as the diagnostic for a decal on styrene. The
+   * dorsal ridge is deliberately NOT dark for the same reason: it sits above the
+   * knuckle, and putting the second value on both sides of an edge is the one thing
+   * that stops the edge reading as the boundary between them.
    *
    * IT COSTS ONE DRAW CALL PER DAMAGE GROUP, and the offset is stated in the build:
    * the engine group's `plating` bucket is gone, its contents moved here, so LOD0 is
@@ -613,10 +742,9 @@ export function hullParts({ rng, lod = 0 }) {
   // LOD2 — THE 30 PIXEL READ.
   //
   // At max zoom the hull is 32 px wide and 43 m to the pixel, and THIS is what is on
-  // screen. So the ~170 triangles here are spent on exactly six things and nothing
-  // else: the waist, the shoulder, the asymmetric prow, the stern-block step, the
-  // superstructure as a distinct stack, and the bay throat as an ACTUAL HOLE. No
-  // greeble, no mast, no radiators - at 43 m/px a 118 m mast is a 0.2 px hair.
+  // screen. So the triangles here are spent on exactly six things and nothing else:
+  // the waist, the shoulder, the asymmetric prow, the stern-block step, the dorsal
+  // ridge as a distinct raked mass, and the bay throat as an ACTUAL HOLE.
   //
   // The rule that keeps a far LOD from falling apart: every proxy has at least a third
   // of its own depth buried inside the spine. A block that merely touches the hull
@@ -624,77 +752,64 @@ export function hullParts({ rng, lod = 0 }) {
   // =========================================================================
   if (lod >= 2) {
     // -----------------------------------------------------------------------
-    // WHY THIS WAS REBUILT, so it does not come back.
+    // WHY THIS IS AUTHORED OUTWARD FROM FOUR NAMED FEATURES, not decimated inward.
     //
-    // The previous LOD2 passed the review loop's IoU gate at 0.764 and was still,
-    // read blind, "a fish with a caudal fin". IoU was the wrong instrument: FILLING A
-    // HOLE BARELY MOVES AN INTERSECTION-OVER-UNION RATIO, because closing the hole
-    // adds the same pixels to the intersection and to the union. So the proxy had
-    // quietly closed the ventral bay throat - the one feature nothing else in the
-    // game has - into a solid rectangle, deleted the superstructure, and turned the
-    // hooked cutter yoke into a straight spike, and the number said 0.764 and passed.
+    // An older LOD2 passed the review loop's IoU gate at 0.764 and was still, read
+    // blind, "a fish with a caudal fin". IoU was the wrong instrument: FILLING A HOLE
+    // BARELY MOVES AN INTERSECTION-OVER-UNION RATIO, because closing the hole adds the
+    // same pixels to the intersection and to the union. So the proxy had quietly
+    // closed the ventral bay throat into a solid rectangle and turned the hooked
+    // cutter yoke into a straight spike, and the number said 0.764 and passed.
     //
-    // It is now authored OUTWARD FROM THE FOUR IDENTITY FEATURES rather than inward
-    // from LOD0's volume, and the gate in tools/silhouette.mjs was replaced with one
-    // that checks each of them is present in the LOD2 mask on its own terms:
+    // `tools/silhouette.mjs` therefore checks four features in the LOD2 mask itself:
     //
-    //   1. the bay as a genuine THROUGH-VOID, clear span intact
-    //   2. the superstructure as a distinct STEPPED STACK
+    //   1. the bay as a genuine THROUGH-VOID whose narrowest clear span is >= 87 m
+    //   2. the superstructure as a distinct raised mass over z -420..-120
     //   3. the cutter yoke's HOOK - down-and-forward, then forward-and-UP
     //   4. the stern-block STEP
     //
-    // Every number below is still a pick from, or a proxy of, the LOD0 tables. The
-    // cost is 214 -> ~360 triangles across the same TWO draw calls, and that is the
-    // trade taken deliberately: at 43 m to the pixel this is the only geometry on
-    // screen, so a hundred and fifty triangles buying the ship's identity at its
-    // hardest read is the cheapest hundred and fifty triangles in the project.
+    // All four are built below and every number is a pick from, or a proxy of, the
+    // LOD0 tables.
     // -----------------------------------------------------------------------
-    B.add('core', 'hull', G.loft(toStations(
-      pick(HULL_STATIONS, [-700, -540, -470, -260, 300, 460, 700]),
-    ), { capBack: false }));
+    const far = G.FACET_LOD.far;
+    B.add('core', 'hull', G.loft(toStations(pick(HULL_STATIONS, LOD2_Z), far), { capBack: false }));
     // Transom with the empty drive well still cut into it: the well is a 108 m hole
     // and 108 m is 2.5 px at max zoom, which is exactly the threshold that matters.
-    B.add('core', 'hull', G.ringFace(
-      stationProfile(HULL_STATIONS[0]),
-      G.octProfile(WELL.hw, WELL.top, WELL.bot, WELL.cw, WELL.ct, WELL.cb), WELL.mouthZ, true,
-    ));
+    const transom2 = stationProfile(HULL_STATIONS[0], far);
+    B.add('core', 'hull', G.ringFace(transom2, wellProfile(transom2), WELL.mouthZ, true));
 
-    // FEATURE 2 — THE SUPERSTRUCTURE AS A STEPPED STACK, not a wedge. Two of the
-    // three LOD0 decks survive with the hard step between them intact; the third is
-    // 48 m and is one pixel. A stack with a step in it reads as a bridge from any
-    // angle; a smooth wedge reads as a fin, which is exactly what the last one did.
-    for (const d of BRIDGE_DECKS.slice(0, 2)) {
-      B.add('core', 'hull', G.panelledSlab({ width: d.w, height: d.y1 - d.y0, depth: d.len, detail: D }),
-        { pos: [BRIDGE_X, (d.y0 + d.y1) * 0.5, d.z] });
-    }
-    // Raised armour spine: the step between deck 1 and deck 2, overhanging the waist
-    // to port and starboard exactly as it does at LOD0.
-    B.add('core', 'hull', G.panelledSlab({ width: 216, height: 32, depth: 560, detail: D }),
-      { pos: [0, 90, -252] });
+    // FEATURE 2 — THE DORSAL RIDGE. Three of the twelve stations, at the 8-gon, which
+    // is enough to keep a raked ridge that rises out of the deck and falls back into
+    // it. A stepped stack would have needed the boxes; a ridge needs three stations.
+    B.add('core', 'hull', G.loft(toStations(
+      pick(RIDGE_STATIONS, [-430, -300, -150, 60]), far,
+    ), { capFront: false, capBack: false }), { pos: [RIDGE_X, 0, 0] });
 
     // FEATURE 1 — THE BAY, AS AN ACTUAL HOLE, and it is the last thing that may ever
-    // be simplified away. Two chords a side with 116 m of clear air between them, and
-    // 56 m of clear air between rail and hull flank, tied by two end frames. In
+    // be simplified away. Two chords a side with 92 m of clear air between them, and
+    // 110 m of clear air between rail and hull flank, tied by two end frames. In
     // profile the band between the chords is background; in plan the bands between
-    // rail and flank are background. Two open faces on one void: as the camera
-    // orbits, stars pass through it, which is the difference between a hole and a
-    // dark patch of hull, and it is the only thing at this range that says salvager.
+    // rail and flank are background. Two open faces on one void: as the camera orbits,
+    // stars pass through it, which is the difference between a hole and a dark patch
+    // of hull, and it is the only thing at this range that says salvager.
     for (const s of [-1, 1]) {
       const x = s * (BAY.railIn + BAY.railOut) * 0.5;
       const w = BAY.railOut - BAY.railIn;
-      B.add('core', 'dark', G.panelledSlab({ width: w, height: BAY.roof - BAY.chordTop, depth: 320, detail: D }),
-        { pos: [x, (BAY.roof + BAY.chordTop) * 0.5, 0] });
-      B.add('core', 'dark', G.panelledSlab({ width: w, height: BAY.chordBot - BAY.floor, depth: 320, detail: D }),
-        { pos: [x, (BAY.chordBot + BAY.floor) * 0.5, 0] });
+      B.add('core', 'dark', G.bevelBox({
+        width: w, height: BAY.roof - BAY.chordTop, depth: 320, chamfer: 10, draft: 8, detail: D,
+      }), { pos: [x, (BAY.roof + BAY.chordTop) * 0.5, 0] });
+      B.add('core', 'dark', G.bevelBox({
+        width: w, height: BAY.chordBot - BAY.floor, depth: 320, chamfer: 8, draft: 6, detail: D,
+      }), { pos: [x, (BAY.chordBot + BAY.floor) * 0.5, 0] });
     }
     for (const [z, t] of [[148, 26], [-148, 22]]) {
-      B.add('core', 'dark', G.panelledSlab({
-        width: BAY.railOut * 2, height: BAY.frameTop - BAY.frameBot, depth: t, detail: D,
+      B.add('core', 'dark', G.bevelBox({
+        width: BAY.railOut * 2, height: BAY.frameTop - BAY.frameBot, depth: t, chamfer: 8, detail: D,
       }), { pos: [0, (BAY.frameTop + BAY.frameBot) * 0.5, z] });
     }
 
     // FEATURE 3 — THE HOOK. Two segments a side, and they bend the OTHER WAY at the
-    // knuckle: down-and-forward to y -228, then forward-and-up to the tip. One
+    // knuckle: down-and-forward to y -182, then forward-and-up to the tip. One
     // straight wedge is a spike, and a spike reads as a ram, which inverts the whole
     // thesis of the ship - it leads with a tool, not a gun. The tips still stop 36 m
     // SHORT of the stem: the hull is the forwardmost thing on this ship at every LOD.
@@ -705,28 +820,29 @@ export function hullParts({ rng, lod = 0 }) {
     }
 
     // FEATURE 4 — the stern-block step is carried by the hull picks above (-700,
-    // -540, -470), and the DRIVE ARRAY STANDS OUTBOARD OF IT on two single pylons, so
+    // -560, -440), and the DRIVE ARRAY STANDS OUTBOARD OF IT on two single pylons, so
     // in plan there is open sky both fore and aft of each pylon. From dead astern -
     // which is where a tactical camera spends most of a chase - that gap is the
     // difference between a drive array and a wider transom.
     for (const s of [-1, 1]) {
-      B.add('core', 'dark', G.panelledSlab({
-        width: POD.halfW * 2, height: POD.top - POD.bot, depth: POD.z1 - POD.z0, detail: D,
-      }), { pos: [s * POD.x, 6, (POD.z0 + POD.z1) * 0.5] });
+      B.add('core', 'dark', G.bevelBox({
+        width: POD.halfW * 2, height: POD.top - POD.bot, depth: POD.z1 - POD.z0,
+        chamfer: 9, draft: 7, detail: D,
+      }), { pos: [s * POD.x, 0, (POD.z0 + POD.z1) * 0.5] });
       for (const pz of POD.pylonZ) {
-        B.add('core', 'dark', G.panelledSlab({
-          width: POD.x - 132, height: 44, depth: POD.pylonT, detail: D,
-        }), { pos: [s * (POD.x + 132) * 0.5, 14, pz] });
+        B.add('core', 'dark', G.bevelBox({
+          width: POD.x - 128, height: 44, depth: POD.pylonT, chamfer: 7, cant: s * 0.10, detail: D,
+        }), { pos: [s * (POD.x + 128) * 0.5, 8, pz] });
       }
     }
 
-    // Two of the three radiator fins. At 43 m/px a 200 m fin is 4.6 px of hard
-    // diagonal against black, and the aft end of this ship is not identifiable
-    // without them - LOD1 keeps all three, LOD2 keeps the two large ones.
+    // Two of the three radiator panels. At 43 m/px a 150 m panel raked out over the
+    // flank is 3.5 px of hard diagonal against black, and the aft end of this ship is
+    // not identifiable without them.
     for (const [s, z, chord, span, rake] of FINS.slice(0, 2)) {
       B.add('core', 'radiator', G.radiatorFin({
         chord, span, thickness: 14, sweep: -chord * 0.42, tipChord: chord * 0.6, detail: D,
-      }), { pos: [s * 116, 60, z], rot: [0, 0, rake] });
+      }), { pos: [s * 112, 54, z], rot: [0, 0, rake] });
     }
 
     massBox('spine', -156, -92, -700, 156, 96, 700);
@@ -747,143 +863,193 @@ export function hullParts({ rng, lod = 0 }) {
   // stations, which is precisely how the ship came to read as a different class at
   // 5 km than at 3 km.
   // =========================================================================
-  const spineRows = full ? HULL_STATIONS
-    : pick(HULL_STATIONS, [-700, -540, -470, -260, -40, 300, 540, 630, 700]);
-  B.add('core', 'hull', G.loft(toStations(spineRows), { capBack: false }));
-  massBox('spine', -156, -92, -700, 156, 96, 700);
+  const spineRows = full ? HULL_STATIONS : pick(HULL_STATIONS, LOD1_Z);
+  const card = full ? G.FACET_LOD.full : G.FACET_LOD.mid;
+  B.add('core', 'hull', G.loft(toStations(spineRows, card), { capBack: false }));
+  massBox('spine', -170, -90, -700, 170, 70, 700);
 
   // -------------------------------------------------------------------------
-  // THE FLANK ARMOUR BELTS — the ship's second value, and its hard chine.
+  // THE FLANK STRAKES — the ship's second value, and it is CUT FROM THE HULL'S OWN
+  // SECTION rather than bolted across it.
   //
-  // Two things were wrong here and they were the same thing. Blind review: "plate
-  // language is pillowy, not industrial. Flank plates are bulging bread-roll forms
-  // with soft filleted edges; nothing has the flat face plus hard chamfer plus
-  // recessed groove that the references all use", and separately, the hull was a
-  // single bone value from stem to stern.
+  // This used to be `armourBelt`, a straight 640 m prismatic bar standing at a fixed
+  // x. On a hull whose half-beam ran 94 to 128 that bar poked out at the ends and sank
+  // into the flank in the middle, which is most of what "plate language is pillowy,
+  // not industrial" and "nothing has the flat face plus hard chamfer plus recessed
+  // groove" were describing. A straight bar cannot lie on a curved flank.
   //
-  // So the belts are now FLAT-FACED (chamfer 0 — a rounded plate edge is a fillet and
-  // a fillet is what makes a plate read as a bread roll), they are BROKEN INTO THREE
-  // 204 m PLATES with 14 m gaps that read as recessed grooves because the plate stands
-  // 13 m proud of the flank behind it, and they carry `dark` rather than `plating`.
-  // Three plates over 640 m is a 204 m module repeating 7 times over the hull's
-  // length, against §7's "largest plate module >= 55 m, <= 26 repeats".
+  // `flankStrake` walks the spine table over a z range, takes the two points that
+  // bound the LOWER FLANK at each station — the knuckle and the belt break — and
+  // offsets them 13 m along that facet's own outward normal. So the plate is exactly
+  // the shape of the surface it is bolted to, at every station, for free.
   //
-  // They sit BELOW THE CHINE, on the tumblehome flank, and they stop at the chine
-  // rather than wrapping over it. That is what makes the value boundary a real
-  // geometric edge instead of a line drawn across a face: deck plane above the chine
-  // in bone, flank plane below it in near-black, and the chine itself is where they
-  // meet. It is also the read the Idris's slate-versus-ochre split is built on.
+  // THREE PLATES A SIDE with 14 m gaps that read as recessed grooves. They stop AT THE
+  // KNUCKLE and never wrap over it: deck and upper flank in bone above, lower flank in
+  // near-black below, and the knuckle — a hard 44-degree chine, the one edge on this
+  // ship visible from every angle — is where the two values meet. A value boundary on
+  // a real geometric edge with a shadow at it is a plated hull; the same boundary in
+  // the middle of a face is a decal on styrene.
   // -------------------------------------------------------------------------
   for (const s of [-1, 1]) {
-    B.add('core', 'dark', G.armourBelt({
-      length: 640, height: 62, thickness: 13, plates: 3, gap: 14, chamfer: 0, detail: D,
-    }), { pos: [s * 116, -18, -80] });
+    for (const [z0, z1] of [[-620, -418], [-404, -200], [-186, 18]]) {
+      B.add('core', 'dark', flankStrake(z0, z1, s, 13, full));
+    }
   }
 
-  // The stern block's armour casing, same value, and its forward edge lands exactly
-  // on the step at z = -540 so the boundary is a structural break rather than a line
-  // that stops in the middle of a plate. `dark` on the two things at the bottom and
-  // back of the ship and bone above is the whole two-value split in two calls.
-  B.add('core', 'dark', G.panelledSlab({
-    width: 300, height: 78, depth: 152, chamfer: 22, detail: D,
-  }), { pos: [0, -30, -620] });
-
-  // A structural frame every 180 m: geometry, not texture, so the flank carries a
-  // 180 m rhythm that survives to 14 km as well as the 45 m plate rhythm that does
-  // not. Two rhythms beating against each other is what stops either reading as tiling.
+  // -------------------------------------------------------------------------
+  // EIGHT STRUCTURAL FRAMES, AS REAL 6 m STEPS IN THE PLANE.
+  //
+  // §3's plate rhythm is a 180 m structural frame beating against a 45 m plate break,
+  // and two rhythms beating is what stops either reading as tiling. Until now the
+  // 180 m rhythm was TEXTURE at every range and geometry at two stations. With the
+  // triangle budget lifted it is geometry at all eight: a 6 m step in the section,
+  // built from the hull's own profile at that z scaled up 4%, which is 34 triangles
+  // each and survives to LOD1. That step is what makes a 1.4 km hull read as 1.4 km
+  // rather than as a 400 m hull photographed closer.
+  //
+  // They are NOT evenly spaced — 180 m nominal, jittered by the zones they land in —
+  // because a perfectly even rhythm is the other way to read as tiling.
+  // -------------------------------------------------------------------------
   if (mid) {
-    for (const z of [-330, -30]) {
-      const s = sectionAt(z);
-      B.add('core', 'plating', G.panelledSlab({
-        width: (s.hw + 4) * 2, height: (s.top - s.bot) * 0.86, depth: 9, detail: D,
-      }), { pos: [0, (s.top + s.bot) * 0.5, z] });
+    for (const z of [-590, -430, -300, -160, -20, 140, 290, 430]) {
+      const sec = sectionAt(z);
+      const ring = (k) => G.facetProfile({
+        maxHalf: sec.half * k, top: sec.top + (k - 1) * 40, bottom: sec.bot - (k - 1) * 40,
+        knuckle: sec.knuckle, deckFlat: sec.deckFlat, flare: sec.flare,
+        keep: full ? null : G.FACET_LOD.mid,
+      });
+      B.add('core', 'plating', G.loft([
+        { z: z - 5, points: ring(1.0) },
+        { z: z - 3, points: ring(1.04) },
+        { z: z + 3, points: ring(1.04) },
+        { z: z + 5, points: ring(1.0) },
+      ], { capFront: false, capBack: false }));
     }
   }
 
   // =========================================================================
-  // 2. M3 — DORSAL: armour spine, superstructure, mast
+  // 2. M3 — THE DORSAL RIDGE, FAIRED IN
+  //
+  // One loft, twelve stations, sharing the hull's plate family and its own taper. It
+  // rises out of the deck plane at z -430 and falls back into it at z +60; there is no
+  // step anywhere on it and no box sitting on top of anything. Both ends are OPEN
+  // (`capFront: false, capBack: false`) because both ends are inside the hull loft —
+  // a cap there would be a coplanar face buried in the deck, which is a z-fight.
+  //
+  // ALL TWELVE STATIONS SURVIVE TO LOD1 in z and eight at LOD2; they cost 330 and 96
+  // triangles and the ridge is the ship's whole dorsal read. Thinning it was pure
+  // silhouette loss for no measurable saving.
   // =========================================================================
-  // Both lofts keep ALL their stations at LOD1. They cost 64 and 80 triangles between
-  // them and they are two of the four masses; thinning them was pure silhouette loss
-  // for no measurable saving.
-  B.add('core', 'hull', G.loft(toStations(SPINE_STATIONS)));
+  B.add('core', 'hull', G.loft(toStations(
+    full ? RIDGE_STATIONS : pick(RIDGE_STATIONS, RIDGE_LOD1_Z), card,
+  ), { capFront: false, capBack: false }), { pos: [RIDGE_X, 0, 0] });
+  massBox('dorsal', RIDGE_X - 84, 44, -430, RIDGE_X + 84, 138, 60);
 
-  // THE ISLAND, AS THREE INSET DECKS WITH HARD HORIZONTAL STEPS BETWEEN THEM.
-  //
-  // It was a loft through five stations, which is a curve, which is a dome, and the
-  // dome was the first thing the eye landed on in every profile. Boxes with steps
-  // cost 36 triangles fewer than the loft they replace and they are the reason a hull
-  // reads as LAYERED rather than extruded: each inset throws a horizontal shadow line
-  // at the step, and those lines are free.
-  for (const d of BRIDGE_DECKS) {
-    if (!mid && d.len < 90) continue;             // the 48 m cap is under 12 m at LOD1
-    B.add('core', 'hull', G.panelledSlab({
-      width: d.w, height: d.y1 - d.y0, depth: d.len, chamfer: d.len > 100 ? 10 : 0, detail: D,
-    }), { pos: [BRIDGE_X, (d.y0 + d.y1) * 0.5, d.z] });
+  // -------------------------------------------------------------------------
+  // THE FILLET, and it is the difference between "grown out of the hull" and "sat on
+  // top of it". Where the ridge meets the deck there is one extra station 14 m out
+  // from the join on each side, so the join is a chamfer and not a right angle. It is
+  // a second, much flatter loft lying along the same z values, 20 m tall, and it costs
+  // 24 triangles a station.
+  // -------------------------------------------------------------------------
+  if (mid) {
+    B.add('core', 'hull', G.loft(RIDGE_STATIONS.map((r) => {
+      const sec = sectionAt(r[0]);
+      const w = r[1] + 16;
+      return {
+        z: r[0],
+        points: [
+          [w, sec.top - 2], [w - 14, r[2] * 0.32 + sec.top * 0.68],
+          [-w + 14, r[2] * 0.32 + sec.top * 0.68], [-w, sec.top - 2],
+          [-w, sec.top - 22], [w, sec.top - 22],
+        ],
+      };
+    }), { capFront: false, capBack: false }), { pos: [RIDGE_X, 0, 0] });
   }
-  massBox('dorsal', -80, 40, -540, 80, 258, 40);
 
-  // THE DORSAL CUTAWAY. The deck plating over the waist simply is not there: four
-  // exposed frames, and the sheer already dips 22 m underneath them. This is a recess
+  // -------------------------------------------------------------------------
+  // THE DORSAL BARBETTE — the one hardpoint anchor this redesign is allowed to move,
+  // and the reason it has to.
+  //
+  // `CRUISER_ANCHORS.dorsal` used to be [0, 94, -40], the top of the raised armour
+  // spine. The ridge crown is at exactly that height at exactly that station, so the
+  // anchor could have stayed put — and `modules/audit.mjs` says it must not. Measured
+  // with the mount at y 94, `rail_battery / missile_cells` separates by a peak of
+  // 120 m against a 140 m bar: a rail battery's barrels reach forward over a foredeck
+  // that is now 30 stations deep instead of 11, so the outline the audit samples under
+  // them is the DECK rather than the sparse gaps between two stations 340 m apart. The
+  // old 233 m peak in those bins was measuring an under-sampled hull, not a module.
+  //
+  // The fix is structural rather than metric: a capital's dorsal bed sits on a
+  // BARBETTE, a 30 m armoured ring standing proud of the deck it turns on, and putting
+  // one here raises every dorsal module clear of the foredeck behind it. The anchor
+  // moves 30 m up and not one metre in z or x. Moved alone, and re-measured alone.
+  // -------------------------------------------------------------------------
+  B.add('core', 'hull', G.bevelBox({
+    width: 92, height: 30, depth: 116, chamfer: 10, draft: 8, detail: D,
+  }), { pos: [-6, 109, -40] });
+  if (mid) {
+    B.add('core', 'plating', G.bevelBox({
+      width: 110, height: 10, depth: 132, chamfer: 6, draft: 7, detail: D,
+    }), { pos: [-6, 92, -40] });
+  }
+
+  // THE DORSAL CUTAWAY. The deck plating over the waist simply is not there: three
+  // exposed frames, and the sheer already dips 16 m underneath them. This is a recess
   // deeper than 8 m, so greeble inside it self-shadows and reads as depth rather than
-  // as noise - the corollary being that if you want greeble somewhere, you cut the
+  // as noise — the corollary being that if you want greeble somewhere, you cut the
   // recess first.
-  //
-  // The rib count does NOT drop at LOD1. These four ribs are also what holds the aft
-  // end of the armour spine up: thin them and the spine's overhang loses its visible
-  // support and reads as a slab floating over the deck, which is exactly what review
-  // found at LOD1.
   B.add('core', 'plating', G.hullRibs({
-    count: 3, spacing: 68, span: 132, height: 30, thickness: 12, taper: 0.82, detail: D,
-  }), { pos: [0, 60, -392] });
+    count: 3, spacing: 60, span: 116, height: 26, thickness: 12, taper: 0.82, detail: D,
+  }), { pos: [0, 46, -462] });
 
-  // Bridge wing, PORT ONLY. The block is 104 m across inside a 272 m beam, so from
-  // directly above it vanishes into the hull outline; this shelf is the only thing on
-  // the dorsal that breaks the PLAN outline. There is no starboard twin: the bridge is
-  // already 18 m to port, the starboard shelf only ever overlapped its parent by nine
-  // metres (which is how it came to hang in space at LOD1), and one wing is a stronger
-  // read than two.
-  B.add('core', 'hull', G.panelledSlab({ width: 104, height: 14, depth: 62, detail: D }),
-    { pos: [-104, 176, -236] });
+  // Bridge wing, PORT ONLY. There is no starboard twin: the ridge is already 16 m to
+  // port and one wing is a stronger read than two. It is a raked plane, not a shelf.
+  B.add('core', 'hull', G.bevelBox({
+    width: 96, height: 12, depth: 68, chamfer: 5, draft: 9, rake: 12, cant: 0.16, detail: D,
+  }), { pos: [-96, 118, -286] });
   B.add('core', 'plating', G.taperedWedge({
-    length: 60, width0: 26, height0: 44, width1: 16, height1: 14, shear: -14, detail: D,
-  }), { pos: [-140, 168, -236], rot: [0, Math.PI * 0.5, 0] });
+    length: 58, width0: 24, height0: 40, width1: 14, height1: 12, shear: -12, detail: D,
+  }), { pos: [-126, 106, -286], rot: [0, Math.PI * 0.5, 0] });
 
-  // THE LIT WINDOW BAND, and it is a SCALE CUE before it is decoration. A 1400 m hull
-  // with nothing human-sized on it reads as an indeterminate grey twig at any
-  // distance, because the eye has nothing whose size it already knows. Two bands of
-  // 5 m glazing across the bridge face is a storey height, and a storey is a thing
-  // every player has stood in. Additive, so it survives a near-black shadow side.
+  // THE LIT WINDOW BAND, and it is a SCALE CUE before it is decoration. Two bands of
+  // 5 m glazing across the ridge's forward face is a storey height, and a storey is a
+  // thing every player has stood in. Additive, so it survives a near-black shadow side.
   //
-  // ROUND-TWO REVIEW: "the bridge band ... blooms into a featureless white slab with
-  // no window structure resolvable in it ... give the band enough internal structure
-  // to survive the bloom." A single 62 m quad cannot have internal structure, because
-  // bloom is a blur and a blur of one bright rectangle is one bright rectangle. So the
-  // band is now PANES with real unlit mullions between them: the dark gaps are gaps in
-  // the GEOMETRY, so no amount of blur closes them and the band reads as a row of
-  // windows at every distance it is visible at. Same material, same merge bucket,
-  // same draw call, +32 triangles. The intensity cut that goes with it is in
-  // art/materials/index.js.
-  for (const [dy, w, panes] of [[0, 62, 5], [-26, 44, 4]]) {
+  // The band is PANES with real unlit mullions between them: the dark gaps are gaps in
+  // the GEOMETRY, so no amount of bloom closes them and the band reads as a row of
+  // windows at every distance it is visible at. Same material, same merge bucket, same
+  // draw call.
+  for (const [dy, w, panes] of [[0, 58, 5], [-22, 42, 4]]) {
     const pitch = w / panes;
     const paneW = pitch * 0.62;          // 38% of the run is mullion, and it is dark
     for (let i = 0; i < panes; i++) {
       const px = (i - (panes - 1) * 0.5) * pitch;
       B.addRaw('core', 'engineGlow', glowQuad(paneW, 5),
-        { pos: [BRIDGE_X + px, 216 + dy, -140 + dy * 0.22], rot: [-0.34, 0, 0] });
+        { pos: [RIDGE_X + px, 118 + dy, -216 + dy * 0.28], rot: [-0.52, 0, 0] });
     }
   }
 
-  // Sensor mast: the tallest thing on the ship at y = +366, so it fixes "up" from any
-  // angle. The POLE survives to LOD1 - it is 118 m, which is 29 px at the LOD1 switch
-  // and the single strongest "this end is the stern" cue in the frame. Only the spars
-  // and the dish, both under 30 m, drop.
-  B.add('core', 'greeble', G.antennaMast({
-    height: 118, radius: 8, tipRadius: 3.5, spars: full ? 1 : 0, sparSpan: 30, detail: D,
-  }), { pos: [BRIDGE_X, 248, -238] });
-  if (full) {
-    B.add('core', 'greeble', G.sensorDish({ radius: 26, depth: 11, sides: 6, stub: 0, detail: D }),
-      { pos: [BRIDGE_X, 328, -234], rot: [-0.42, 0, 0] });
+  // -------------------------------------------------------------------------
+  // FLUSH SENSOR APERTURES — THE THING THAT REPLACED THE MAST.
+  //
+  // The mast was 118 m of pole plus a dish at y +366, i.e. it owned 366 m of a 618 m
+  // envelope height. `ship-language.md` §0 measured it as a 2.7 x 0.2 px hair at max
+  // zoom: it bought no read at all and it cost the entire proportion of the ship.
+  //
+  // A phased array is a FLAT PANEL. Three of them, recessed 3 m into the ridge flanks
+  // and the foredeck, at three different sizes and no two at mirrored x — 44 x 18 m is
+  // a real aperture at 4 km and nothing at 14, which is exactly right for a sensor.
+  // This is a proportion fix and a realism fix in one, and it costs 72 triangles
+  // against the mast's 56 plus 366 m of envelope.
+  // -------------------------------------------------------------------------
+  if (mid) {
+    B.add('core', 'greeble', G.recess({ width: 44, height: 18, depth: 4, wall: 3, detail: D }),
+      { pos: [RIDGE_X - 70, 122, -300], rot: [0, -Math.PI * 0.5, 0.22] });
+    B.add('core', 'greeble', G.recess({ width: 34, height: 14, depth: 4, wall: 3, detail: D }),
+      { pos: [RIDGE_X + 62, 108, -196], rot: [0, Math.PI * 0.5, -0.18] });
+    B.add('core', 'greeble', G.recess({ width: 30, height: 16, depth: 4, wall: 3, detail: D }),
+      { pos: [44, 56, 156], rot: [-Math.PI * 0.5, 0, 0.3] });
   }
 
   // =========================================================================
@@ -891,7 +1057,7 @@ export function hullParts({ rng, lod = 0 }) {
   // =========================================================================
   buildBay(B, D, full, r);
   buildYoke(B, D, full);
-  massBox('ventral-assembly', -170, -240, -160, 170, -60, 700);
+  massBox('ventral-assembly', -278, -202, -240, 278, -48, 700);
 
   // THE TOW TRACK: the keel beam that ties the bay's mouth to the yoke's root, so the
   // two read as ONE 860 m assembly rather than as two unrelated lumps.
@@ -916,20 +1082,23 @@ export function hullParts({ rng, lod = 0 }) {
   // reads as depth - and the machinery in the channel is the tow winch and its cable
   // run, which is a thing with a job rather than a bump pattern.
   for (const s of [-1, 1]) {
-    B.add('core', 'dark', G.panelledSlab({ width: 30, height: 34, depth: 210, detail: D }),
-      { pos: [s * 36, -162, 318] });
+    B.add('core', 'dark', G.bevelBox({
+      width: 30, height: 34, depth: 210, chamfer: 7, draft: 6, rake: s * 8, detail: D,
+    }), { pos: [s * 36, -150, 318] });
   }
-  B.add('core', 'plating', G.panelledSlab({ width: 44, height: 20, depth: 210, detail: D }),
-    { pos: [0, -148, 318] });
+  B.add('core', 'plating', G.bevelBox({
+    width: 44, height: 20, depth: 210, chamfer: 5, draft: 5, detail: D,
+  }), { pos: [0, -136, 318] });
   if (mid) {
     B.add('core', 'greeble', G.pipeRun({ length: 168, radius: 9, sides: 6, axis: 'z', flanges: 1, detail: D }),
-      { pos: [-14, -158, 236] });
+      { pos: [-14, -146, 236] });
   }
   // The single stanchion that picks the track up near its forward end, and the slot it
   // closes: keel above, track below, bulkhead aft, stanchion forward - four sides, so
   // it is a hole rather than a shadow under an overhang.
-  B.add('core', 'plating', G.panelledSlab({ width: 44, height: 78, depth: 30, detail: D }),
-    { pos: [0, -122, 408] });
+  B.add('core', 'plating', G.bevelBox({
+    width: 44, height: 74, depth: 30, chamfer: 6, draft: 5, cant: 0.09, detail: D,
+  }), { pos: [0, -112, 408] });
 
   // =========================================================================
   // 3b. THE THREE FEATURES THAT SAY "1400 METRES"
@@ -950,10 +1119,10 @@ export function hullParts({ rng, lod = 0 }) {
   // The tunnel is bottomless on purpose: the hull's own tumblehome flank, which sits
   // 17 m down it and is not perpendicular to the mouth, is what you see at the end.
   // A slanted back wall inside a straight tube is free depth.
-  B.add('core', 'plating', G.recess({ width: 54, height: 34, depth: 26, wall: 7, detail: D }),
-    { pos: [-140, 12, -60], rot: [0, -Math.PI * 0.5, 0] });
+  B.add('core', 'plating', G.recess({ width: 54, height: 34, depth: 30, wall: 5, detail: D }),
+    { pos: [-152, 4, -60], rot: [0, -Math.PI * 0.5, 0] });
   B.addRaw('core', 'engineGlow', glowQuad(40, 16),
-    { pos: [-117, 6, -60], rot: [0, -Math.PI * 0.5, 0] });
+    { pos: [-132, 0, -60], rot: [0, -Math.PI * 0.5, 0] });
 
   // =========================================================================
   // 4. SPONSONS. Deliberately NOT mirrored: port owns z +18..+102, starboard owns
@@ -966,21 +1135,22 @@ export function hullParts({ rng, lod = 0 }) {
     // and cut the two largest plan-view voids on the ship into six small ones - the
     // exact failure the plan silhouette was blocked on. Over a frame it is carried by
     // structure that is already there and it costs no negative space at all.
-    B.add('core', 'hull', G.panelledSlab({ width: 78, height: 30, depth: 84, detail: D }),
-      { pos: [s * 158, 30, cz] });
+    B.add('core', 'hull', G.bevelBox({
+      width: 84, height: 28, depth: 88, chamfer: 8, draft: 9, cant: s * 0.13, detail: D,
+    }), { pos: [s * 180, 32, cz] });
     // The bracket under it. A shelf with nothing holding it up is a shelf nobody built.
     B.add('core', 'plating', G.taperedWedge({
-      length: 56, width0: 44, height0: 52, width1: 26, height1: 16, shear: 18, detail: D,
-    }), { pos: [s * 126, 2, cz], rot: [0, s * Math.PI * 0.5, 0] });
+      length: 62, width0: 44, height0: 52, width1: 26, height1: 16, shear: 18, detail: D,
+    }), { pos: [s * 134, 4, cz], rot: [0, s * Math.PI * 0.5, 0] });
     massBox(s < 0 ? 'port-sponson' : 'starboard-sponson',
-      s * 158 - 39, 16, cz - 42, s * 158 + 39, 46, cz + 42);
+      s * 180 - 42, 18, cz - 44, s * 180 + 42, 46, cz + 44);
   }
 
   // =========================================================================
   // 5. M4 — THE STERN: drive well, outrigger pods, radiators
   // =========================================================================
   buildStern(B, D, full, r);
-  massBox('stern', -228, -88, -700, 228, 96, -400);
+  massBox('stern', -250, -86, -700, 250, 90, -400);
 
   // =========================================================================
   // 6. THE SIX EMPTY MOUNTS, in one vocabulary
@@ -1000,20 +1170,22 @@ export function hullParts({ rng, lod = 0 }) {
     // which is exactly why it belongs on this ship.
     B.add('core', 'greeble', G.pipeRun({
       length: 250, radius: 38, sides: 6, axis: 'z', flanges: 0, detail: D,
-    }), { pos: [136, -14, -300] });
+    }), { pos: [148, -30, -300], rot: [0, 0, -0.36] });
 
     // Captured armour plate, wired on at SEVEN DEGREES off the hull's plate grid. That
     // mismatch is the load-bearing detail: a patch that aligns to the grid reads as
     // design, a patch seven degrees off reads as repair.
-    B.add('core', 'plating', G.panelledSlab({ width: 11, height: 62, depth: 170, detail: D }),
-      { pos: [-128, 6, -180], rot: [0.1222, 0, 0] });
+    B.add('core', 'plating', G.bevelBox({
+      width: 11, height: 62, depth: 170, chamfer: 3, draft: 4, detail: D,
+    }), { pos: [-152, 4, -180], rot: [0.1222, 0, -0.42] });
 
     // Spare drive bell, lashed to the aft deck, ON A CRADLE. The bell used to be
     // pinned at y = +88 over a deck that is at +73, so it hovered fifteen metres above
     // the ship and review found it as a grey slab hanging in empty space at LOD1. A
     // bolted-on object that is not visibly bolted on is not salvage, it is a bug.
-    B.add('core', 'plating', G.panelledSlab({ width: 46, height: 12, depth: 52, detail: D }),
-      { pos: [52, 76, -542] });
+    B.add('core', 'plating', G.bevelBox({
+      width: 46, height: 12, depth: 52, chamfer: 4, draft: 4, detail: D,
+    }), { pos: [52, 68, -542] });
     // IT LIES DOWN, MOUTH ASTERN, AND IT HAS AN INTERIOR SHELL. Stood upright with
     // its mouth to the sky and no inner shell it rendered as a 54 m black ellipse in
     // the aft deck, which review read - correctly - as a missing face rather than as
@@ -1021,7 +1193,7 @@ export function hullParts({ rng, lod = 0 }) {
     // usual hemisphere, and it must never be hollow.
     B.add('core', 'greeble', G.thrusterBell({
       throat: 17, mouth: 27, length: 44, sides: 6, collar: false, inner: true, detail: D,
-    }), { pos: [52, 104, -520], rot: [0, 0, 0.24] });
+    }), { pos: [52, 96, -520], rot: [0, 0, 0.24] });
   }
 
   if (full) {
@@ -1029,7 +1201,7 @@ export function hullParts({ rng, lod = 0 }) {
     // The ship is not finished and never will be.
     B.add('core', 'greeble', G.hullRibs({
       count: 2, spacing: 58, span: 58, height: 10, thickness: 8, taper: 0.8, detail: D,
-    }), { pos: [-104, -6, -420], rot: [0, 0, Math.PI * 0.5] });
+    }), { pos: [-98, -18, -420], rot: [0, 0, Math.PI * 0.5] });
   }
   // The cargo derrick that used to stand over the port bow is GONE. It was a
   // 150 m open A-frame reaching up and forward off the forecastle, and in every
@@ -1090,21 +1262,29 @@ function buildBay(B, D, full, rng) {
     // silhouette area."
     //
     // Every clause of that is now addressed by one change: THE RAIL IS A FAIRING WITH
-    // REAL SECTION DEPTH, not a plank. 46 m across and 40 m deep, chamfered top and
-    // bottom, standing 56 m clear of the hull flank, and it carries `dark` — so the
-    // assembly reads as a MASS WITH A HOLE THROUGH IT rather than as scaffolding, and
-    // it is a different value from the hull it hangs under. §1's area rule wants the
-    // secondary mass at 18-24% of the silhouette; line-work cannot get there and a
-    // 46 x 40 x 320 m box on each side can.
+    // REAL SECTION DEPTH, not a plank. 46 m across and 40 m deep, standing 110 m clear
+    // of the hull flank, and it carries `dark` — so the assembly reads as a MASS WITH A
+    // HOLE THROUGH IT rather than as scaffolding, and it is a different value from the
+    // hull it hangs under.
+    //
+    // IT IS A `bevelBox`, NOT A `panelledSlab`, and that is the whole boxiness fix in
+    // one substitution. A `panelledSlab` is a rectangular prism: 100% of its area is
+    // within 5 degrees of a cardinal axis, and there were ninety-nine of them on this
+    // ship. A `bevelBox` takes all twelve edges off, DRAFTS both ends so they stop
+    // being square transoms, and CANTS the section so the four long faces are 6-8
+    // degrees off their axes. It costs 32 extra triangles per rail and it is the
+    // difference between a plate girder and a fairing.
     // -----------------------------------------------------------------------
-    B.add('core', 'dark', G.panelledSlab({
-      width: railW, height: BAY.roof - BAY.chordTop, depth: len, chamfer: 11, detail: D,
+    B.add('core', 'dark', G.bevelBox({
+      width: railW, height: BAY.roof - BAY.chordTop, depth: len,
+      chamfer: 11, draft: 12, cant: s * 0.11, detail: D,
     }), { pos: [s * railX, (BAY.roof + BAY.chordTop) * 0.5, cz] });
 
     // Bottom chord, slightly inboard of the rail above it so the assembly has a
     // visible section rather than being one prismatic bar.
-    B.add('core', 'dark', G.panelledSlab({
-      width: BAY.chordOut - BAY.chordIn, height: BAY.chordBot - BAY.floor, depth: len, chamfer: 8, detail: D,
+    B.add('core', 'dark', G.bevelBox({
+      width: BAY.chordOut - BAY.chordIn, height: BAY.chordBot - BAY.floor, depth: len,
+      chamfer: 8, draft: 10, cant: s * -0.14, detail: D,
     }), { pos: [s * (BAY.chordOut + BAY.chordIn) * 0.5, (BAY.chordBot + BAY.floor) * 0.5, cz] });
 
     // One diagonal per rail, braced in OPPOSITE directions port and starboard, and
@@ -1130,7 +1310,7 @@ function buildBay(B, D, full, rng) {
         B.add('core', 'greeble', G.greebleBand({
           length: 118, width: 15, height: 11, boxes: 2, conduits: 1,
           rng: rng.fork('bay:track'), detail: D,
-        }), { pos: [s * (BAY.railIn + 12), -64, 96], rot: [0, 0, s * 0.4] });
+        }), { pos: [s * (BAY.railIn + 12), -56, 96], rot: [0, 0, s * 0.4] });
       }
     }
   }
@@ -1146,14 +1326,15 @@ function buildBay(B, D, full, rng) {
   // dropping to three at LOD1 halved the void count and the hull read as a different
   // class of ship at 5 km. Negative space is the last thing an LOD gives up.
   for (const [z, t, rake] of BAY.frames) {
-    B.add('core', 'plating', G.panelledSlab({
-      width: BAY.railOut * 2, height: BAY.frameTop - BAY.frameBot, depth: t, chamfer: t >= 20 ? 7 : 0, detail: D,
+    B.add('core', 'plating', G.bevelBox({
+      width: BAY.railOut * 2, height: BAY.frameTop - BAY.frameBot, depth: t,
+      chamfer: t >= 20 ? 7 : 4, draft: Math.min(6, t * 0.3), detail: D,
     }), { pos: [0, (BAY.frameTop + BAY.frameBot) * 0.5, z], rot: [rake, 0, 0] });
   }
 
   // Reactor bulkhead: the forward face, and the only closed one.
-  B.add('core', 'plating', G.panelledSlab({
-    width: BAY.throat * 2, height: BAY.roof - BAY.floor, depth: 22, detail: D,
+  B.add('core', 'plating', G.bevelBox({
+    width: BAY.throat * 2, height: BAY.roof - BAY.floor, depth: 22, chamfer: 9, draft: 7, detail: D,
   }), { pos: [0, (BAY.roof + BAY.floor) * 0.5, BAY.z1 - 12] });
 
   // FOUR GRAPPLE ARMS, two a side, stowed folded against the rails 12 degrees off
@@ -1164,7 +1345,7 @@ function buildBay(B, D, full, rng) {
     // landing gear however the pivots are offset; an odd count cannot.
     const pivots = [[-1, 112], [-1, -38], [1, -96]];
     for (const [s, z] of pivots) {
-      B.add('core', 'greeble', beam([s * (BAY.railIn + 4), -104, z], [s * (BAY.railOut - 6), -118, z - 94], 11,
+      B.add('core', 'greeble', beam([s * (BAY.railIn + 4), -102, z], [s * (BAY.railOut - 6), -116, z - 94], 11,
         { caps: false, detail: D }));
     }
   }
@@ -1172,7 +1353,7 @@ function buildBay(B, D, full, rng) {
   // Bay interior lighting: a recess deeper than 12 m gets the warm interior treatment,
   // which is what gives every deep cut on this hull a payoff.
   for (const s of [-1, 1]) {
-    B.addRaw('core', 'engineGlow', glowDisc(15), { pos: [s * 96, -84, 40], rot: [Math.PI * 0.5, 0, 0] });
+    B.addRaw('core', 'engineGlow', glowDisc(15), { pos: [s * 118, -80, 40], rot: [Math.PI * 0.5, 0, 0] });
   }
 
   // HAZARD MARKING, and the one place on the ventral it is legal: the door swing arc
@@ -1181,8 +1362,8 @@ function buildBay(B, D, full, rng) {
   // again at starboard x at the same z is the strongest single tell of procedural
   // placement, and a hazard stripe is the most conspicuous accent on the ship.
   if (full) {
-    B.add('core', 'greeble', G.panelledSlab({ width: 30, height: 5, depth: 60, detail: D }),
-      { pos: [-(BAY.railIn + 8), -62, 132] });
+    B.add('core', 'greeble', G.bevelBox({ width: 30, height: 5, depth: 60, chamfer: 2, detail: D }),
+      { pos: [-(BAY.railIn + 8), -54, 132] });
   }
 }
 
@@ -1208,8 +1389,9 @@ function buildYoke(B, D, full) {
       // machinery IS busy - one of the four justifications a dense band may claim (§3)
       // - but §3 also forbids the same band appearing at mirrored x, and a matched
       // pair of cutting heads is what the whole yoke exists not to be.
-      B.add('core', 'greeble', G.panelledSlab({ width: 34, height: 28, depth: 44, detail: D }),
-        { pos: [y.knuckle[0] * 1.06, y.knuckle[1] + 14, y.knuckle[2]] });
+      B.add('core', 'greeble', G.bevelBox({
+        width: 34, height: 28, depth: 44, chamfer: 6, draft: 5, cant: -0.18, detail: D,
+      }), { pos: [y.knuckle[0] * 1.06, y.knuckle[1] + 14, y.knuckle[2]] });
     }
   }
 
@@ -1226,13 +1408,26 @@ function buildYoke(B, D, full) {
   // Both stays now run UP AND FORWARD to the stem, because the stem is now ahead of
   // the yoke rather than behind it. That reversal is the whole bow fix stated in two
   // struts: the tooling is slung under a bow, and the bow is what points.
-  B.add('core', 'plating', beam(YOKE.port.tip, [-22, -52, 694], 9, { caps: false, detail: D }));
-  B.add('core', 'plating', beam(YOKE.stbd.tip, [24, -54, 682], 9, { caps: false, detail: D }));
+  B.add('core', 'plating', beam(YOKE.port.tip, [-22, -60, 694], 9, { caps: false, detail: D }));
+  B.add('core', 'plating', beam(YOKE.stbd.tip, [24, -62, 682], 9, { caps: false, detail: D }));
 
   // The transverse tie that makes it an A-FRAME rather than two independent legs.
   B.add('core', 'plating', beam(
     [YOKE.port.root[0] - 6, YOKE.tie, 498], [YOKE.stbd.root[0] + 6, YOKE.tie + 12, 490], 16, { detail: D },
   ));
+
+  // THE CUTTER BEAM RAILS. Each head runs on a rail that is a LOFT, not a bar: four
+  // stations with its own taper, because a strut with a constant section is the same
+  // defect as a hull with a constant section at a smaller scale (L7).
+  for (const key of ['port', 'stbd']) {
+    const y = YOKE[key];
+    const sgn = key === 'port' ? -1 : 1;
+    B.add('core', 'dark', G.loft([
+      { z: 0, points: G.octProfile(15, 10, -10, 5, 4, 4) },
+      { z: 44, points: G.octProfile(12, 8, -8, 4, 3, 3) },
+      { z: 96, points: G.octProfile(9, 6, -6, 3, 3, 3) },
+    ]), { pos: [y.root[0] + sgn * 22, y.root[1] + 26, y.root[2] - 96], rot: [0.16, sgn * 0.12, 0] });
+  }
 
 }
 
@@ -1241,80 +1436,123 @@ function buildYoke(B, D, full) {
 // ---------------------------------------------------------------------------
 
 function buildStern(B, D, full, rng) {
-  // The main drive well: an inside-out shell, so you look INTO a hole rather than at a
+  const card = full ? G.FACET_LOD.full : G.FACET_LOD.mid;
+
+  // THE MAIN DRIVE WELL: an inside-out shell, so you look INTO a hole rather than at a
   // dark disc. It is empty because the ship does not have its main drive.
   //
-  // THE TRANSOM RING IS THE TRANSOM. The spine loft is built with `capBack: false`
-  // and this annulus closes it, which is why the well is a real hole. The first pass
-  // let the loft cap the transom AND drew this ring on top of it: two coplanar faces
-  // 0 m apart, which is a textbook z-fight. It showed up in review as "a dark
-  // elliptical void between the aft fins" and "a grid of thin black lines", i.e. as
-  // two separate defects that were one bug. It lives in `core` rather than `engine`
-  // because it is hull skin, and losing the whole stern face when the drive array is
-  // shot off would be a hole in the ship.
-  const wellProfile = G.octProfile(WELL.hw, WELL.top, WELL.bot, WELL.cw, WELL.ct, WELL.cb);
-  const transom = stationProfile(HULL_STATIONS[0]);
-  B.add('core', 'hull', G.ringFace(transom, wellProfile, WELL.mouthZ, true));
-  B.add('engine', 'greeble', G.prism(wellProfile, WELL.backZ, WELL.mouthZ, {
+  // THE TRANSOM RING IS THE TRANSOM. The spine loft is built with `capBack: false` and
+  // this annulus closes it, which is why the well is a real hole. An earlier pass let
+  // the loft cap the transom AND drew this ring on top of it: two coplanar faces 0 m
+  // apart, a textbook z-fight, which showed up in review as "a dark elliptical void
+  // between the aft fins" and "a grid of thin black lines" — two separate defects that
+  // were one bug.
+  //
+  // The well's outline is the TRANSOM'S OWN SECTION scaled to 36% x 55% and lifted 4 m,
+  // so the hole repeats the hull's plate family instead of being an octagon from
+  // somewhere else — and it therefore has whatever cardinality the transom has at this
+  // LOD, which is what lets `ringFace` close the loft at all three levels.
+  const transom = stationProfile(HULL_STATIONS[0], card);
+  const well = wellProfile(transom);
+  B.add('core', 'hull', G.ringFace(transom, well, WELL.mouthZ, true));
+  B.add('engine', 'greeble', G.prism(well, WELL.backZ, WELL.mouthZ, {
     capFront: false, capBack: true, flip: true,
   }));
 
   // TWO OUTRIGGER PODS, EACH ON TWO PYLONS — and the second pylon is the whole point.
   //
   // On one pylon the sky fore and aft of it is a NOTCH: open at one end, so it is a
-  // concavity in the outline and R2.6 does not count it, and the plan silhouette
-  // measured 0.65% enclosed background against a 6-12% floor. On two pylons the sky
-  // BETWEEN them is bounded on all four sides - hull inboard, pod outboard, a pylon
-  // fore and a pylon aft - and it is a hole you can see stars through from directly
-  // above and from dead astern, which is where a tactical camera spends a chase.
+  // concavity in the outline and R2.6 does not count it. On two pylons the sky BETWEEN
+  // them is bounded on all four sides — hull inboard, pod outboard, a pylon fore and a
+  // pylon aft — and it is a hole you can see stars through from directly above and
+  // from dead astern, which is where a tactical camera spends a chase.
   //
-  // The pods also moved from x 174 to x 212. At 174 their inboard face sat three
-  // metres off a stern block whose own half-beam is 138: there was no gap to enclose.
-  // 44 m of clear water is what makes the drive array a separate mass rather than a
-  // wider transom, and the drive array being separate is what makes the ship read as
-  // limping on outriggers with its main drive well empty.
+  // The pod is built from `facetProfile`, i.e. from the same plate family as the ship
+  // it hangs off, and it tapers over four stations rather than three.
   for (const s of [-1, 1]) {
+    const podSec = (h, t, b, k) => G.facetProfile({
+      maxHalf: h, top: t, bottom: b, knuckle: k, deckFlat: 0.42, flare: 0.9, keep: card,
+    });
     B.add('engine', 'hull', G.loft([
-      { z: POD.z0, points: G.hullProfile({ deckHalf: POD.halfW, keelHalf: POD.halfW * 0.8, top: POD.top, bottom: POD.bot, chamW: 8, chamTop: 7, chamBot: 7 }) },
-      { z: POD.z1 - 40, points: G.hullProfile({ deckHalf: POD.halfW, keelHalf: POD.halfW * 0.8, top: POD.top, bottom: POD.bot, chamW: 8, chamTop: 7, chamBot: 7 }) },
-      { z: POD.z1, points: G.hullProfile({ deckHalf: POD.halfW * 0.5, keelHalf: POD.halfW * 0.44, top: POD.top * 0.6, bottom: POD.bot * 0.6, chamW: 5, chamTop: 4, chamBot: 4 }) },
-    ]), { pos: [s * POD.x, 6, 0] });
+      { z: POD.z0, points: podSec(POD.halfW * 0.94, POD.top * 0.92, POD.bot * 0.92, 0.50) },
+      { z: POD.z0 + 40, points: podSec(POD.halfW, POD.top, POD.bot, 0.48) },
+      { z: POD.z1 - 44, points: podSec(POD.halfW * 0.96, POD.top * 0.94, POD.bot * 0.96, 0.45) },
+      { z: POD.z1, points: podSec(POD.halfW * 0.50, POD.top * 0.58, POD.bot * 0.60, 0.42) },
+    ]), { pos: [s * POD.x, 0, 0] });
 
-    // Unequal pylons, and unequal port to starboard: the forward one is deeper
-    // because it takes the thrust load. Matched pylons read as landing gear.
+    // Unequal pylons, and unequal port to starboard: the forward one is deeper because
+    // it takes the thrust load. Matched pylons read as landing gear.
     for (let i = 0; i < POD.pylonZ.length; i++) {
-      B.add('engine', 'dark', G.panelledSlab({
-        width: POD.x - 132, height: i === 0 ? 40 : 52, depth: POD.pylonT - i * 6, detail: D,
-      }), { pos: [s * (POD.x + 132) * 0.5, 14, POD.pylonZ[i] + (s < 0 ? 0 : 14)] });
+      B.add('engine', 'dark', G.bevelBox({
+        width: POD.x - 128, height: i === 0 ? 40 : 52, depth: POD.pylonT - i * 6,
+        chamfer: 7, draft: 6, cant: s * (i === 0 ? 0.12 : -0.09), detail: D,
+      }), { pos: [s * (POD.x + 128) * 0.5, 8, POD.pylonZ[i] + (s < 0 ? 0 : 14)] });
+    }
+
+    // -----------------------------------------------------------------------
+    // THE EXPOSED THRUST FRAME — new, and it is the single most convincing "this is a
+    // real machine" cue the reference fleets share.
+    //
+    // A bell hanging on a pylon is a lamp on a stick. A bell whose thrust is visibly
+    // carried by a truss running 120 m FORWARD into the flank is an engine. Two
+    // members per side, splayed in plan, landing on the hull at two different z so the
+    // load path forks rather than terminating in one point — and they are `dark`, so
+    // they read as structure under the pod rather than as more hull.
+    //
+    // It is the only new named feature at the stern and it costs 80 triangles a side.
+    // -----------------------------------------------------------------------
+    const root = [s * (POD.x - 14), 10, POD.frameZ];
+    B.add('engine', 'dark', beam(root, [s * 152, -14, POD.frameZ + POD.frameLen], 13, { detail: D }));
+    B.add('engine', 'dark', beam(root, [s * 138, 34, POD.frameZ + POD.frameLen * 0.72], 10, { detail: D }));
+    if (full) {
+      B.add('engine', 'greeble', beam(
+        [s * 152, -14, POD.frameZ + POD.frameLen],
+        [s * 138, 34, POD.frameZ + POD.frameLen * 0.72], 6, { caps: false, detail: D },
+      ));
     }
 
     B.add('engine', 'greeble', G.thrusterBell({
       throat: 17, mouth: 25, length: 54, sides: 6, collar: false, detail: D,
-    }), { pos: [s * POD.x, 6, POD.z0 + 54] });
-    B.addRaw('engine', 'engineGlow', glowDisc(22), { pos: [s * POD.x, 6, POD.z0 + 3], rot: [0, Math.PI, 0] });
+    }), { pos: [s * POD.x, 0, POD.z0 + 54] });
+    B.addRaw('engine', 'engineGlow', glowDisc(22), { pos: [s * POD.x, 0, POD.z0 + 3], rot: [0, Math.PI, 0] });
   }
 
-  // THE RADIATOR BANK (see FINS). Every fin carries a rim spar on its tip and
-  // trailing edge, so the plate has a visible EDGE instead of reading as a sheet of
-  // tarpaulin hung off the stern, and each one sits on a root fairing - a fin that
-  // grows straight out of a flat is a decal, a fin that grows out of a housing is
-  // hardware.
+  // -------------------------------------------------------------------------
+  // THE RADIATOR BANK — FLAT RAKED PANELS, NOT RIBBED FINS.
+  //
+  // A radiator is a flat plate. Ribs on one are a lie, and the panels used to stand
+  // nearly vertical off the deck: a 200 m fin raked 0.34 rad put its tip at y +249,
+  // which on a ship whose whole envelope is now 340 m tall would have made the
+  // radiators the tallest thing on it and undone the proportion fix on its own.
+  //
+  // They now lie OUT over the flanks at 55-65 degrees off vertical. Every panel still
+  // carries a rim spar on its tip and trailing edge, so the plate has a visible EDGE
+  // instead of reading as tarpaulin, and each sits on a root fairing: a panel that
+  // grows out of a flat is a decal, a panel that grows out of a housing is hardware.
+  // -------------------------------------------------------------------------
   for (const [s, z, chord, span, rake] of FINS) {
     B.add('engine', 'radiator', G.radiatorFin({
       chord, span, thickness: 13, sweep: -chord * 0.42, tipChord: chord * 0.6,
       rim: span > 120 ? 9 : 0, detail: D,
-    }), { pos: [s * 116, 60, z], rot: [0, 0, rake] });
-    B.add('engine', 'greeble', G.panelledSlab({
-      width: 30, height: 22, depth: chord * 1.15, detail: D,
-    }), { pos: [s * 116, 66, z + chord * 0.4] });
+    }), { pos: [s * 112, 54, z], rot: [0, 0, rake] });
+    B.add('engine', 'greeble', G.bevelBox({
+      width: 30, height: 22, depth: chord * 1.15, chamfer: 5, draft: 5, cant: -rake * 0.4, detail: D,
+    }), { pos: [s * 112, 58, z + chord * 0.4] });
   }
 
   // GREEBLE BANDS AT THE STERN, both justified: the drive-well rim is machinery and
-  // the radiator roots are a joint between two masses.
+  // the radiator roots are a joint between two masses. Both sit IN a trough — a recess
+  // cut first, machinery placed in it second — which is the governing rule of §6 and
+  // the reason a dense band self-shadows instead of reading as noise on a plate.
   if (full) {
+    // `greeble`, not `plating`: `engine/plating` is not a bucket this hull owns, and
+    // creating one would cost a draw call at LOD0 forever for a 24-triangle trough.
+    // The draw budget is (damage groups x surfaces) and nothing may quietly add to it.
+    B.add('engine', 'greeble', G.recess({ width: 190, height: 52, depth: 11, wall: 5, detail: D }),
+      { pos: [-112, 72, -600], rot: [-Math.PI * 0.5, 0, 0] });
     B.add('engine', 'greeble', G.greebleBand({
-      length: 190, width: 46, height: 15, boxes: 2, conduits: 0, rng: rng.fork('band:radroot'), detail: D,
-    }), { pos: [-116, 78, -600] });
+      length: 176, width: 42, height: 13, boxes: 2, conduits: 0, rng: rng.fork('band:radroot'), detail: D,
+    }), { pos: [-112, 62, -600] });
   }
 }
 
@@ -1460,11 +1698,15 @@ export const CRUISER_SUBSYSTEMS = [
   { id: 'reactor', kind: 'reactor', hp: 3200, position: [0, -10, 220], radius: 92, salvageValue: 0.24, label: 'Reactor' },
   { id: 'engine_port', kind: 'engine', hp: 1800, position: [-202, 6, -640], radius: 58, salvageValue: 0.12, label: 'Port Outrigger' },
   { id: 'engine_stbd', kind: 'engine', hp: 1800, position: [202, 6, -640], radius: 58, salvageValue: 0.12, label: 'Starboard Outrigger' },
-  { id: 'sensor_array', kind: 'sensor', hp: 900, position: [-18, 300, -208], radius: 62, salvageValue: 0.10, label: 'Sensor Mast' },
-  { id: 'salvage_bay', kind: 'hangar', hp: 2200, position: [0, -156, 0], radius: 140, salvageValue: 0.14, label: 'Salvage Bay' },
-  { id: 'cutter_yoke', kind: 'weapon', hp: 1100, position: [0, -190, 560], radius: 120, salvageValue: 0.10, label: 'Cutter Yoke' },
-  { id: 'mount_port', kind: 'weapon', hp: 1200, position: [-158, 30, 60], radius: 66, salvageValue: 0.06, label: 'Port Sponson' },
-  { id: 'mount_stbd', kind: 'weapon', hp: 1200, position: [158, 30, -110], radius: 66, salvageValue: 0.06, label: 'Starboard Sponson' },
+  // The mast is gone (see the sensor apertures in `hullParts`), so the array is now
+  // where the arrays are: on the dorsal ridge. Same id, same kind, same hp and same
+  // salvage share — the sim, the damage model and the economy key off those and none
+  // of them may move because the art did.
+  { id: 'sensor_array', kind: 'sensor', hp: 900, position: [-16, 124, -284], radius: 62, salvageValue: 0.10, label: 'Sensor Array' },
+  { id: 'salvage_bay', kind: 'hangar', hp: 2200, position: [0, -128, 0], radius: 150, salvageValue: 0.14, label: 'Salvage Bay' },
+  { id: 'cutter_yoke', kind: 'weapon', hp: 1100, position: [0, -156, 560], radius: 120, salvageValue: 0.10, label: 'Cutter Yoke' },
+  { id: 'mount_port', kind: 'weapon', hp: 1200, position: [-180, 32, 60], radius: 66, salvageValue: 0.06, label: 'Port Sponson' },
+  { id: 'mount_stbd', kind: 'weapon', hp: 1200, position: [180, 32, -110], radius: 66, salvageValue: 0.06, label: 'Starboard Sponson' },
 ];
 
 // ---------------------------------------------------------------------------
