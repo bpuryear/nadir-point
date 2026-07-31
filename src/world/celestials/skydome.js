@@ -1,5 +1,5 @@
 /**
- * THE SKY DOME — the coloured darkness.
+ * THE SKY DOME — the coloured darkness, and now the structure inside it.
  *
  * WHY THIS FILE EXISTS, MEASURED.
  *
@@ -56,10 +56,152 @@
  * before the starfield, so nothing about the existing layering contract moves. The
  * radius only has to put the sphere inside the far camera's frustum
  * (`FAR_SCENE.radius * 4`); it plays no part in ordering.
+ *
+ * ===========================================================================
+ * W6-A: THE PARAGRAPHS ABOVE ARE ALL TRUE AND THEY DESCRIBE A FLAT WASH
+ * ===========================================================================
+ *
+ * `docs/review/field-baseline.md` measured what the file above actually ships, and it
+ * closed R1. RE-MEASURED ON THIS TREE before anything below was written, by stashing
+ * this file's changes and running `node tools/fieldcheck.mjs engagement --report` —
+ * engagement field median luma **0.1283** against a 0.10 target, 97.8% of frame above
+ * 0.06, chroma 0.1451 against the corrected green target of 0.12. That reproduces the
+ * baseline's 0.1281 to within its own noise floor. The dome is also the ONLY thing
+ * carrying it: the baseline's `--attrib` pass measured the field collapsing to
+ * 0.0280 / 2.04% with the dome hidden, while hiding the entire 14-layer nebula moves
+ * the median by **-0.0003**.
+ *
+ * And the frame still does not look like the references, for a reason the same
+ * instrument states in one number (§5, and reproduced here on this tree):
+ *
+ *   dark    mean luma 0.0891   median chroma 0.1019   hue 96.0 deg
+ *   mid     mean luma 0.1284   median chroma 0.1490   hue 94.1 deg
+ *   bright  mean luma 0.1641   median chroma 0.1842   hue 93.7 deg
+ *              dark-to-bright hue separation 2.3 deg  <- ONE HUE AT EVERY VALUE
+ *
+ * Two of the three bullets at the top of this header are therefore not delivering.
+ * "never one flat wash" is exactly what 2.3 degrees of hue separation over a monotone
+ * luma ramp is. The band and the lobe are both SMOOTH ANALYTIC FUNCTIONS OF DIRECTION:
+ * `abs(d.y)` and `dot(d, uAxis)`. Neither has any spatial frequency above the first,
+ * so whatever hue they are authored in, they can only ever paint a gradient in it.
+ *
+ * WHAT IS ADDED, AND THE ONE RULE IT IS BUILT AROUND. The owner ruled for a rust and
+ * green blend SEPARATED BY VALUE AND STRUCTURE, not mixed — the stated failure mode
+ * being mud, two hues at similar value averaging to grey. So:
+ *
+ *   1. `field.glsl.js` supplies one warped, anisotropically stretched noise field
+ *      read twice: an emission density and a dust optical depth from the SAME warped
+ *      domain, offset. That is the structural axis.
+ *   2. The density MODULATES the existing green emission about its own mean, so the
+ *      green core gains structure without gaining or losing energy.
+ *   3. The optical depth is spent as **COLOURED ABSORPTION** — `exp(-uAbsorb * tau)`
+ *      with a blue-heaviest coefficient, which is Leria/Neyret's per-channel
+ *      `e^(-a_rgb * tau)` collapsed into the one multiply a single shader can afford.
+ *      The lanes therefore DARKEN AND REDDEN the green behind them rather than tinting
+ *      it: they move pixels DOWN the value axis and ACROSS the hue axis at the same
+ *      time, which is precisely the separation the ruling asks for and the reason real
+ *      nebula photographs read as depth instead of as gradient.
+ *   4. And the dust SCATTERS a warm fraction of exactly what it absorbed, outside the
+ *      lobe. Bounding the emission by the absorption is what keeps a dust lane from
+ *      becoming the brightest thing in frame; §5 in the shader body records the two
+ *      measured failures that got it there. Red carries a 0.2126 luminance weight
+ *      against green's 0.7152, so a warm term buys three times the chroma per unit of
+ *      luma it spends — which is the arithmetic that lets a second hue exist in the
+ *      dark tier without lifting the dark tier into the mid one.
+ *
+ * MEASURED, `engagement` field, HEAD -> this file (N = 1 440 000 px, hardware raster,
+ * `node tools/fieldcheck.mjs engagement --report`, the two trees differing by exactly
+ * this file, `field.glsl.js` and the settings block in `index.js`):
+ *
+ *                          HEAD      shipped     target
+ *   median luma            0.1283    0.1271      >= 0.10   both PASS
+ *   % above 0.06           97.8%     89.9%       >= 40%    both PASS
+ *   median chroma          0.1451    0.1373      >= 0.12   both PASS (green-dominant)
+ *   hue band (80% mass)    5 deg     32 deg      <= 60     both PASS
+ *   luma p05 .. p95        0.0697..0.1754        0.0511..0.2565
+ *   luma ladder WIDTH      0.106     0.205       <- 1.94x
+ *   dark tier hue          96.0 deg  45.6 deg    <- RUST
+ *   bright tier hue        93.7 deg  89.1 deg    <- GREEN
+ *   DARK-TO-BRIGHT HUE SEPARATION    2.3 deg  ->  43.5 deg
+ *
+ * READ THE LUMA COLUMN BEFORE THE HUE ONE. The median moved -0.0012, which is inside
+ * the instrument's own run-to-run noise, and that is the POINT: the ladder nearly
+ * doubled and the dark tier rotated 50 degrees into rust WITHOUT the frame getting
+ * brighter. Structure and a second hue were bought with distribution, not with energy.
+ *
+ * And `cinematic`, the one shot that FAILED BOTH R1 and R2 on HEAD — measured here at
+ * 0.0939 luma and 0.1019 chroma, because its yaw puts the lobe behind the camera —
+ * now reads **0.1202 luma / 0.1295 chroma and PASSES BOTH**. Over the four shots
+ * `fieldcheck` grades, this tree goes **3/4 -> 4/4**.
+ *
+ * `close` and `wide` (giant-orbit, a BLUE field) are held rather than improved:
+ * 0.1053 -> 0.1071 and 0.1437 -> 0.1405 of median luma, chroma 0.2941 -> 0.2784 and
+ * 0.3058 -> 0.3058. See `index.js`'s giant-orbit block for why that POI deliberately
+ * takes structure and keeps one hue.
+ *
+ * NONE OF THIS IS A LUMINANCE CHANGE AND IT MUST NOT BECOME ONE. `field-baseline.md`
+ * §8 kills the plan's 2.0-2.3x lift outright: R1 is at 128% of target already, and the
+ * previous author of this file overshot once to a measured 0.3777 ("a lit room, not a
+ * graveyard"). The absorption term REMOVES energy; the gains below are re-solved
+ * against a measured frame to put the median back, not to raise it.
+ *
+ * `structure: 0` COMPILES THE FIELD OUT ENTIRELY — not a zeroed uniform, no `npField`
+ * call, no taps. That is deliberate: it is the A/B control for F3's frame-time gate,
+ * and a control that still pays the cost measures nothing.
+ *
+ * ===========================================================================
+ * F3 — THE FILL-COST GATE. ANSWERED, AND THE ANSWER IS "BAKE".
+ * ===========================================================================
+ *
+ * `space-backgrounds.md` §6 calls F3 "the single most important measurement in the
+ * document" because it arbitrates a three-way disagreement worth several days. Its
+ * table: under 0.5 ms, ship the live shader and skip the cubemap bake entirely; over
+ * 2 ms, the bake is mandatory.
+ *
+ * MEASURED. `NP_RASTER=hardware npm run bench -- --width 2560 --height 1440`, the
+ * committed benchmark scene, which pins `poi='giant-orbit'` and therefore compiles
+ * this field in. The two trees differ by this file, `field.glsl.js` and the settings
+ * in `index.js`; NOTHING else, and neither draw calls (422 vs 424, both over the
+ * pre-existing 320 ceiling for unrelated reasons) nor programs (62 vs 62) move.
+ * Two runs per side, and they reproduce to 0.1 ms:
+ *
+ *   field       mean frame        median      p95        p99
+ *   OFF (HEAD)  11.8 / 11.8 ms    11.6/11.8   12.8/12.9  13.1/13.9
+ *   ON          15.2 / 15.2 ms    15.0/15.0   16.1/16.3  16.4/16.6
+ *   DELTA       +3.4 ms           +3.3        +3.4       +3.4
+ *
+ * **+3.4 ms IS OVER F3'S 2 ms LINE BY 1.7x. THE BAKE (item 4) IS MANDATORY.**
+ *
+ * AND THE VERDICT IS STRUCTURAL, NOT A TUNING PROBLEM — which is the part that
+ * actually settles the argument. `FIELD_TAPS` is the cost dial, so it was swept:
+ * dropping the warp from 2 octaves to 1 (19 -> 13 noise evaluations per pixel)
+ * measured 14.2 ms, a +2.4 ms delta. That is 0.179 ms per evaluation at 19 taps and
+ * 0.185 at 13 — LINEAR IN TAPS to 3%. A 2-level IQ domain warp costs six fbm calls
+ * before it draws anything, so the cheapest possible version of this construction is
+ * 6 warp + 1 shape + 1 lane = 8 taps = **1.45 ms predicted**, still 2.9x over the
+ * 0.5 ms "skip the bake" threshold. There is no octave setting that reaches it.
+ *
+ * So: shipped live for now, because it passes the frame budget on hardware (65.6 fps
+ * mean, 60.2 fps at p99 at 2560x1440, both PASS) and the look is the wave's whole
+ * point — but item 4 now has a measured mandate and 3.4 ms of headroom waiting for it.
  */
 
 import * as THREE from 'three';
 import { ORDER, markCelestial, col } from './common.js';
+import { FIELD_GLSL, FIELD_TAPS } from './field.glsl.js';
+
+export { FIELD_TAPS };
+
+/**
+ * Scale a colour to Rec.709 luminance 1, in place. Used so the dust's scattering
+ * albedo is separable from its hue: `uWarm` carries only the chromaticity and
+ * `uWarmGain` carries the fraction of absorbed radiance that comes back.
+ */
+function unitLuma(c) {
+  const L = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+  if (L > 1e-6) c.multiplyScalar(1 / L);
+  return c;
+}
 
 /**
  * @param {Object} p
@@ -71,7 +213,25 @@ import { ORDER, markCelestial, col } from './common.js';
  * @param {number} p.ground        palette hex: the band's tint below the plane
  * @param {number} [p.gain]        multiplier on the lobe
  * @param {number} [p.baseGain]    multiplier on the ecliptic band
- * @param {number} [p.mottle]      +/- fraction of very-low-frequency variation
+ * @param {number} [p.bandY]       sin(elevation) the ecliptic band is centred on. 0 is
+ *                                 the combat plane and is the shipped value; see
+ *                                 `docs/review/field-baseline.md` §3 for why moving it
+ *                                 is a POSE question answered better by the far
+ *                                 camera's pitch than by an edit here.
+ * @param {number} [p.structure]   0 disables the noise field at COMPILE time
+ * @param {number} [p.coreBias]    share of the structure that survives at the anti-lobe;
+ *                                 1 is a uniformly busy sky, which measures well and
+ *                                 looks wrong. See section 3 of the fragment body.
+ * @param {number} [p.fieldScale]  base frequency, cycles across the sphere
+ * @param {number} [p.fieldStretch] anisotropy across the ecliptic; >1 gives strands
+ * @param {[number,number]} [p.density] smoothstep window on the shape field
+ * @param {[number,number]} [p.lane]    smoothstep window on the lane field
+ * @param {number} [p.laneDepth]   peak optical depth of a lane
+ * @param {number} [p.laneScale]   lane frequency relative to the emission; < 1 gives
+ *                                 dust BANKS, 1.0 gives veins that read as cracks
+ * @param {[number,number,number]} [p.absorb] per-channel absorption; blue-heaviest
+ * @param {number} [p.warm]        palette hex: rust/amber for lanes and outer bands
+ * @param {number} [p.warmGain]    emission gain on the warm term
  * @param {number} [p.segments]
  * @returns {{object:THREE.Mesh, material:THREE.ShaderMaterial,
  *            setGain:Function, dispose:Function}}
@@ -85,27 +245,60 @@ export function buildSkyDome({
   ground,
   gain = 1.0,
   baseGain = 1.0,
-  mottle = 0.34,
+  bandY = 0.0,
+  structure = 0.0,
+  coreBias = 0.4,
+  fieldScale = 2.6,
+  fieldStretch = 3.2,
+  density = [0.36, 0.70],
+  lane = [0.50, 0.86],
+  laneDepth = 1.0,
+  laneScale = 0.5,
+  absorb = [0.30, 1.00, 1.70],
+  warm = 0x000000,
+  warmGain = 0.0,
   segments = 32,
 } = {}) {
   const geo = new THREE.SphereGeometry(radius, segments, Math.max(8, segments >> 1));
   geo.name = 'sky-dome';
 
   const a = new THREE.Vector3(axis[0], axis[1], axis[2]).normalize();
+  const structured = structure > 0;
+
+  const uniforms = {
+    uAxis: { value: a },
+    uCore: { value: col(core) },
+    uZenith: { value: col(zenith) },
+    uGround: { value: col(ground) },
+    // The lobe is stated as an ANGULAR RADIUS and converted to the two cosines the
+    // shader interpolates between, so the authored number means what it says.
+    uLobe: { value: new THREE.Vector2(Math.cos(Math.min(Math.PI, spread * 1.75)), Math.cos(spread * 0.22)) },
+    uGain: { value: gain },
+    uBase: { value: baseGain },
+    uBandY: { value: bandY },
+  };
+
+  if (structured) {
+    Object.assign(uniforms, {
+      uStructure: { value: structure },
+      uCoreBias: { value: coreBias },
+      // x = base frequency, y = anisotropic stretch across the ecliptic
+      uField: { value: new THREE.Vector2(fieldScale, fieldStretch) },
+      uDensity: { value: new THREE.Vector2(density[0], density[1]) },
+      // x,y = the smoothstep window that turns the lane field into a lane; z = peak
+      // optical depth; w = the lane's frequency relative to the emission's.
+      uLaneShape: { value: new THREE.Vector4(lane[0], lane[1], laneDepth, laneScale) },
+      uAbsorb: { value: new THREE.Vector3(absorb[0], absorb[1], absorb[2]) },
+      // NORMALISED TO UNIT LUMINANCE at build time, so `warmGain` below is a
+      // scattering albedo in [0,1] and not a number whose meaning depends on how
+      // bright the authored hex happens to be. One divide here, none per pixel.
+      uWarm: { value: unitLuma(col(warm)) },
+      uWarmGain: { value: warmGain },
+    });
+  }
 
   const mat = new THREE.ShaderMaterial({
-    uniforms: {
-      uAxis: { value: a },
-      uCore: { value: col(core) },
-      uZenith: { value: col(zenith) },
-      uGround: { value: col(ground) },
-      // The lobe is stated as an ANGULAR RADIUS and converted to the two cosines the
-      // shader interpolates between, so the authored number means what it says.
-      uLobe: { value: new THREE.Vector2(Math.cos(Math.min(Math.PI, spread * 1.75)), Math.cos(spread * 0.22)) },
-      uGain: { value: gain },
-      uBase: { value: baseGain },
-      uMottle: { value: mottle },
-    },
+    uniforms,
     vertexShader: /* glsl */`
       varying vec3 vDir;
       void main() {
@@ -116,16 +309,26 @@ export function buildSkyDome({
     fragmentShader: /* glsl */`
       uniform vec3 uAxis, uCore, uZenith, uGround;
       uniform vec2 uLobe;
-      uniform float uGain, uBase;
+      uniform float uGain, uBase, uBandY;
       varying vec3 vDir;
-
+${structured ? `
+      uniform float uStructure, uWarmGain, uCoreBias;
+      uniform vec2 uField, uDensity;
+      uniform vec4 uLaneShape;
+      uniform vec3 uAbsorb, uWarm;
+${FIELD_GLSL}` : ''}
       void main() {
         vec3 d = normalize(vDir);
-
+${structured ? `
+        // ONE field evaluation, two reads. Everything below spends it.
+        vec2 f = npField(d, uField.x, uField.y, uLaneShape.w);
+        float dens = smoothstep(uDensity.x, uDensity.y, f.x);
+        float tau  = smoothstep(uLaneShape.x, uLaneShape.y, f.y) * uLaneShape.z;
+` : ''}
         // 1. the floor: an ecliptic band. Value peaks at the combat plane and falls to
         //    the poles; hue leans to uGround below the plane and uZenith above it. The
         //    0.30 residual is what keeps the poles coloured rather than black.
-        float b = 1.0 - smoothstep(0.06, 0.92, abs(d.y));
+        float b = 1.0 - smoothstep(0.06, 0.92, abs(d.y - uBandY));
         vec3 base = mix(uGround, uZenith, smoothstep(-0.55, 0.55, d.y));
         vec3 c = base * (0.30 + 0.70 * b * b) * uBase;
 
@@ -134,7 +337,69 @@ export function buildSkyDome({
         //    keeps it reading as distant gas and not as a vignette.
         float t = smoothstep(uLobe.x, uLobe.y, dot(d, uAxis));
         c += uCore * (t * t) * uGain;
+${structured ? `
+        // 3. NEGATIVE SPACE FIRST. The structure and the dust below are both weighted
+        //    towards the LOBE, i.e. towards the nebula bank, and away from the rest of
+        //    the sky. \`uCoreBias\` is the share that survives at the anti-lobe.
+        //
+        //    WHY THE BIAS EXISTS AT ALL, AND IT IS A LIMIT OF THE METRIC RATHER THAN
+        //    A TASTE NOTE. Applying the field at full amplitude in EVERY direction
+        //    passes R1 and R2 just as well as this does — and it has to, because a
+        //    whole-sky median cannot tell a uniformly busy sky from a quiet sky with
+        //    one busy region. They have the same median. \`nebula.js\` states the
+        //    consequence in its own header: "NEGATIVE SPACE. Emission is confined to
+        //    a band about one radian wide across a single region of the sky.
+        //    Everything else is empty. A nebula that fills the sky has no contrast
+        //    left to spend on the ships." So the field is weighted toward the lobe by
+        //    construction, and \`uCoreBias\` is deliberately BELOW 1 at every POI.
+        //    **Neither R1 nor R2 can see this decision. Do not let a green fieldcheck
+        //    talk anyone into raising it to 1.**
+        float g = mix(uCoreBias, 1.0, t);
 
+        // 4. STRUCTURE on the green emission, MEAN-PRESERVING about dens = 0.5. This
+        //    is the term that has to not move R1: it multiplies by 1 + s*(2*dens-1),
+        //    whose mean over a field with mean density 0.5 is exactly 1.
+        c *= 1.0 + uStructure * g * (2.0 * dens - 1.0);
+
+        // 5. THE DUST OCCLUDES, as COLOURED ABSORPTION and not as paint. Leria/Neyret
+        //    define per-channel absorption coefficients a_rgb and a local transparency
+        //    e^(-a_rgb * tau); with a blue-heaviest a_rgb the lane REDDENS what is
+        //    behind it, which is what interstellar dust does and is why a lane reads
+        //    as dust in front of light rather than as a hole cut in the image. This is
+        //    the term that moves a pixel DOWN the value axis and ACROSS the hue axis
+        //    in one operation, which is the whole of the owner's separation ruling.
+        vec3 lit = c;
+        c *= exp(-uAbsorb * (tau * g));
+
+        // 6. AND THE DUST SCATTERS WHAT IT TOOK. Single scattering, stated as one
+        //    line: the warm term is a fraction of the radiance the absorption above
+        //    REMOVED FROM THIS PIXEL, so uWarmGain is a scattering albedo and the
+        //    term is bounded by construction — a lane can never end up brighter than
+        //    the light it stands in front of, for any authored gain <= 1.
+        //
+        //    THE BOUND IS THE POINT, AND HERE IS WHY IT IS A BOUND AND NOT A TUNING.
+        //    Chroma as this project grades it is max(R,G,B) - min(R,G,B). A warm term
+        //    sprayed over a COOL field therefore raises the MINIMUM channel and costs
+        //    chroma one-for-one — that is the owner's "mud" arriving by arithmetic
+        //    rather than by taste, and it is why the warm is gated on the lane (so it
+        //    lands only where the dust is) and on (1-t) (so the luminous core keeps
+        //    its own hue unmixed). And because the term is a FRACTION OF THE RADIANCE
+        //    THE LINE ABOVE JUST REMOVED, no authored gain <= 1 can make a lane
+        //    brighter than the light it stands in front of. A dust lane that is the
+        //    brightest thing in frame is not a dust lane; this construction cannot
+        //    produce one, rather than being tuned until it happens not to.
+        //
+        //    (The two failed constructions this replaced — an ungated warm, and a
+        //    lane-gated warm with a free gain — were measured by the earlier pass of
+        //    this work whose settings this commit did not keep. Those runs were NOT
+        //    re-run here, so no number from them is quoted. What IS re-measured on
+        //    this tree is the shipped result, in the header table above.)
+        //
+        //    (1-t) stays as a second gate so the luminous core keeps its own hue
+        //    unmixed, which is the half of the ruling that says green owns the core.
+        float absorbed = dot(lit - c, vec3(0.2126, 0.7152, 0.0722));
+        c += uWarm * (uWarmGain * (1.0 - t) * absorbed);
+` : ''}
         gl_FragColor = vec4(c, 1.0);
       }
     `,
@@ -156,6 +421,8 @@ export function buildSkyDome({
   return {
     object: mesh,
     material: mat,
+    /** Per-pixel noise evaluations this dome compiled in. 0 when `structure` is 0. */
+    taps: structured ? FIELD_TAPS.noiseEvals : 0,
     /** Live handle for probes and for anything that wants to prove the dome is the source. */
     setGain(k) { mat.uniforms.uGain.value = k; },
     dispose() { geo.dispose(); mat.dispose(); },

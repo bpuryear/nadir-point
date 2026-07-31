@@ -115,7 +115,69 @@ export const CELESTIAL_SPECS = {
       core: saturate(mix(0x24406e, 0x8fb4ff, 0.34), 1.30),
       zenith: saturate(mix(0x0a1024, 0x24406e, 0.72), 1.25),
       ground: saturate(mix(0x070b16, 0x24406e, 0.62), 1.25),
-      gain: 0.24, baseGain: 1.19,
+      gain: 0.276, baseGain: 1.35,
+      /**
+       * STRUCTURE HERE. THE SECOND HUE DOES NOT SURVIVE A BLUE FIELD, AND THAT IS A
+       * MEASUREMENT, NOT A PREFERENCE.
+       *
+       * THE ABSORPTION IS NEARLY GREY HERE AND THE GRAVEYARD'S IS NOT, AND THAT IS
+       * ARITHMETIC. A blue field keeps its energy in the channel a blue-heaviest
+       * absorber eats FIRST. Run the graveyard's strongly-ordered coefficients on blue
+       * and the lane does not rotate blue toward amber — it rotates it through grey and
+       * out the other side, which is a violet dark tier and a collapsed chroma, i.e.
+       * precisely the mud the owner's ruling exists to prevent. [0.86, 0.98, 1.22] is
+       * still ordered correctly — dust reddens — but the ratio is 1.4:1 across the
+       * channels instead of the graveyard's 12.7:1, so it spends its effect on VALUE
+       * and almost none of it on HUE. For a field whose hue IS the location's identity
+       * that is the right trade.
+       *
+       * SO THIS POI TAKES STRUCTURE AND KEEPS ONE HUE, AND THE RESULT IS MODEST.
+       * Measured on this tree, HEAD -> shipped, `node tools/fieldcheck.mjs close,wide`:
+       *
+       *                     close                    wide
+       *   median luma       0.1053 -> 0.1071         0.1437 -> 0.1407
+       *   median chroma     0.2941 -> 0.2784         0.3058 -> 0.3058
+       *   hue band          4 -> 5 deg               5 -> 5 deg
+       *   luma p05..p95     0.0453..0.1510           0.0182..0.2826
+       *                  -> 0.0460..0.1522        -> 0.0182..0.3348
+       *   ladder WIDTH      0.1057 -> 0.1062         0.2644 -> 0.3166  (+20%)
+       *   tier hue sep      3.2 -> 3.4 deg           2.7 -> 3.2 deg
+       *
+       * STATED PLAINLY BECAUSE IT WOULD BE EASY TO OVERSELL: at `close` this block does
+       * almost nothing a measurement can see — the ladder widens by 0.0005 and the hue
+       * separation by 0.2 degrees. At `wide`, where the frame contains far more sky and
+       * far less gas giant, it widens the luma ladder by 20%. Both shots hold R1 and R2
+       * with the median inside 0.003 of HEAD. This POI is NOT where the owner's ruling
+       * lands, and the numbers say so rather than dressing it up.
+       *
+       * The ruling is authored for the graveyard and it lands at the graveyard; forcing
+       * a second hue here would cost this location the chroma that IS its identity.
+       * `reference-frames.md` §1's Everspace note — cool field, warm accents in the
+       * DARK MASSES (R5) — is better answered by the wrecks and stations than by the
+       * sky, and R5 is not this stream's file.
+       *
+       * `warmGain` 0.40 is the same scattering albedo as the graveyard's, and it is
+       * safe on a cool field ONLY because `skydome.js` gates the warm on the lane and
+       * bounds it by the radiance the absorption removed. Chroma is max-minus-min, so
+       * an UNgated warm term on a blue field raises the minimum channel and costs
+       * chroma one-for-one; see that file's step 6 for why the construction cannot do
+       * that rather than being tuned so that it happens not to.
+       *
+       * Gains raised for the energy the absorption removes, not to make the place
+       * brighter — and `close` reading 0.1071 against HEAD's 0.1053 is the check on
+       * that claim, not the sentence before it.
+       */
+      structure: 0.40,
+      coreBias: 0.35,
+      fieldScale: 2.2,
+      fieldStretch: 3.0,
+      density: [0.38, 0.68],
+      lane: [0.52, 0.68],
+      laneDepth: 1.90,
+      laneScale: 0.45,
+      absorb: [0.86, 0.98, 1.22],
+      warm: saturate(NEUTRAL.rockOre, 1.20),
+      warmGain: 0.40,
     },
     giant: {
       // 34 degrees across at a 99 degree elongation: about a third of a 16:9 frame,
@@ -222,8 +284,146 @@ export const CELESTIAL_SPECS = {
        * L = 0.196, which is the model agreeing with the frame to 3%, so it can be
        * inverted. Re-solved for a 0.1225 median against the brighter floor colours
        * above (ground L 0.224 against the old 0.126).
+       *
+       * W6-A RAISED THESE, AND UPWARD IS NOT A BRIGHTNESS DECISION. It is compensation
+       * for energy the new dust lanes REMOVE. `field-baseline.md` §8 kills the plan's
+       * proposed 2.0-2.3x lift outright — R1 already reads 0.1283 against a 0.10 target
+       * on HEAD, re-measured on this tree. The absorption term in `skydome.js` is a
+       * multiply by `exp(-uAbsorb * tau)`, which can only ever take light away; these
+       * gains put the median back where the measured frame had it.
+       *
+       * THE PROOF THAT THEY DID NOT RAISE IT IS THE MEASUREMENT, NOT THIS SENTENCE.
+       * `node tools/fieldcheck.mjs engagement --report`, hardware, N = 1 440 000 px:
+       * HEAD 0.1283 -> shipped **0.1271**. That is -0.0012, i.e. the frame is a hair
+       * DARKER than the one the baseline graded, while its luma ladder p05..p95 widens
+       * from 0.106 to 0.205 and its dark tier rotates from green to rust. The whole
+       * point of this wave is that those two things happened without the median moving.
+       *
+       * The ratio to HEAD is 0.092/0.049 = 1.878 on the lobe and 0.318/0.170 = 1.871 on
+       * the band — i.e. the absorption is eating very close to a uniform 47% of the
+       * dome's output at this POI, and the two gains are scaled together rather than
+       * being independently fiddled.
+       *
+       * `cinematic` is the shot these were finally set against, because it is the
+       * yaw-independent floor: its yaw puts the lobe behind the camera, so it sees the
+       * band and nothing else, and `field-baseline.md` §4 names its shortfall as "the
+       * new brief". It FAILED BOTH R1 AND R2 on HEAD — measured on this tree at 0.0939
+       * luma / 0.1019 chroma against 0.10 / 0.12 — and at these gains it measures
+       * **0.1202 / 0.1295 and PASSES BOTH**.
+       *
+       * (An earlier pass of this work recorded a gain-by-gain audit trail here. Those
+       * runs used settings this commit did not keep, so the table has been removed
+       * rather than re-printed under numbers it no longer describes. Every figure above
+       * is from a run of the command named above against the tree as committed.)
        */
-      gain: 0.049, baseGain: 0.170,
+      gain: 0.092, baseGain: 0.318,
+      /**
+       * ===================================================================
+       * THE OWNER'S RUST-AND-GREEN RULING, AS FIVE NUMBERS
+       * ===================================================================
+       *
+       * Green in the LUMINOUS CORE, rust and amber in the DUST LANES and the OUTER
+       * BANDS, separated by VALUE and by STRUCTURE so they cannot average to mud.
+       * `skydome.js`'s header has the mechanism; these are the authored settings and
+       * why each one is the number it is.
+       *
+       * MEASURED RESULT OF THIS BLOCK, `engagement` field, HEAD -> here. Hardware
+       * raster, N = 1 440 000 px, the two trees differing by this block, `skydome.js`
+       * and `field.glsl.js`:
+       *
+       *                        HEAD      shipped
+       *   median luma          0.1283    0.1271     R1 needs 0.10        both PASS
+       *   % above 0.06         97.8%      89.9%     R1 needs 40%         both PASS
+       *   median chroma        0.1451    0.1373     R2 needs 0.12        both PASS
+       *   hue band (80% mass)  5 deg     32 deg     R2 needs <= 60 deg   both PASS
+       *   luma p05 .. p95      0.0697..0.1754       0.0511..0.2565
+       *   dark tier hue        96.0 deg  45.6 deg   <- RUST
+       *   mid tier hue         94.1 deg  76.5 deg
+       *   bright tier hue      93.7 deg  89.1 deg   <- GREEN
+       *   DARK-TO-BRIGHT HUE SEPARATION   2.3 deg   ->   43.5 deg
+       *
+       * The chroma and the "% above 0.06" both go DOWN, and that is the dust doing its
+       * job rather than a regression: a lane that occludes has to darken and desaturate
+       * the pixels it covers, or it is not in front of anything. Both stay well clear of
+       * their targets. What the ruling is graded on is the last three rows.
+       *
+       * `structure` 0.34 — the emission is multiplied by `1 + s*(2*dens-1)`, which at
+       * 0.34 swings between 0.66 and 1.34, a **2.03:1** bright-to-dark ratio from
+       * structure alone, against a measured interquartile luma range of 0.049 on HEAD
+       * (p25 0.1034, p75 0.1522). It is mean-preserving by construction — the mean of
+       * `2*dens-1` over a field with mean density 0.5 is zero — which is why it moves
+       * the LADDER without moving the MEDIAN, and the measured -0.0012 above is that
+       * property holding on a real frame rather than in a derivation.
+       *
+       * `fieldScale` 3.0 / `fieldStretch` 3.4 — 3.0 cycles across the sphere puts the
+       * base octave's feature at a **19.2 degree** chord angle before the domain warp
+       * displaces it, which against a 46 degree FOV is a few strands in frame rather
+       * than a texture. The stretch is applied across the ecliptic, so the strands lie
+       * ALONG the plane the game is fought on; `common.js:105-126` states the same
+       * trick for the gas giant and says why ("stretches features along longitude,
+       * which is the whole reason gas giant turbulence reads as ribbons rather than as
+       * clouds").
+       *
+       * `lane` [0.50, 0.68] / `laneDepth` 1.75 — NARROW AND DEEP, AND THIS IS THE PAIR
+       * THAT DECIDES WHETHER THE RESULT IS DUST OR MUD. The window is 0.18 wide on the
+       * upper half of a 3-octave fbm, so lanes are a minority of the sky and the rest
+       * of it stays clean green. The failure mode is a WIDE, SHALLOW window: that
+       * partially reddens most of the frame at once, which is not dust, it is a warm
+       * veil, and a warm veil over green is exactly the grey average the owner named as
+       * the failure mode. Narrow and deep spends the same energy on a small area and
+       * gets STRUCTURE; wide and shallow spends it everywhere and gets TINT.
+       *
+       * `absorb` [0.15, 1.10, 1.90] — per-channel absorption, blue-heaviest, so the
+       * lane REDDENS what it occludes. These are optical coefficients and not colours;
+       * they are deliberately not palette hexes, because there is no sense in which
+       * `exp(-1.90)` is a colour the palette could own. At the peak depth of 1.75 the
+       * transmission is **0.769 / 0.146 / 0.036** — red survives 5.3x better than green
+       * and 21x better than blue, which is the entire hue rotation, and every channel is
+       * below 1 so everything it touches gets DARKER. One operation, both axes of the
+       * owner's separation.
+       *
+       * `warm` — the graveyard palette has no warm hue at all (key is 0xb6c6da, fill
+       * 0x4c6a4a, accent 0x8fb04a: cold, green, green). `NEUTRAL.rockOre` is the
+       * palette's warm ochre and it is the honest choice here for a location made of
+       * oxidised wreckage. Pushed on chroma alone by `saturate`, which is hue- and
+       * luminance-preserving below the clip thresholds recorded above; 0x8a6a3c is
+       * sRGB 0.541 / 0.416 / 0.235, so its blue sits at **0.435 of its red** and it has
+       * real room before `saturate` drives a channel to the clamp. That matters here:
+       * `field-baseline.md` §7 caught all three of this dome's authored colours already
+       * clipped to exactly zero blue, and chroma bought by deleting a channel is the
+       * trap this wave is supposed to be climbing out of, not back into.
+       *
+       * `warmGain` 0.34 — a SCATTERING ALBEDO, not a brightness. `skydome.js` divides
+       * `warm` by its own luminance and multiplies this by the radiance the absorption
+       * removed from the same pixel, so 0.34 means "34% of what the dust took out comes
+       * back warm", and the term is bounded by construction rather than by taste.
+       *
+       * IT IS SET AGAINST `cinematic`, NOT AGAINST `engagement`, and that is a
+       * consequence of the shader and not a preference. The warm rides `(1 - t)`, so
+       * the lobe gates it out of the graveyard's own luminous core — which is the half
+       * of the owner's ruling that says GREEN OWNS THE CORE, enforced in one factor.
+       * `engagement` faces the lobe, so this number barely reaches it; `cinematic`
+       * faces away from the lobe and is therefore the shot that grades the warm.
+       *
+       * THE CEILING ON THIS NUMBER IS R2's HUE BAND, NOT R1. `field-baseline.md` §5
+       * warns that "a field genuinely carrying both cannot fit inside R2's 60 degree
+       * band if both hues carry comparable chroma mass" — so pushing the warm until it
+       * is a co-equal hue does not fail as a dim frame, it fails as a 60+ degree band.
+       * At the shipped value `engagement` measures a **32 degree** band and `cinematic`
+       * **29**, both inside the ceiling with room; that headroom is what the number is
+       * spending, and anyone raising it should watch the band column and not the luma.
+       */
+      structure: 0.34,
+      coreBias: 0.30,
+      fieldScale: 3.0,
+      fieldStretch: 3.4,
+      density: [0.22, 0.84],
+      lane: [0.50, 0.68],
+      laneDepth: 1.75,
+      laneScale: 0.42,
+      absorb: [0.15, 1.10, 1.90],
+      warm: saturate(NEUTRAL.rockOre, 1.35),
+      warmGain: 0.34,
     },
     /**
      * THE OWNER RULED: KEEP THE GRAVEYARD, DRESS IT UP. THIS IS THE DRESSING.
@@ -289,7 +489,38 @@ export const CELESTIAL_SPECS = {
       core: saturate(mix(0x5a2c12, 0xff7a2a, 0.30), 1.20),
       zenith: saturate(mix(0x120804, 0x5a2c12, 0.80), 1.20),
       ground: saturate(mix(0x1a0c05, 0x5a2c12, 0.72), 1.20),
-      gain: 0.26, baseGain: 0.95,
+      /**
+       * STILL NOT MEASURED, AND THESE GAINS ARE ARITHMETIC. `field-baseline.md` §9 is
+       * explicit — no shot in `tools/shots.json` visits `near-star`, so `fieldcheck`
+       * cannot see it and "nobody should quote a number for near-star". That was true
+       * before this change and it is true after it.
+       *
+       * What IS defensible: the field settings below are close to the graveyard's, and
+       * the graveyard's gains had to be scaled **1.878x (lobe, 0.049 -> 0.092)** and
+       * **1.871x (band, 0.170 -> 0.318)** to hold its MEASURED median once the dust
+       * absorption was taking energy out of it. 0.26 x 1.88 = 0.489 and 0.95 x 1.88 =
+       * 1.786 carry that one measured ratio across to a location nobody has shot. That
+       * is a much narrower claim than a solve — it assumes only that a similar dust
+       * setting removes a similar fraction of a dome's output — and it is the most this
+       * location's instrumentation supports.
+       *
+       * The warm scatter is this POI's own accent rather than `rockOre`: the field is
+       * already rust here, so the dust lanes deepen the location's own hue instead of
+       * introducing a second one. That is a different job from the graveyard's and it
+       * is why the number differs. **Shoot this POI before quoting anything.**
+       */
+      gain: 0.489, baseGain: 1.78,
+      structure: 0.42,
+      coreBias: 0.35,
+      fieldScale: 2.5,
+      fieldStretch: 3.2,
+      density: [0.37, 0.69],
+      lane: [0.52, 0.68],
+      laneDepth: 1.90,
+      laneScale: 0.45,
+      absorb: [0.32, 0.98, 1.70],
+      warm: saturate(mix(0x5a2c12, 0xff7a2a, 0.55), 1.15),
+      warmGain: 0.35,
     },
     giant: null,
   },
