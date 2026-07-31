@@ -1,58 +1,86 @@
 /**
- * VENTRAL MODULES — the salvage cradle, looking down. THE BIGGEST MOUNT ON THE SHIP.
- *
- * Mount is at [0, -78, 0] and the module HANGS. The cradle around it is a pair of
- * rails at x = +/-98..170 running down to a bay floor at y = -248, so the clear
- * volume directly under the mount is about 195 m wide until you get below y = -250,
- * at which point there is nothing but vacuum and you can be as wide and as deep as
- * you like.
+ * VENTRAL MODULES — the salvage cradle, and it is a BERTH now rather than a hook.
  *
  * ---------------------------------------------------------------------------
- * WHY EVERY MODULE IN THIS FILE JUST GOT TWO TO THREE TIMES BIGGER
+ * "THE WORST LOOKING PART OF THE SHIP IS THE BOX ON THE BOTTOM"
  * ---------------------------------------------------------------------------
- * The acceptance criterion "three loadouts of the same cruiser distinguishable in
- * silhouette" measures mean outline divergence per z-bin between two full builds,
- * and it was FAILING at 26.5 m against a target of 45 (docs/review/acceptance.md).
- * The diagnosis in that document is exact and it is worth restating because it is
- * the reason for every number below:
+ * That was the owner's second note and the box was real. The carrier fit's landing
+ * platform was a 286 x 540 m `panelledSlab` - a rectangular prism, 100% of its area
+ * axis-aligned - hung at world y -494 under a bay whose floor was at -202. It was not
+ * attached to the bay in any sense: it hung under the ENTIRE assembly on a neck, and
+ * its flat underside was 154 000 square metres of one value facing the camera every
+ * time the tactical view dropped below the horizon.
  *
- *   "Max now passes, so there ARE places on the outline where two builds differ
- *    decisively; what is missing is difference along most of the length."
+ * The three fits in this file now put their BODY INSIDE THE BAY and hang only their
+ * deployed working gear, which is long, open and structural. `cruiser.js` dropped the
+ * bay floor 20 m to make room (chordBot -180 -> -200, floor -202 -> -222, 112 m of
+ * clear berth) and grew two runner rails at x +-126 for a module spine to land on
+ * along its whole length instead of on one 44 m disc.
  *
- * The hull's own bands are already as differentiated as one hull can be. The bow
- * mount changes four z-bins out of twenty-eight, the dorsal three, the engine two.
- * ONLY the ventral mount and the two sponsons can change the outline along most of
- * the ship, and of those the ventral is the one with unlimited room to grow into.
- * So the three ventral modules are now separated on THREE AXES AT ONCE, and the
- * separation is the design rather than a side effect of it:
+ * ---------------------------------------------------------------------------
+ * WHY THE BOX COULD NOT SIMPLY BE DELETED, MEASURED RATHER THAN ARGUED
+ * ---------------------------------------------------------------------------
+ * `docs/review/acceptance.md` carries a PASS for "three loadouts of the same cruiser
+ * distinguishable in silhouette", and it was won EXACTLY by making the ventral fits
+ * big and cantilevered at three different depths. Run the criterion with this mount
+ * emptied and the other five untouched - `node src/probes/loadoutsAudit.mjs --empty
+ * ventral` - and it does not get tight, it FAILS:
  *
- * MEASURED off the built geometry in hull space, not intended:
+ *     all six fitted    worst pair mean 84.5   max 355   PASS
+ *     ventral EMPTY     worst pair mean 42.5   max 248   FAIL   (bar is 45)
+ *     bottom-channel divergence with it empty:  0.1 / 4.7 / 4.8 m
  *
- *   | module      | deepest y | half-beam | z extent    | topology         |
- *   |-------------|-----------|-----------|-------------|------------------|
- *   | cargo pods  |  -356 m   |   293 m   | -425 .. 405 | slung solid mass |
- *   | hangar deck |  -540 m   |   217 m   | -320 .. 310 | closed slab      |
- *   | field dock  |  -487 m   |   441 m   | -490 .. 450 | open cage        |
+ * The last line is the finding. The outline signature has three channels per z-bin -
+ * half-beam, top and bottom - and THE VENTRAL IS THE BOTTOM CHANNEL. Nothing else on
+ * this ship moves the keel line at all. So recessing this mount spends one criterion
+ * out of three, and it can only be done by replacing the depth difference rather than
+ * deleting it.
  *
- * (The bare hull's own ventral envelope is y = -248, x = +/-198.) No two modules
- * share a rank on any of the three columns: the cargo pods are the shallowest and
- * the middle width, the hangar deck is the deepest and the narrowest, the field
- * dock is the widest and the longest. Read any one column and you have named the
- * build. A player who sees the bottom of the ship knows which of the three they
- * are looking at before they can resolve a single panel line, which is the entire
- * point of the criterion.
+ * Bins are 28 over 1402 m, i.e. 50.1 m of ship each. A difference held over only the
+ * 445 m bay is nine bins and would need 180 m of depth per bin to pay for itself; held
+ * over 850 m it needs 95. THE MECHANISM MUST BE LONG BEFORE IT IS DEEP, which is what
+ * kills every "make it a shallow reveal in the bay floor" idea and is not obvious
+ * without the measurement.
  *
- * The rule this file now enforces on itself, from ship-language.md §6 M1: A MODULE
- * THAT SITS INSIDE THE HULL ENVELOPE IS A FAILED MODULE. The hull's own ventral
- * envelope reaches y = -248 (bay floor) and x = +/-198 (drive pods), so anything
- * shallower than -250 or narrower than 200 is invisible in the outline and is
- * costing triangles to change nothing.
+ * ---------------------------------------------------------------------------
+ * THREE RULES THIS FILE NOW HOLDS ITSELF TO
+ * ---------------------------------------------------------------------------
+ * V1 CONTAINMENT. The module's primary mass lives inside the bay volume - x +-226,
+ *    y -48 .. -222, z -230 .. +215. What is outside it is gear, not body.
+ *
+ * V2 NO BOX. Nothing below y -240 presents a downward face over 12 000 m2. This is
+ *    the rule that kills the slab underside, and `massLoft` satisfies it almost by
+ *    accident: a `facetProfile` keel is a narrow flat with deadrise between two
+ *    chamfers, so a 92 m beam presents a 26 m keel flat, not a 92 m one.
+ *
+ * V3 DEPTH BANDS, 100 m apart, each held over at least twelve of the twenty-eight
+ *    z-bins. This is what replaces "three different sizes of box":
+ *
+ *      SHALLOW  world -270   cargo pods     two 760 m pod bellies, lower 40% proud
+ *      MID      world -370   field dock     940 m of open rail and three portals
+ *      DEEP     world -470   hangar deck    a landing GRID on legs, with an open well
+ *
+ *    Every one of the three is now SHALLOWER than it was (-356 / -487 / -540 before),
+ *    so the fitted ships got shorter as well as tidier.
+ *
+ * ---------------------------------------------------------------------------
+ * AND THEY ARE BUILT OUT OF THE HULL NOW
+ * ---------------------------------------------------------------------------
+ * Every primary mass in this file is a `massLoft` - the hull's own twelve-point
+ * `facetProfile` section, six large planes a side, a knuckle at 80.8 degrees of
+ * dihedral, a cambered deck and a keel with deadrise - carrying `massFrames` at the
+ * hull's 90-140 m structural rhythm, `massStrake` plates cut from the mass's own
+ * section, and `massRecess` cuts for the machinery to sit in. See `kit.js`, which
+ * explains why forty-six `panelledSlab`s was the whole diagnosis.
  */
 
 import { registerModule } from '../../../core/contracts.js';
 import { RANGE } from '../../../core/units.js';
 import * as G from '../greeble.js';
-import { ModuleBuilder, MODULE_TRI_BUDGET, throat, aimed } from './kit.js';
+import {
+  ModuleBuilder, MODULE_TRI_BUDGET, throat, aimed,
+  massLoft, massFrames, massStrake, massRecess,
+} from './kit.js';
 
 /**
  * The tractor yoke's three arms. Not thirds of a circle and not equal lengths,
@@ -85,12 +113,34 @@ const HALF_PI = Math.PI * 0.5;
 const oct = (hw, top, bot, cw, ct, cb) => G.octProfile(hw, top, bot, cw, ct, cb);
 
 /**
- * The hull's own ventral envelope, in MODULE-LOCAL metres (the mount sits at world
- * y = -85 once the 7 m service gap is applied). Kept here as named numbers because
- * every module in this file is checked against them in review.
+ * THE BERTH, in MODULE-LOCAL metres. The mount is at world [0, -78, 0] and the module
+ * origin sits 3 m below it on the bolt ring's top face (`hardpoints.js#SEAT_STANDOFF`,
+ * dropped from 7 when `cruiser.js#mountSeat` gave every mount a real apron), so
+ *
+ *     LOCAL y = WORLD y + 81
+ *
+ * Kept as named numbers because every mass in this file is checked against them.
  */
+const BERTH = {
+  roof: 33,           // world -48, the bay roof
+  keel: 5,            // world -76, where the hull's keel crown actually is
+  chordTop: -7,       // world -88
+  chordBot: -119,     // world -200
+  floor: -141,        // world -222, the bay floor
+  half: 226,          // world x, the bottom chords: the berth's clear half-width
+  runnerX: 126,       // the two runner rails a spine lands on
+  z0: -230, z1: 215,  // the bay's own z run
+};
+
+/**
+ * V3's three bands, LOCAL. 100 m apart, and each fit holds its own over at least
+ * twelve of the twenty-eight z-bins. See the header for why 100 and why long.
+ */
+const BAND = { shallow: -189, mid: -289, deep: -389 };
+
+/** Kept for the two modules outside the probe's loadouts, which still hang. */
 const ENVELOPE = {
-  keelY: -163,        // world -248, the salvage bay floor: the depth to beat
+  keelY: -141,        // world -222, the salvage bay floor: the depth to beat
   halfBeam: 198,      // world x, the outrigger drive pods: the beam to beat
   cradleHalf: 175,    // clear half-width of the throat the module threads through
 };
@@ -100,92 +150,102 @@ const ENVELOPE = {
 // ---------------------------------------------------------------------------
 
 /**
- * THE HANGAR DECK. Installing this converts the game from a single-ship brawler
- * into a small RTS, so it has to be the most obvious change the player can make to
- * their ship, and it has to be obvious from four kilometres.
+ * THE HANGAR DECK — THE DEEP ONE, and it is a GRID now instead of a slab.
  *
- * It is the DEEP module. A three-level stack hanging straight down off the keel:
- * a narrow neck through the cradle, a 200 m deep hangar block, and a landing
- * platform under that, bottoming out at world y = -540. That is 292 m below the
- * salvage bay floor - the ship visibly grows a second body underneath itself.
+ * Installing this converts the game from a single-ship brawler into a small RTS, so
+ * it has to be the most obvious change the player can make to their ship and it has
+ * to be obvious from four kilometres. It was, and the way it did it was a 286 x 540 m
+ * flat-bottomed prism hung at world y -494: the thing the owner was looking at.
  *
- * It is deliberately the NARROWEST of the three: 340 m across against the hull's
- * own 396 m beam over the drive pods. A carrier is a deep ship, not a wide one,
- * and keeping it narrow is what stops it colliding with the field dock's read.
+ * Same read, opposite construction. The BODY - the hangar itself, the two launch
+ * throats and the recovery slot - is a `massLoft` sitting INSIDE the berth, between
+ * the bottom chords, landing on both runner rails. What hangs is the LANDING DECK,
+ * and it is a frame: two runs of three deck beams on four unequal legs with an OPEN
+ * CENTRE WELL you can see the gas giant through. No piece of it presents a downward
+ * face over 12 000 m2 (V2), which is checkable and which the slab failed by 13x.
  *
- * It is also the SHORTEST at 640 m, because a flight deck is a machine for one
- * job and it does not run the length of the ship the way cargo racking does.
+ * It is still the deepest of the three at world -470, still the narrowest, and still
+ * the shortest. What it is not is a box.
  */
 function buildHangarDeck(ctx) {
   const b = new ModuleBuilder(ctx, 'concord');
   const D = b.detail, full = b.full;
 
-  // 1. The neck: threads down through the cradle throat, staying inside 175 m.
-  b.add('hull', G.loft([
-    { z: -300, points: oct(74, -16, -150, 20, 14, 18) },
-    { z: -20, points: oct(96, -8, -168, 26, 16, 22) },
-    { z: 290, points: oct(80, -14, -158, 22, 14, 20) },
-  ], { capFront: true, capBack: true }), null);
+  // 1. THE BODY, in the hull's own section, sitting in the berth.
+  //    `[z, half, top, bottom, knuckle, deckFlat, flare]` - the same seven columns
+  //    `cruiser.js#HULL_STATIONS` uses, so this mass is made of the same plate family
+  //    as the ship it is welded into. Beam : depth runs 2.5-2.7 against M-F4's 1.6.
+  const BODY = [
+    [-318, 104, -6, -96, 0.46, 0.50, 0.88],
+    [-140, 148, -4, -118, 0.47, 0.52, 0.86],
+    [126, 150, -4, -118, 0.47, 0.52, 0.86],
+    [308, 112, -8, -100, 0.44, 0.48, 0.92],
+  ];
+  b.add('hull', massLoft(BODY, { detail: D, label: 'hangar body' }));
+  // M-F5: three frames, unevenly spaced at 118 / 136 m, the hull's own rhythm.
+  b.add('plating', massFrames(BODY, [-196, -62], { detail: D }));
+  // M-F2 / M-F6 / F10: one plate a side on the LOWER flank, below the module's own
+  // knuckle, on `dark`. The value boundary lands on a real 80-degree chine with a
+  // shadow at it rather than in the middle of a face.
+  b.add('dark', massStrake(BODY, { z0: -290, z1: -30, side: -1, facet: [2, 1], t0: 0.10, t1: 0.62, drift: 0.14, out: 5, detail: D }));
+  b.add('dark', massStrake(BODY, { z0: -110, z1: 250, side: 1, facet: [2, 1], t0: 0.22, t1: 0.70, drift: -0.10, out: 5, detail: D }));
 
-  // 2. THE HANGAR BLOCK. 200 m of enclosed deck, hung clear of the keel. This is
-  //    the mass; everything else on the module is a feature of it.
-  b.add('hull', G.loft([
-    { z: -320, points: oct(128, -172, -352, 34, 26, 30) },
-    { z: -110, points: oct(170, -166, -368, 44, 30, 36) },
-    { z: 160, points: oct(170, -166, -368, 44, 30, 36) },
-    { z: 310, points: oct(120, -180, -344, 32, 24, 28) },
-  ], { capFront: true, capBack: true }), null);
-
-  // 3. The landing platform, below the block and stepped inboard of it: a
-  //    ziggurat in reverse, which is what stops the stack reading as one prism.
-  //
-  //    IT MUST TOUCH THE BLOCK. It did not. At 46 m tall and hung at y = -432 its
-  //    top edge was -409 against a block whose bottom is -368, so the deepest and
-  //    most distinctive thing on the carrier build was a 286 x 540 m slab floating
-  //    forty-one metres clear of the ship. That is the white band under row B of
-  //    `docs/probes/loadouts.png`, and it is why `tools/silhouette.mjs` exists.
-  //
-  //    Fixed by growing the step rather than by closing the gap with struts: same
-  //    primitive, same twenty-eight triangles, and the module's deepest point stays
-  //    at -455 so the "deepest of the three ventrals" read is untouched. A 92 m
-  //    riser stepped 54 m inboard of the block on each side is a stronger ziggurat
-  //    than a 46 m one was, not a weaker one.
-  b.add('plating', G.panelledSlab({ width: 286, height: 92, depth: 540, chamfer: 26, detail: D }),
-    { pos: [0, -409, -14] });
-  b.add('plating', G.blastDoor({ width: 190, height: 300, depth: 9, seam: false, detail: D }),
-    { pos: [0, -456, -14], rot: [HALF_PI, 0, 0] });
-
-  // 4. Two launch throats in the forward face of the block, lined so they read as
-  //    holes rather than as black stickers.
-  for (const s of [-1, 1]) {
-    b.add('dark', throat({ width: 74, height: 66, depth: 78, detail: D }), { pos: [s * 62, -258, 310] });
-    b.glow([s * 62, -258, 300], 32);
-  }
-  // Recovery slot in the PORT flank, lit from inside. Only port: a carrier lands to
-  // port and launches forward, and that asymmetry is the tell.
-  b.add('dark', throat({ width: 300, height: 92, depth: 58, detail: D }),
-    { pos: [-170, -262, 10], rot: [0, -HALF_PI, 0] });
-  b.glow([-160, -262, 10], 38, [0, -HALF_PI, 0]);
-
-  // 5. Control blister, overhanging the deck edge to port and well forward - the
-  //    one thing on the module that is not on the centreline.
-  b.add('hull', G.panelledSlab({ width: 62, height: 44, depth: 120, chamfer: 10, detail: D }),
-    { pos: [-186, -204, 176] });
-
-  b.graft([0, 0, 0], [HALF_PI, 0, 0], 52);
-  if (full) {
-    // Two hangers, not four. A symmetric 2x2 grid of identical posts is machine
-    // rhythm; a forward-port and an aft-starboard pair is what a deck cut out of
-    // somebody else's carrier ends up hanging from.
-    for (const [x, dz] of [[-78, 190], [78, -200]]) {
-      b.add('greeble', G.hexStrut({ length: 60, radius: 14, axis: 'y', detail: D }),
-        { pos: [x, -172, dz] });
+  // 2. THE LANDING DECK, as a FRAME. Three beams a side with 40 m gaps, two
+  //    transverse ties, and nothing at all down the centre. `massLoft` is what makes
+  //    V2 nearly free: a `facetProfile` keel is a narrow flat with deadrise between
+  //    two chamfers, so a 92 m beam shows a 26 m keel flat and 26 x 186 is 4 836 m2.
+  const DECK = (z0, z1, half) => [
+    [z0, half * 0.86, BAND.deep + 46, BAND.deep + 4, 0.45, 0.48, 0.9],
+    [(z0 + z1) * 0.5, half, BAND.deep + 50, BAND.deep, 0.45, 0.48, 0.9],
+    [z1, half * 0.88, BAND.deep + 46, BAND.deep + 4, 0.45, 0.48, 0.9],
+  ];
+  // Port and starboard runs are at DIFFERENT z (M-F9): a carrier lands to port.
+  for (const [s, runs] of [[-1, [[-316, -136], [-96, 84], [124, 300]]],
+    [1, [[-268, -104], [-64, 132], [172, 306]]]]) {
+    for (let i = 0; i < runs.length; i++) {
+      const [z0, z1] = runs[i];
+      b.add('plating', G.place(massLoft(DECK(z0, z1, 46 - i * 3),
+        { detail: D, label: 'deck beam', keep: G.FACET_LOD.far }), { pos: [s * 152, 0, 0] }));
     }
   }
+  // Two transverse ties, unequal, and neither on the module's centre of length.
+  for (const [dz, w, h] of [[-188, 300, 30], [206, 268, 24]]) {
+    b.add('plating', G.bevelBox({
+      width: w, height: h, depth: 46, chamfer: 6, draft: 6, cant: dz < 0 ? 0.11 : -0.09, detail: D,
+    }), { pos: [0, BAND.deep + 26, dz] });
+  }
 
-  // Approach lighting, both flanks, at the game-wide spacing.
-  b.lightRun([-176, -300, -260], [-176, -300, 220], [-1, 0, 0], { max: 9 });
-  b.lightRun([176, -300, -260], [176, -300, 220], [1, 0, 0], { max: 9 });
+  // 3. FOUR LEGS, unequal and not at mirrored z. They are what the deck hangs on and
+  //    they are the only thing crossing the 230 m between body and deck, so they are
+  //    canted `bevelBox`es rather than tubes - a stick reads as scaffolding.
+  for (const [x, dz, w] of [[-152, -244, 30], [152, -142, 26], [-152, 196, 27], [152, 262, 23]]) {
+    b.add('hull', G.bevelBox({
+      width: w, height: 250, depth: w * 1.7, chamfer: 5, draft: 5,
+      cant: x < 0 ? 0.12 : -0.10, rake: dz > 0 ? 14 : -11, detail: D,
+    }), { pos: [x, BAND.deep + 172, dz] });
+  }
+
+  // 4. M-F7: two launch throats, cut INTO the body's own forward flank rather than
+  //    stuck onto it, plus a recovery slot to port only.
+  for (const s of [-1, 1]) {
+    b.add('dark', throat({ width: 70, height: 60, depth: 74, detail: D }), { pos: [s * 58, -58, 306] });
+    b.glow([s * 58, -58, 298], 30);
+  }
+  b.add('dark', massRecess(BODY, {
+    z: 20, side: -1, facet: [2, 3], t: 0.5, width: 250, height: 74, depth: 44, wall: 5, detail: D,
+  }));
+  b.glow([-146, -46, 20], 38, [0, -HALF_PI, 0]);
+  if (full) {
+    b.add('dark', massRecess(BODY, {
+      z: -212, side: 1, facet: [1, 2], t: 0.42, width: 92, height: 40, depth: 22, wall: 4, detail: D,
+    }));
+  }
+
+  b.graft([0, 0, 0], [HALF_PI, 0, 0], 52);
+
+  // Approach lighting down the deck's outboard edges, at the game-wide spacing.
+  b.lightRun([-186, BAND.deep + 34, -300], [-186, BAND.deep + 34, 280], [-1, 0, 0], { max: 9 });
+  b.lightRun([186, BAND.deep + 34, -260], [186, BAND.deep + 34, 300], [1, 0, 0], { max: 9 });
 
   return b.finish('ventral_hangar_deck');
 }
@@ -287,60 +347,94 @@ registerModule({
 // ---------------------------------------------------------------------------
 
 /**
- * Cargo racking, and it runs 850 m of the ship's 1400.
+ * CARGO PODS — THE SHALLOW ONE, and it earns the outline by being LONG.
  *
- * This is the SHALLOW module and it earns its place in the outline by being WIDE
- * and LONG instead: two 620 m pressure pods slung on transverse yokes at x = +/-208,
- * which is ten metres outboard of the hull's own widest point, plus one square
- * container that is visibly not the same model as the pods, hung lower and off the
- * centreline.
+ * §4.1's arithmetic is the whole design of this module. Twenty-eight z-bins over
+ * 1402 m is 50.1 m of ship per bin, so a keel-line difference held over 760 m is
+ * fifteen bins and a difference held over the 445 m bay is nine. Length is what buys
+ * the MEAN, and the mean is the quantity recessing the ventral threatens. So this fit
+ * is the shallowest of the three at world -270 and the longest thing on the ship.
  *
- * Against the hangar deck it is the opposite reading in every dimension: broad and
- * flat where that is deep and narrow, and open underneath where that is a slab.
- * Against the field dock it is solid mass where that is a cage.
+ * The rack itself - the spine, the two transverse yokes, the racking - is INSIDE the
+ * berth, landing on both runner rails. What is proud is the lower 40% of two 760 m
+ * pod bellies, plus one square container that came off something else entirely and is
+ * hung lower and off the centreline. That container is the module's whole personality
+ * and it is the only part that breaks the band.
+ *
+ * Against the hangar deck it is the opposite reading in every dimension: broad, flat
+ * and long where that is deep, narrow and short. Against the field dock it is solid
+ * mass where that is a cage.
  */
 function buildCargoExpansion(ctx) {
   const b = new ModuleBuilder(ctx, 'coalition');
   const D = b.detail, full = b.full;
 
-  // Keel spine the whole rack hangs off. Long, so the module reads as one object.
-  // Its TOP has to reach the collar plate, which sits at local y 0 .. -5.9; at
-  // height 34 hung from y = -46 it topped out at -29 and the rack was bolted to
-  // nothing. Deeper and raised, so it meets the plate and still clears the yokes.
-  b.add('hull', G.panelledSlab({ width: 132, height: 52, depth: 830, chamfer: 10, detail: D }),
-    { pos: [0, -28, -10] });
-  b.graft([0, 0, 0], [HALF_PI, 0, 0], 42);
+  // 1. THE RACK, in the berth. 830 m of the hull's own section, beam : depth 2.3-2.6.
+  const RACK = [
+    [-412, 96, -8, -84, 0.46, 0.50, 0.90],
+    [-190, 128, -6, -104, 0.47, 0.52, 0.88],
+    [180, 128, -6, -104, 0.47, 0.52, 0.88],
+    [408, 88, -12, -78, 0.43, 0.47, 0.94],
+  ];
+  b.add('hull', massLoft(RACK, { detail: D, label: 'cargo rack' }));
+  // M-F5, at 132 / 104 / 118 m. Never evenly - an even rhythm reads as tiling.
+  b.add('plating', massFrames(RACK, [-284, -152, -48, 70], { detail: D }));
+  // M-F6 / F10. Port and starboard runs differ in length and in z (M-F9).
+  b.add('dark', massStrake(RACK, { z0: -380, z1: -40, side: -1, facet: [2, 1], t0: 0.12, t1: 0.64, drift: 0.16, out: 5, detail: D }));
+  b.add('dark', massStrake(RACK, { z0: -120, z1: 366, side: 1, facet: [2, 1], t0: 0.24, t1: 0.72, drift: -0.12, out: 5, detail: D }));
 
-  // Two transverse yokes carrying the pods outboard. Unequal spacing: a load path
-  // is where the load is, not where a drawing looked tidy.
-  for (const [dz, w] of [[-296, 452], [232, 418]]) {
-    b.add('hull', G.panelledSlab({ width: w, height: 30, depth: 74, chamfer: 8, detail: D }),
-      { pos: [0, -128, dz] });
-  }
-
-  // Two 620 m pressure pods, outboard of the hull's own beam.
+  // 2. TWO 760 m POD BELLIES, half-buried in the rack. Their tops are inside the
+  //    berth and only the lower 40% is proud, so what the keel line sees is a long
+  //    shallow swell rather than a slung cylinder. At world -270 they are the SHALLOW
+  //    band, held over fifteen of the twenty-eight bins.
+  //    M-F4 asserts beam : depth >= 1.6 and it FIRED on the first draft of this table
+  //    at 1.26 - a pod 100 m across and 78 m deep is a cylinder wearing a section.
+  //    A pressure pod on a flat ship is wide and shallow, and now it measures so.
+  const POD = (s) => [
+    [-372 + s * 14, 60, BAND.shallow + 88, BAND.shallow + 22, 0.46, 0.50, 0.88],
+    [-120, 76, BAND.shallow + 96, BAND.shallow + 2, 0.47, 0.52, 0.86],
+    [160, 76, BAND.shallow + 96, BAND.shallow + 2, 0.47, 0.52, 0.86],
+    [386 + s * 10, 58, BAND.shallow + 86, BAND.shallow + 26, 0.44, 0.48, 0.92],
+  ];
   for (const s of [-1, 1]) {
-    b.add('plating', G.pipeRun({
-      length: 620, radius: 68, sides: 6, axis: 'z', flanges: full ? 2 : 0, detail: D,
-    }), { pos: [s * 208, -172, -320] });
+    b.add('plating', G.place(massLoft(POD(s), { detail: D, label: 'cargo pod', keep: G.FACET_LOD.far }),
+      { pos: [s * 176, 0, 0] }));
   }
 
-  // ...and one square container that came off something else entirely, hung lower
-  // and further forward than either pod. This is the module's whole personality:
-  // it is the only part of the rack that breaks the -300 m line.
-  b.add('hull', G.panelledSlab({ width: 148, height: 108, depth: 330, chamfer: 12, detail: D }),
-    { pos: [-16, -216, 96] });
+  // 3. Two transverse yokes carrying the pods. Unequal spacing: a load path is where
+  //    the load is, not where a drawing looked tidy.
+  for (const [dz, w, h] of [[-296, 400, 34], [232, 372, 28]]) {
+    b.add('hull', G.bevelBox({
+      width: w, height: h, depth: 70, chamfer: 7, draft: 7, cant: dz < 0 ? -0.12 : 0.10, detail: D,
+    }), { pos: [0, BAND.shallow + 104, dz] });
+  }
 
+  // 4. ...AND ONE SQUARE CONTAINER THAT CAME OFF SOMETHING ELSE. Canted, drafted, off
+  //    the centreline and hung 44 m lower than either pod. It is the only element on
+  //    the module that is not in the module's own language, which is the point: this
+  //    ship is a salvager and the container is a different ship's.
+  b.add('hull', G.bevelBox({
+    width: 152, height: 104, depth: 330, chamfer: 14, draft: 12, cant: 0.13, rake: -16, detail: D,
+  }), { pos: [-24, BAND.shallow + 44, 108] });
+
+  // 5. M-F7: two cuts in the rack's own flank with the racking machinery inside them.
+  b.add('dark', massRecess(RACK, {
+    z: -246, side: 1, facet: [2, 3], t: 0.46, width: 132, height: 46, depth: 26, wall: 5, detail: D,
+  }));
   if (full) {
-    // Strapping over the pods, at three unequal stations.
-    for (const dz of [-232, 24, 268] ) {
-      b.add('greeble', G.panelledSlab({ width: 500, height: 12, depth: 18, detail: D }),
-        { pos: [0, -170, dz] });
+    b.add('dark', massRecess(RACK, {
+      z: 122, side: -1, facet: [1, 2], t: 0.38, width: 96, height: 38, depth: 20, wall: 4, detail: D,
+    }));
+    // Strapping over the pods, at three unequal stations and one of them only to port.
+    for (const [dz, s] of [[-232, 0], [24, 0], [268, -1]]) {
+      b.add('greeble', G.bevelBox({
+        width: s ? 240 : 452, height: 11, depth: 17, chamfer: 3, cant: 0.09, detail: D,
+      }), { pos: [s * 108, BAND.shallow + 96, dz] });
     }
-    b.add('greeble', G.hexStrut({ length: 96, radius: 11, axis: 'y', detail: D }), { pos: [-16, -166, 236] });
   }
 
-  b.lightRun([0, -30, 380], [0, -30, -380], [0, 0.4, 1], { max: 10 });
+  b.graft([0, 0, 0], [HALF_PI, 0, 0], 42);
+  b.lightRun([0, -14, 380], [0, -14, -380], [0, 0.4, 1], { max: 10 });
 
   return b.finish('ventral_cargo_expansion');
 }
@@ -366,93 +460,99 @@ registerModule({
 // ---------------------------------------------------------------------------
 
 /**
- * An open drydock cage under the keel, sized to take a frigate broadside-on: two
- * 940 m rails at x = +/-268, three portal frames spanning 570 m across, four legs,
- * three articulated arms and a fabricator drum.
+ * THE FIELD DOCK — THE MID BAND, and the one you can see stars through.
  *
- * The point of contrast with the hangar deck is that this one is OPEN. You can see
- * stars through it from every angle, so the two never read the same even though
- * both are "a big thing under the ship" - one is a solid body, one is a skeleton.
- * The point of contrast with the cargo pods is that this one is a FRAME with mass
- * only at its edges, and it is 200 m wider and 90 m deeper than they are.
+ * Sized to take a frigate broadside-on: 940 m of open drydock. The point of contrast
+ * with the hangar deck is that this one is a CAGE - mass only at its edges - so the
+ * two never read the same even though both are "a big thing under the ship". The
+ * point of contrast with the cargo pods is that those are solid.
+ *
+ * Its body is a spine in the berth. What hangs is two working rails at world -370
+ * held over nineteen of the twenty-eight z-bins, three portal frames, and the arms.
+ * The rails stay OUTBOARD at x +-244 on purpose: they are 18 m wider than the berth,
+ * and the half-beam channel of the outline signature is the one this fit contributes
+ * to that the other two do not.
  */
 function buildRepairBay(ctx) {
   const b = new ModuleBuilder(ctx, 'coalition');
   const D = b.detail, full = b.full;
 
   b.graft([0, 0, 0], [HALF_PI, 0, 0], 44);
-  // Spine the cage hangs from, threaded through the cradle throat. Raised and
-  // deepened for the same reason as the cargo rack's: the collar plate stops at
-  // local y = -6.2 and a spine topping out at -23 left the whole 940 m cage hanging
-  // off a seventeen-metre gap. It reads as one object in side view only because the
-  // hull happens to sit behind it.
-  b.add('hull', G.panelledSlab({ width: 138, height: 52, depth: 760, chamfer: 10, detail: D }),
-    { pos: [0, -31, -20] });
 
-  // THE THREE PORTAL FRAMES. Each is a transverse beam on two down-legs, and the
-  // gaps between them are the module: this is the only thing on the ship you can
-  // see the gas giant through in plan view.
+  // 1. THE SPINE, in the berth, on both runner rails. Beam : depth 2.2-2.5.
+  const SPINE = [
+    [-400, 78, -10, -78, 0.46, 0.50, 0.90],
+    [-160, 104, -8, -96, 0.47, 0.52, 0.88],
+    [200, 104, -8, -96, 0.47, 0.52, 0.88],
+    [396, 72, -14, -70, 0.43, 0.47, 0.94],
+  ];
+  b.add('hull', massLoft(SPINE, { detail: D, label: 'dock spine' }));
+  b.add('plating', massFrames(SPINE, [-268, -142], { detail: D }));
+  b.add('dark', massStrake(SPINE, { z0: -350, z1: -60, side: 1, facet: [2, 1], t0: 0.14, t1: 0.66, drift: 0.14, out: 5, detail: D }));
+
+  // 2. THE TWO WORKING RAILS, 940 m, at the MID band. Same section family as the
+  //    spine, so the cage is made of the ship rather than of scaffolding poles -
+  //    which is exactly what four `panelledSlab`s made it before.
+  //    M-F4 fired here too, at 1.08: a 52 m rail 48 m deep is a bar, not a section.
+  //    A dock rail a frigate is slung under is wide enough to walk along.
+  const RAIL = (s) => [
+    [-462 + s * 18, 30, BAND.mid + 50, BAND.mid + 14, 0.46, 0.50, 0.9],
+    [20 + s * 60, 38, BAND.mid + 44, BAND.mid, 0.46, 0.50, 0.9],
+    [446 + s * 14, 28, BAND.mid + 48, BAND.mid + 16, 0.46, 0.50, 0.9],
+  ];
+  for (const s of [-1, 1]) {
+    b.add('plating', G.place(massLoft(RAIL(s), { detail: D, label: 'dock rail', keep: G.FACET_LOD.far }),
+      { pos: [s * 244, 0, 0] }));
+  }
+
+  // 3. THREE PORTAL FRAMES, and the gaps between them are the module. Each is a
+  //    transverse beam on two down-legs; the legs run from the spine THROUGH the beam
+  //    to the rail, so all three levels are tied at one station and nothing hangs.
   const portals = [-372, -20, 352];
   for (let i = 0; i < portals.length; i++) {
     const z = portals[i];
-    const w = i === 1 ? 570 : 508;
-    // Square-cornered: this is Coalition dock structure, and three chamfered
-    // beams is forty-eight triangles spent on an edge nobody reads at 3 km.
-    b.add('plating', G.panelledSlab({ width: w, height: 34, depth: 56, detail: D }),
-      { pos: [0, -212, z] });
+    const w = i === 1 ? 552 : 494;
+    b.add('plating', G.bevelBox({
+      width: w, height: 32, depth: 54, chamfer: 7, draft: 7, cant: i === 1 ? -0.11 : 0.10, detail: D,
+    }), { pos: [0, BAND.mid + 42, z] });
     for (const s of [-1, 1]) {
-      // Uncapped: the leg meets the spine above it and the working rail below it, so
-      // both ends are buried. Twelve triangles instead of twenty, six times over.
-      //
-      // `hexStrut` runs from its origin along +Y, which is what this got wrong: at
-      // length 190 struck from y = -212 it spanned -212 .. -22 and stopped dead at
-      // the portal beam it was supposed to pass through, leaving the two 940 m rails
-      // and everything on them hanging 29 m below the nearest structure. It now runs
-      // -290 .. -30: spine at the top, beam through the middle, rail at the foot.
-      b.add('hull', G.hexStrut({
-        length: 260, radius: 17, radiusEnd: 13, axis: 'y', caps: false, detail: D,
-      }), { pos: [s * (w * 0.5 - 24), -290, z] });
+      b.add('hull', G.bevelBox({
+        width: 26 + (i % 2) * 5, height: 232, depth: 32, chamfer: 5, draft: 5,
+        cant: s * (i === 1 ? 0.12 : -0.09), detail: D,
+      }), { pos: [s * (w * 0.5 - 26), BAND.mid + 148, z] });
     }
-    // KING POST. The down-legs stand at x = +-230 and +-261 and the keel spine is
-    // 138 m higher and only 138 m wide, so the three portal frames, the two 940 m
-    // rails, the arms and the fabricator hung off the ship touching nothing at all.
-    // It read as one object in side and top view purely because the hull's own
-    // salvage cradle sits behind the gap; from the bow it was a dock floating below
-    // a ship. One post per frame, on the centreline, from the spine to the beam.
-    b.add('hull', G.hexStrut({
-      length: 158, radius: 19, radiusEnd: 15, axis: 'y', caps: false, detail: D,
-    }), { pos: [0, -202, z] });
+    // KING POST, on the centreline, spine to beam. Without it the down-legs stand at
+    // x +-221..250 and the spine is only 104 wide, so the whole cage hung off nothing.
+    // Un-drafted, and that is a budget decision stated rather than absorbed: both
+    // ends of a king post are buried, the spine above it and the portal beam below,
+    // so 32 triangles of end bevel each were paying for an edge nothing can see.
+    // `cant` still keeps its four long faces off their axes, and that is free.
+    b.add('hull', G.bevelBox({
+      width: 30, height: 156, depth: 34, chamfer: 5, cant: i === 1 ? 0.13 : -0.10, detail: D,
+    }), { pos: [0, BAND.mid + 118, z] });
   }
 
-  // The two working rails: 940 m fore and aft, well outboard of the hull's beam.
-  for (const s of [-1, 1]) {
-    b.add('plating', G.panelledSlab({ width: 52, height: 40, depth: 940, chamfer: 10, detail: D }),
-      { pos: [s * 244, -278, -20] });
-  }
-
-  // Three arms. Two folded against the starboard rail, one extended to port and
-  // working - the module's asymmetry, and the reason it reads as busy machinery
-  // rather than as a bridge truss.
-  // Both arms are uncapped: the folded one is buried in the rail at both ends and
-  // the extended one is buried in the rail at its root and in its own working head
-  // at its tip, so sixteen triangles of end cap were paying for nothing. That is
-  // where the three king posts above came from - the module is at its 400 ceiling
-  // and structure that holds the ship together outranks a cap nobody can see.
+  // 4. Three arms: two folded against the starboard rail, one extended to port and
+  //    working. The asymmetry is why this reads as busy machinery rather than as a
+  //    bridge truss, and M-F9 forbids the mirrored alternative anyway.
   if (full) {
     b.add('greeble', G.hexStrut({ length: 150, radius: 11, axis: 'z', caps: false, detail: D }),
-      { pos: [204, -232, -150] });
+      { pos: [206, BAND.mid + 52, -150] });
+    b.add('dark', massRecess(SPINE, {
+      z: -96, side: -1, facet: [2, 3], t: 0.44, width: 104, height: 40, depth: 22, wall: 4, detail: D,
+    }));
   }
   b.add('greeble', aimed(G.hexStrut({ length: 210, radius: 13, axis: 'z', caps: false, detail: D }),
-    [-1, -0.36, 0], [-220, -196, 150]));
-  b.add('greeble', G.panelledSlab({ width: 46, height: 36, depth: 40, detail: D }), { pos: [-418, -264, 150] });
-  b.glow([-418, -286, 150], 20, [HALF_PI, 0, 0]);
+    [-1, -0.36, 0], [-222, BAND.mid + 84, 150]));
+  b.add('greeble', G.bevelBox({ width: 44, height: 34, depth: 38, chamfer: 5, draft: 4, cant: 0.14, detail: D }),
+    { pos: [-420, BAND.mid + 8, 150] });
+  b.glow([-420, BAND.mid - 14, 150], 20, [HALF_PI, 0, 0]);
 
-  // Fabricator drum ON the starboard rail - it hung 6 m clear of it, which at this
-  // module's seeded mount cant is a clean break in the outline.
-  b.add('greeble', G.pipeRun({ length: 168, radius: 40, sides: 6, axis: 'z', flanges: full ? 1 : 0, detail: D }),
-    { pos: [244, -326, -140] });
+  // Fabricator drum ON the starboard rail, not 6 m clear of it.
+  b.add('greeble', G.pipeRun({ length: 168, radius: 38, sides: 6, axis: 'z', flanges: full ? 1 : 0, detail: D }),
+    { pos: [244, BAND.mid - 24, -140] });
 
-  b.lightRun([-244, -302, -400], [-244, -302, 380], [0, -1, 0], { max: 11 });
+  b.lightRun([-244, BAND.mid - 4, -400], [-244, BAND.mid - 4, 380], [0, -1, 0], { max: 8 });
 
   return b.finish('ventral_repair_bay');
 }

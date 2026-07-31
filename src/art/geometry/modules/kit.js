@@ -140,6 +140,195 @@ export function glowDiscGeo(radius) {
 }
 
 // ---------------------------------------------------------------------------
+// THE HULL'S OWN FORM LANGUAGE, made available to a module in three calls.
+//
+// A census across the five module files found this, and it is the whole diagnosis
+// of "trash strewn on a decent hull" stated as a count:
+//
+//     G.panelledSlab  46      G.bevelBox      0
+//     G.hexStrut      41      G.facetProfile  0
+//     G.pipeRun       18      G.recess        0
+//
+// Zero uses of all three of the hull's shape-makers, and forty-six of the one thing
+// `greeble.js:490-497` says a hull must not be built from: "a `panelledSlab` is a
+// rectangular prism ... 100% of its surface area is axis-aligned. Ninety-nine of
+// those in a stack is what `docs/probes/cruiser.png` WAS." So the modules were built
+// out of the exact primitives the hull redesign spent five thousand triangles
+// removing, which is why they read as scaffolding beside it however they are lit.
+//
+// The vocabulary already existed, in the same file, and no module called it. The four
+// functions below are the reason that is now cheap: a module gets the hull's section,
+// its structural-frame rhythm, its on-surface plate runs and its subtractive detail
+// for one line each, instead of thirty lines of hand-rolled loft per module.
+//
+// The rules they implement (design/module-integration.md §2.2), and every one of them
+// is a property of the hull measured by `ships/audit.mjs`:
+//
+//   M-F1  the primary mass is a LOFT of >= 3 `facetProfile` stations, not a prism
+//   M-F2  the module carries its OWN KNUCKLE - one continuous chine at 80 +- 6 deg
+//         of dihedral, `dark` below it and `plating`/`hull` above
+//   M-F3  no dihedral in the 12-28 degree band anywhere. `facetProfile` guarantees
+//         this: its five dihedrals are 6.2 / 35.3 / 80.8 / 32.6 / 10.6
+//   M-F4  section beam : depth >= 1.6 on any mass over 80 m long
+//   M-F5  two to four structural frames, 90-140 m apart and NEVER evenly
+//   M-F6  at least one strake lying ON the module's own flank
+//   M-F7  subtractive detail only - cut the recess, then put machinery in it
+// ---------------------------------------------------------------------------
+
+/** The hull's own dihedral at the knuckle, degrees. Modules echo it (M-F2). */
+export const MODULE_CHINE = 80.8;
+
+/**
+ * A station row, in the same seven columns `cruiser.js#HULL_STATIONS` uses:
+ * `[z, half, top, bottom, knuckle, deckFlat, flare]`. Writing a module's mass as a
+ * table of these instead of as a stack of boxes is the entire change.
+ */
+export const massProfile = ([, half, top, bot, knuckle = 0.44, deckFlat = 0.50, flare = 0.9], keep = null) =>
+  G.facetProfile({ maxHalf: half, top, bottom: bot, knuckle, deckFlat, flare, keep });
+
+/** Linear interpolation of a module's own station table at an arbitrary z. */
+export function massAt(rows, z) {
+  let a = rows[0], b = rows[1] ?? rows[0];
+  for (let i = 0; i < rows.length - 1; i++) {
+    if (z >= rows[i][0] && z <= rows[i + 1][0]) { a = rows[i]; b = rows[i + 1]; break; }
+  }
+  if (z <= rows[0][0]) { a = b = rows[0]; }
+  if (z >= rows[rows.length - 1][0]) { a = b = rows[rows.length - 1]; }
+  const span = b[0] - a[0];
+  const t = span === 0 ? 0 : (z - a[0]) / span;
+  return a.map((v, i) => v + ((b[i] ?? v) - v) * t);
+}
+
+/**
+ * M-F1 / M-F2 / M-F4: a module's primary mass, built the way the hull is built.
+ *
+ * One loft through the given stations of the hull's own twelve-point section, so the
+ * mass arrives with a knuckle, a cambered deck, a keel with deadrise and not one
+ * facet within five degrees of an axis - for the same triangle count a chamfered box
+ * costs, and with the value split available for free at the knuckle.
+ *
+ * ASSERTS M-F4 rather than documenting it. A module mass over 80 m long whose section
+ * is taller than 1/1.6 of its beam is from a different ship in the literal sense, and
+ * the failure mode is that nobody notices until it is on the hull.
+ */
+export function massLoft(rows, {
+  detail = 2, capFront = true, capBack = true, label = 'mass', keep = undefined,
+} = {}) {
+  // Twelve points at LOD0, twelve at LOD1 and eight at LOD2, exactly as the hull
+  // does it (`greeble.js#FACET_LOD`): with six facets a side every point carries a
+  // 33-degree chine or more, so dropping one moves the outline tens of metres.
+  // `keep` is an explicit escape for a SECONDARY mass - a deck beam, a pod belly -
+  // where 8 points is under a pixel and the module is at its ceiling.
+  const card = keep !== undefined ? keep : (detail >= G.DETAIL.MID ? null : G.FACET_LOD.far);
+  const len = Math.abs(rows[rows.length - 1][0] - rows[0][0]);
+  if (len > 80) {
+    for (const r of rows) {
+      const ratio = (r[1] * 2) / Math.max(1e-3, r[2] - r[3]);
+      if (ratio < 1.6) {
+        throw new Error(`[modules] ${label} station z=${r[0]} has beam:depth ${ratio.toFixed(2)}, `
+          + 'under M-F4\'s 1.6. The hull holds >= 1.96 at every station and averages 2.27; a module '
+          + 'that is taller than it is wide does not read as a piece of the same fleet.');
+      }
+    }
+  }
+  return G.loft(rows.map((r) => ({ z: r[0], points: massProfile(r, card) })), { capFront, capBack });
+}
+
+/**
+ * M-F5: structural frames, at the hull's rhythm. A 4 m step in the module's OWN
+ * section at each z, built exactly as `cruiser.js` builds the hull's eight: the
+ * profile at that station scaled 1.04 with the deck and keel pushed out.
+ *
+ * This is the cue that says "cut off a capital ship" rather than "modelled at 60 m
+ * scale", and it is the cheapest one there is - 24 triangles a frame.
+ */
+export function massFrames(rows, zs, { detail = 2, scale = 1.04, push = 4 } = {}) {
+  // A frame is a 4 m step, not an outline: the 8-point map costs it nothing and it
+  // has to survive to LOD1, which is where the benchmark camera actually sits.
+  const keep = detail >= G.DETAIL.FULL ? null : G.FACET_LOD.far;
+  const parts = [];
+  for (const z of zs) {
+    const s = massAt(rows, z);
+    const ring = (k) => massProfile(
+      [z, s[1] * k, s[2] + (k - 1) * push * 25, s[3] - (k - 1) * push * 25, s[4], s[5], s[6]], keep,
+    );
+    parts.push({
+      geo: G.loft([
+        { z: z - 4, points: ring(1.0) }, { z: z - 2.4, points: ring(scale) },
+        { z: z + 2.4, points: ring(scale) }, { z: z + 4, points: ring(1.0) },
+      ], { capFront: false, capBack: false }),
+    });
+  }
+  return G.mergeParts(parts);
+}
+
+/**
+ * M-F6: a plate lying ON the module's own flank, cut from the module's own section.
+ *
+ * Same construction as `cruiser.js#skinPlate`, against the module's table: take the
+ * two points bounding a facet at each station, inset along the facet, offset along
+ * the facet's OUTWARD normal. A plate that is a straight bar at a fixed x on a body
+ * whose section moves is the defect `cruiser.js:876-880` describes at length; this
+ * cannot be that, because the plate IS the surface, offset.
+ *
+ * `drift` walks the plate across its facet as it runs, which is an angled plate that
+ * has not left the surface (M-F8's 7-degree rule, built rather than faked).
+ */
+export function massStrake(rows, {
+  z0, z1, side = 1, facet = [2, 1], t0 = 0.08, t1 = 0.92, drift = 0, out = 5, detail = 2,
+}) {
+  const zs = [z0];
+  for (const r of rows) if (r[0] > z0 && r[0] < z1) zs.push(r[0]);
+  zs.push(z1);
+  const thin = detail >= G.DETAIL.FULL || zs.length <= 3
+    ? zs : zs.filter((z, i) => i === 0 || i === zs.length - 1 || i % 2 === 0);
+  const sgn = facet[1] > facet[0] ? 1 : -1;
+  const span = (z1 - z0) || 1;
+  return G.loft(thin.map((z) => {
+    const P = massProfile(massAt(rows, z));
+    const A = P[facet[0]], B = P[facet[1]];
+    const dx = B[0] - A[0], dy = B[1] - A[1];
+    const l = Math.hypot(dx, dy) || 1;
+    const nx = (dy / l) * out * sgn, ny = (-dx / l) * out * sgn;
+    const k = drift * ((z - z0) / span);
+    const ta = Math.min(0.97, Math.max(0.03, t0 + k)), tb = Math.min(0.97, Math.max(0.03, t1 + k));
+    let pts = [
+      [A[0] + dx * ta, A[1] + dy * ta], [A[0] + dx * tb, A[1] + dy * tb],
+      [A[0] + dx * tb + nx, A[1] + dy * tb + ny], [A[0] + dx * ta + nx, A[1] + dy * ta + ny],
+    ].map(([x, y]) => [side * x, y]);
+    let a2 = 0;
+    for (let i = 0; i < 4; i++) { const j = (i + 1) % 4; a2 += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1]; }
+    if (a2 < 0) pts = pts.slice().reverse();
+    return { z, points: pts };
+  }));
+}
+
+/**
+ * M-F7: a recess cut INTO a facet of the module's own mass, lying on the surface and
+ * facing along that facet's outward normal.
+ *
+ * `G.recess` is used zero times in the module stream today and it is the only cheap
+ * way to get a self-shadowing dark value: the four walls face four directions, so at
+ * least two are always turned away from the key, and the aperture reads as a hole
+ * rather than as a painted rectangle. Additive greeble on a proud face does not do
+ * this under any key, which is why §3 of the hull's own brief forbids it.
+ */
+export function massRecess(rows, {
+  z, side = 1, facet = [2, 3], t = 0.5, width = 40, height = 20, depth = 12, wall = 4, detail = 2,
+}) {
+  const P = massProfile(massAt(rows, z));
+  const A = P[facet[0]], B = P[facet[1]];
+  const dx = B[0] - A[0], dy = B[1] - A[1];
+  const l = Math.hypot(dx, dy) || 1;
+  const sgn = facet[1] > facet[0] ? 1 : -1;
+  const nx = (dy / l) * sgn, ny = (-dx / l) * sgn;
+  const px = A[0] + dx * t, py = A[1] + dy * t;
+  // `recess` opens toward +Z at z = 0, so aim its +Z down the outward normal.
+  return aimed(G.recess({ width, height, depth, wall, detail }),
+    [side * nx, ny, 0], [side * px, py, z]);
+}
+
+// ---------------------------------------------------------------------------
 // Shared sub-shapes. Anything two modules both want lives here, so the detail
 // vocabulary stays one vocabulary.
 // ---------------------------------------------------------------------------

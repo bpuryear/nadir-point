@@ -399,6 +399,36 @@ const RIDGE_LOD1_Z = [-430, -370, -300, -210, -150, -40, 20, 60];
  * the hole that check finds. If a future edit needs the ship shallower, the fix is to
  * widen the bay further, never to close the gap between the chords.
  *
+ * ---------------------------------------------------------------------------
+ * THE BAY IS NOW A BERTH, AND THE FLOOR DROPPED 20 m TO PAY FOR IT
+ * ---------------------------------------------------------------------------
+ * The owner's second note was "the worst looking part of the ship is the box on the
+ * bottom - can we redesign that module to be internal?", and the box is real: the
+ * carrier fit's landing platform is a 286 x 540 m slab whose top edge sat 290 m BELOW
+ * this bay's floor. It was not attached to the bay in any sense; it hung under the
+ * whole assembly on a neck.
+ *
+ * So the bay grows the volume a module BODY can live in, and only the module's
+ * deployed working gear stays outside it:
+ *
+ *     chordBot   -180 -> -200        clear depth between the chords 92 -> 112 m
+ *     floor      -202 -> -222        envelope height 350 -> 370 m
+ *
+ * TWENTY AND NOT ONE METRE MORE, and the number is forced rather than chosen. The
+ * brief requires envelope beam : height >= 1.5 : 1 (see the header). 562 / 1.5 =
+ * 374.7, and the hull is 350 tall, so there are 24.7 m of height available in total.
+ * Twenty spends most of them and leaves slack; anything that wants the rest has to
+ * re-derive this.
+ *
+ * `throat`, `railIn`, `railOut`, `chordIn`, `chordOut` and all five frame z values do
+ * NOT move. Widening the rails would change the hull form, and R2.7 only gets better
+ * from this: the clear span between the chords is what that check measures.
+ *
+ * TWO RUNNER RAILS at x +-126 are what a module's spine now lands on ALONG ITS WHOLE
+ * LENGTH instead of at one 44 m disc. They are carried by all five transverse frames,
+ * which already span the full beam from y -60 to -192, so they are a real load path
+ * and not a moulding.
+ *
  * The rails stand 110 m clear of the hull flank beside them, carried on five
  * transverse frames that pass under the keel, so in plan there are four bands of
  * background between hull and rail on each side and in profile the 92 m band between
@@ -410,8 +440,16 @@ const BAY = {
   chordOut: 270, chordIn: 226,     // bottom chord, slightly inboard of the rail
   throat: 150,                     // clear half-width of the slot itself
   roof: -48, chordTop: -88,        // top chord: 40 m of real section depth, not a plank
-  floor: -202, chordBot: -180,
-  frameTop: -60, frameBot: -192,   // frames OVERLAP both chords rather than abutting
+  floor: -222, chordBot: -200,     // 112 m of clear berth between the chords
+  runnerX: 126, runnerW: 22, runnerH: 16, runnerY: -80,
+  frameTop: -60, frameBot: -212,   // frames OVERLAP both chords rather than abutting
+                                   // them, and frameBot followed the floor down: at
+                                   // -192 against a chord now at -200..-222 the two
+                                   // stopped touching, and at LOD2 the bay's profile
+                                   // hole leaked out through the 8 m gap and
+                                   // silhouette.mjs's "bay is a through-void" check
+                                   // went MISSING. A truss whose members only kiss
+                                   // falls apart the moment a number moves.
                                    // them: two faces that merely touch are coplanar,
                                    // which is a z-fight, and a truss whose members
                                    // only kiss falls apart the moment an LOD drops
@@ -1172,7 +1210,7 @@ export function hullParts({ rng, lod = 0 }) {
   // =========================================================================
   buildBay(B, D, full, r);
   buildYoke(B, D, full);
-  massBox('ventral-assembly', -278, -202, -240, 278, -48, 700);
+  massBox('ventral-assembly', -278, BAY.floor, -240, 278, -48, 700);
 
   // THE TOW TRACK: the keel beam that ties the bay's mouth to the yoke's root, so the
   // two read as ONE 860 m assembly rather than as two unrelated lumps.
@@ -1448,6 +1486,26 @@ function buildBay(B, D, full, rng) {
       width: BAY.railOut * 2, height: BAY.frameTop - BAY.frameBot, depth: t,
       chamfer: t >= 20 ? 7 : 4, draft: Math.min(6, t * 0.3), detail: D,
     }), { pos: [0, (BAY.frameTop + BAY.frameBot) * 0.5, z], rot: [rake, 0, 0] });
+  }
+
+  // -------------------------------------------------------------------------
+  // THE TWO RUNNER RAILS — the ventral mount's plate run, and the reason a module
+  // fitted here now lands on 445 m of structure instead of on a 44 m disc.
+  //
+  // They hang just under the keel at x +-126, which is where all five transverse
+  // frames already pass (y -60 .. -192, full beam), so every one of them picks a rail
+  // up. That is the difference between a rail and a moulding: this one has five
+  // supports and a job. A module's spine sits down between them and the eye reads the
+  // module as BERTHED rather than as slung.
+  //
+  // `dark`, because everything below the knuckle on this ship is (F10), and canted so
+  // neither of their long faces is square to an axis.
+  // -------------------------------------------------------------------------
+  for (const s of [-1, 1]) {
+    B.add('core', 'dark', G.bevelBox({
+      width: BAY.runnerW, height: BAY.runnerH, depth: len - 30,
+      chamfer: 5, draft: 6, cant: s * 0.10, detail: D,
+    }), { pos: [s * BAY.runnerX, BAY.runnerY + (s < 0 ? 0 : 3), cz - 4] });
   }
 
   // Reactor bulkhead: the forward face, and the only closed one.
