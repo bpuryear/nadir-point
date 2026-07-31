@@ -115,9 +115,40 @@ function triangles(roots) {
  * So the front figures stay printed, because a large one still means something (it
  * is how the carrier build's outboard engine pod was found hanging 26 m below its
  * spar), and they are read by a person rather than by the exit code.
+ *
+ * ---------------------------------------------------------------------------
+ * THE FRONT VIEW GATES NOW, WITH A METRE FLOOR
+ * ---------------------------------------------------------------------------
+ * Everything above is true and it was still the wrong conclusion, because "read by a
+ * person" is the same claim `tools/gates.mjs` was written to reject and it failed the
+ * same way. The front figures sat in this output for four waves reading
+ *
+ *     bow / bow_mining_array        front(fyi) 1x ~67 m
+ *     dorsal / dorsal_shield_pylons front(fyi) 1x ~69 m
+ *     dorsal / dorsal_sensor_mast   front(fyi) 2x ~22 m
+ *     starboard / port_cannon_bank  front(fyi) 1x ~31 m
+ *
+ * against a 26 m precedent - and every one of them was a REAL detached lobe, not the
+ * degenerate-projection artefact this comment describes. The mining array's three
+ * arms were struck from a root radius of 96 on a drum of radius 62. The shield
+ * pylons splayed outboard past a node on the centreline. The sensor mast's two panels
+ * sat at x +-40 on a 10 m pole. All four are fixed in the same wave as the mount
+ * seats, because a lobe standing clear of the hull crown with nothing crossing the
+ * gap IS an unseated module, at a different scale.
+ *
+ * So `front` joins the exit code, and the degenerate case is handled by MEASUREMENT
+ * rather than by exemption: a front fragment fails only once it is `FRONT_FLOOR_M`
+ * across. An uncapped `pipeRun` flange seen exactly down its own axis projects to a
+ * ring a few metres wide; a module lobe hanging clear is tens. 26 m is the precedent
+ * the four defects above were judged against, and it is 0.6 px at the 43 m/px
+ * max-zoom read - so nothing that passes this is visible as debris and nothing that
+ * fails it is an artefact of the instrument.
  */
 const VIEWS = { side: [2, 1], top: [2, 0], front: [0, 1] };
-const GATED = new Set(['side', 'top']);
+const GATED = new Set(['side', 'top', 'front']);
+/** Side and top fail on any fragment; front needs this many metres. See above. */
+const FRONT_FLOOR_M = 26;
+const gates = (view, f) => GATED.has(view) && (view !== 'front' || f.metres >= FRONT_FLOOR_M);
 
 /**
  * Rasterise into a fixed world window so two masks are comparable pixel for pixel.
@@ -366,8 +397,8 @@ for (const hp of ['bow', 'dorsal', 'ventral', 'port', 'starboard', 'engine']) {
     for (const view of ['side', 'top', 'front']) {
       const f = fragments(tris, view);
       if (!f.n) continue;
-      bad.push(`${view}${GATED.has(view) ? '' : '(fyi)'} ${f.n}x ~${f.metres.toFixed(0)} m at ${f.where.join(' + ')}`);
-      if (GATED.has(view)) failed = true;
+      bad.push(`${view}${gates(view, f) ? '' : '(under floor)'} ${f.n}x ~${f.metres.toFixed(0)} m at ${f.where.join(' + ')}`);
+      if (gates(view, f)) failed = true;
     }
     if (bad.length) rows.push(`  ${(hp + ' / ' + def.id).padEnd(44)} ${bad.join('   ')}`);
   }
@@ -375,7 +406,7 @@ for (const hp of ['bow', 'dorsal', 'ventral', 'port', 'starboard', 'engine']) {
 }
 if (rows.length) rows.forEach((r) => console.log(r));
 else console.log('  every module hangs together in all three views');
-console.log('  (side and top gate the exit code; front is printed and does not — see VIEWS)');
+console.log(`  (all three views gate the exit code; front needs ${FRONT_FLOOR_M} m — see VIEWS)`);
 
 // The bare hull and the three probe loadouts, which is the sheet a reviewer reads.
 console.log('\nDETACHED FRAGMENTS — bare hull and the three probe loadouts');
@@ -409,9 +440,9 @@ for (const [name, fit] of Object.entries(LOADOUTS)) {
   const bits = [];
   for (const view of ['side', 'top', 'front']) {
     const f = fragments(tris, view);
-    bits.push(`${view}${GATED.has(view) ? '' : '(fyi)'} `
+    bits.push(`${view}${f.n && !gates(view, f) ? '(under floor)' : ''} `
       + `${f.n ? `${f.n}x ~${f.metres.toFixed(0)} m at ${f.where.join(' + ')}` : 'one piece'}`);
-    if (f.n && GATED.has(view)) failed = true;
+    if (f.n && gates(view, f)) failed = true;
   }
   console.log(`  ${name.padEnd(12)} ${bits.join('   ')}`);
 }

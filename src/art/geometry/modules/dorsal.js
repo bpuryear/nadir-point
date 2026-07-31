@@ -31,7 +31,10 @@
 import { registerModule } from '../../../core/contracts.js';
 import { RANGE } from '../../../core/units.js';
 import * as G from '../greeble.js';
-import { ModuleBuilder, MODULE_TRI_BUDGET, barrel, aimed, muzzleAlong } from './kit.js';
+import {
+  ModuleBuilder, MODULE_TRI_BUDGET, barrel, aimed, muzzleAlong,
+  massLoft, massFrames, massStrake, massRecess,
+} from './kit.js';
 
 const HALF_PI = Math.PI * 0.5;
 
@@ -40,6 +43,8 @@ const RAIL_SIDES = [-1, 1];
 const RAIL_X = 30;
 const RAIL_Y = 82;
 const RAIL_MUZZLE_Z = 272;
+/** The gunhouse's stations, `[z, half, top, bottom]`, at module z -6. Beam : depth 1.67. */
+const TURRET = [[-75, 56, 92, 26], [-24, 65, 97, 19], [30, 65, 97, 19], [75, 58, 90, 28]];
 
 // ---------------------------------------------------------------------------
 // T3 — Coalition Rail Battery
@@ -68,12 +73,20 @@ function buildRailBattery(ctx) {
   b.add('dark', G.pipeRun({ length: 20, radius: 58, sides: 8, axis: 'y', caps: false, detail: D }),
     { pos: [0, -2, 0] });
 
-  // Turret body.
-  b.add('hull', G.panelledSlab({ width: 122, height: 80, depth: 150, chamfer: 20, detail: D }),
-    { pos: [0, 58, -6] });
+  // THE TURRET BODY, in the hull's own section. It was 122 x 80, i.e. beam : depth
+  // 1.53 - under M-F4's 1.6, on a mass 150 m long. 130 x 78 turns it over, and a
+  // turret that is wider than it is tall is what every capital in the reference
+  // fleets has: the height goes into the barbette, not into the gunhouse.
+  b.add('hull', G.place(massLoft(TURRET, { detail: D, label: 'rail turret' }), { pos: [0, 0, -6] }));
+  b.add('plating', G.place(massFrames(TURRET, [-38, 34], { detail: D }), { pos: [0, 0, -6] }));
+  // M-F6 / F10: `dark` below the turret's own knuckle, `hull` above it.
+  b.add('dark', G.place(massStrake(TURRET, {
+    z0: -58, z1: 58, side: 1, facet: [2, 1], t0: 0.14, t1: 0.68, drift: 0.12, out: 4, detail: D,
+  }), { pos: [0, 0, -6] }));
   // Aft counterweight, overhanging the plinth and off-centre to port.
-  b.add('plating', G.panelledSlab({ width: 86, height: 44, depth: 62, chamfer: 12, detail: D }),
-    { pos: [-10, 42, -104] });
+  b.add('plating', G.bevelBox({
+    width: 86, height: 44, depth: 62, chamfer: 12, draft: 8, cant: 0.12, rake: -7, detail: D,
+  }), { pos: [-10, 42, -104] });
 
   // The rails. Long, thin, parallel: the read.
   for (const s of RAIL_SIDES) {
@@ -99,9 +112,15 @@ function buildRailBattery(ctx) {
     ));
   }
 
+  // M-F7: the loading gear is IN the turret's flank, not on it.
+  b.add('dark', G.place(massRecess(TURRET, {
+    z: 26, side: -1, facet: [2, 3], t: 0.44, width: 64, height: 26, depth: 16, wall: 4, detail: D,
+  }), { pos: [0, 0, -6] }));
+
   // Ammunition hoist standing proud of the turret roof, to starboard.
-  b.add('plating', G.panelledSlab({ width: 34, height: 46, depth: 54, chamfer: 8, detail: D }),
-    { pos: [34, 118, -44] });
+  b.add('plating', G.bevelBox({
+    width: 34, height: 46, depth: 54, chamfer: 8, draft: 6, cant: -0.14, detail: D,
+  }), { pos: [34, 118, -44] });
 
   b.lightRun([-58, 84, -60], [-58, 84, 60], [-0.4, 0.92, 0], { max: 7 });
 
@@ -140,12 +159,17 @@ registerModule({
  * by a wide margin, which is exactly what a sensor loadout should look like: the
  * silhouette says "this hull sees a long way and cannot punch".
  */
+/** The plinth's stations, `[z, half, top, bottom]`. Beam : depth 3.5. */
+const MAST_PLINTH = [[-46, 38, 22, -4], [-8, 46, 25, -7], [30, 46, 25, -7], [46, 40, 21, -3]];
+/** `[x, y, width, height]`. Two, at different heights and different sizes (M-F9). */
+const MAST_PANELS = [[-40, 150, 42, 54], [38, 112, 30, 38]];
+
 function buildSensorMast(ctx) {
   const b = new ModuleBuilder(ctx, 'concord');
   const D = b.detail, full = b.full;
 
-  b.add('hull', G.panelledSlab({ width: 92, height: 26, depth: 92, chamfer: 10, detail: D }),
-    { pos: [0, 10, 0] });
+  b.add('hull', massLoft(MAST_PLINTH, { detail: D, label: 'mast plinth' }));
+  b.add('plating', massFrames(MAST_PLINTH, [-24], { detail: D }));
   b.graft([0, 22, 0], [-HALF_PI, 0, 0], 40);
 
   // The mast.
@@ -159,11 +183,24 @@ function buildSensorMast(ctx) {
 
   // Secondary panel arrays, port and starboard at different heights — an array
   // that is symmetric reads as decoration; one that is not reads as equipment.
+  //
+  // AND THEY ARE BOLTED TO THE MAST NOW. `tools/silhouette.mjs` counted them as two
+  // detached fragments of about 22 m in the bow-on view: the mast is 10 m in radius
+  // at that height and the panels sat at x +-40, so in projection they were two plates
+  // floating beside a pole. Each now has a stub arm, struck from the mast's own
+  // surface and cut to the measured distance to the panel less a bite of it, so
+  // neither figure is authored and neither can drift.
   if (full) {
-    b.add('plating', G.panelledSlab({ width: 8, height: 54, depth: 34, chamfer: 3, detail: D }),
-      { pos: [-40, 150, 0], rot: [0, 0, 0.34] });
-    b.add('plating', G.panelledSlab({ width: 8, height: 38, depth: 26, chamfer: 3, detail: D }),
-      { pos: [38, 112, 0], rot: [0, 0, -0.34] });
+    for (const [px, py, w, h] of MAST_PANELS) {
+      const root = [Math.sign(px) * 7, py - 6, 0];
+      const d = [px - root[0], py - root[1], 0];
+      b.add('greeble', aimed(G.hexStrut({
+        length: Math.hypot(d[0], d[1]) - w * 0.30, radius: 5, axis: 'z', detail: D,
+      }), d, root));
+      b.add('plating', G.bevelBox({
+        width: w, height: h, depth: h * 0.62, chamfer: 3, draft: 3, cant: px < 0 ? 0.34 : -0.34, detail: D,
+      }), { pos: [px, py, 0] });
+    }
     // Three guy struts leaning in from the plinth to meet the mast.
     for (let i = 0; i < 3; i++) {
       const a = 0.5 + i * 2.09;
@@ -409,43 +446,78 @@ registerModule({
 
 /**
  * Three pylons at angles no human would choose, holding a faceted node 190 m above
- * the deck with nothing visibly connecting it to them. This is the module that
- * makes a loadout read as SCAVENGED-FROM-SOMETHING-OLDER at a glance.
+ * the deck. This is the module that makes a loadout read as SCAVENGED-FROM-
+ * SOMETHING-OLDER at a glance.
+ *
+ * IT USED TO SAY "with nothing visibly connecting it to them", AND IT MEANT IT. The
+ * three pylons splayed OUTBOARD - tilt +0.22 to +0.42 - so their tips finished at
+ * x 90-105 while the node they were holding is 38 m in radius on the centreline. In
+ * the bow-on view `tools/silhouette.mjs` counted the node as a detached fragment
+ * SIXTY-NINE METRES across, against a 26 m precedent: the biggest loose piece in the
+ * library, and the front view did not gate, so it had been printed and read past for
+ * as long as the tool has existed.
+ *
+ * That is the same defect as an unseated module - a lobe standing clear with nothing
+ * crossing the gap - so it is fixed the same way and in the same wave. The pylons now
+ * CONVERGE: each is aimed at its own point inside the crystal and cut to the measured
+ * distance less a bite of it, exactly as `broadside.js`'s flak hoppers are. Neither
+ * the length nor the direction is authored, so neither can drift when the node moves.
+ *
+ * The fiction survives intact and arguably improves. Three legs that splay out and
+ * then bend back in are a CRADLE, and a cradle holding something that is obviously
+ * not from the same civilisation is a better read than a crystal hovering unsupported
+ * - which, at four kilometres against a gas giant, just looks like a bug.
  */
+/** Where the crystal is. Everything else on this module is measured against it. */
+const NODE_Y = 232;
+/** The drum's stations, `[z, half, top, bottom]`. Beam : depth 3.6. */
+const PYLON_DRUM = [[-58, 50, 26, -8], [-16, 62, 30, -4], [22, 62, 30, -4], [58, 52, 24, -6]];
+/**
+ * `a` bearing, `r` root radius on the drum, `t*` the point inside the crystal each
+ * pylon is aimed at. Three different roots and three different targets, so the three
+ * lengths and the three angles all come out different without one of them being typed.
+ */
+const PYLONS = [
+  { a: 0.00, r: 44, tx: 14, ty: -18, tz: 6 },
+  { a: 2.32, r: 38, tx: -12, ty: 4, tz: -9 },
+  { a: 4.22, r: 50, tx: 4, ty: -30, tz: 13 },
+];
+
 function buildShieldPylons(ctx) {
   const b = new ModuleBuilder(ctx, 'derelict');
   const D = b.detail, full = b.full;
 
-  // Base drum, eight sided and canted 6 degrees off the deck plane.
-  b.add('hull', G.pipeRun({ length: 34, radius: 62, sides: 6, axis: 'y', flanges: 0, detail: D }),
-    { pos: [0, 0, 0], rot: [0.06, 0, -0.06] });
+  // Base drum, in the hull's own section and canted off the deck plane. The `pipeRun`
+  // it replaces was a six-sided tube 124 m across with two flat ends square to +-Y -
+  // which is the tube-and-stick vocabulary this wave exists to get rid of.
+  b.add('hull', G.place(massLoft(PYLON_DRUM, { detail: D, label: 'pylon drum' }),
+    { rot: [0, 0, -0.06] }));
   b.graft([0, 34, 0], [-HALF_PI, 0, 0], 46);
 
-  // Three pylons. 0, 133 and 242 degrees, three different lengths, three different
-  // splay angles. Nothing here agrees with anything else, on purpose.
-  const pylons = [
-    { a: 0.00, len: 178, tilt: 0.34 },
-    { a: 2.32, len: 148, tilt: 0.22 },
-    { a: 4.22, len: 202, tilt: 0.42 },
-  ];
-  for (const p of pylons) {
+  // Three pylons. 0, 133 and 242 degrees, three different root radii, and each AIMED
+  // AT ITS OWN POINT inside the crystal - the pylon's length is then whatever that
+  // distance is, less a third of the node's radius so the joint is buried. Nothing
+  // here agrees with anything else, on purpose, and nothing here is a typed number
+  // that stops being right the first time either end moves.
+  for (const p of PYLONS) {
     const ca = Math.cos(p.a), sa = Math.sin(p.a);
-    const dir = [ca * p.tilt, 1, sa * p.tilt];
-    const k = p.len / Math.hypot(ca * p.tilt, 1, sa * p.tilt);
+    const root = [ca * p.r, 26, sa * p.r];
+    const tgt = [p.tx, NODE_Y + p.ty, p.tz];
+    const d = [tgt[0] - root[0], tgt[1] - root[1], tgt[2] - root[2]];
+    const len = Math.hypot(d[0], d[1], d[2]) - 13;
     b.add('hull', aimed(
-      G.hexStrut({ length: p.len, radius: 12, radiusEnd: 4, axis: 'z', detail: D }),
-      dir, [ca * 40, 26, sa * 40],
+      G.hexStrut({ length: len, radius: 13, radiusEnd: 5, axis: 'z', detail: D }), d, root,
     ));
-    b.glow([ca * 40 + ca * p.tilt * k, 26 + k, sa * 40 + sa * p.tilt * k], 11, [-HALF_PI, 0, 0]);
+    b.glowDir([root[0] + d[0] * 0.94, root[1] + d[1] * 0.94, root[2] + d[2] * 0.94], 11, d);
   }
 
-  // The node: a faceted crystal suspended between the pylon tips, touching none.
+  // The node: a faceted crystal, and the three pylons are now buried in it.
   b.add('plating', G.hexStrut({ length: 62, radius: 38, radiusEnd: 6, axis: 'y', detail: D }),
-    { pos: [0, 232, 0] });
+    { pos: [0, NODE_Y, 0] });
   b.add('plating', aimed(G.hexStrut({ length: 58, radius: 38, radiusEnd: 5, axis: 'z', detail: D }),
-    [0.07, -1, 0.05], [0, 232, 0]));
-  b.glow([0, 232, 48], 34);
-  b.glow([0, 232, -48], 34, [0, Math.PI, 0]);
+    [0.07, -1, 0.05], [0, NODE_Y, 0]));
+  b.glow([0, NODE_Y, 48], 34);
+  b.glow([0, NODE_Y, -48], 34, [0, Math.PI, 0]);
 
   if (full) {
     // Two conduits climbing out of the drum at unrelated angles.

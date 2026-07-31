@@ -1038,10 +1038,24 @@ export function hullParts({ rng, lod = 0 }) {
   //
   // THREE PLATES A SIDE with 14 m gaps that read as recessed grooves. They stop AT THE
   // KNUCKLE and never wrap over it: deck and upper flank in bone above, lower flank in
-  // near-black below, and the knuckle — a hard 44-degree chine, the one edge on this
+  // near-black below, and the knuckle — a hard 80.8-degree chine, the one edge on this
   // ship visible from every angle — is where the two values meet. A value boundary on
   // a real geometric edge with a shadow at it is a plated hull; the same boundary in
   // the middle of a face is a decal on styrene.
+  //
+  // DEFECT, MEASURED AND NOT FIXED HERE. `flankStrake` is called with its facet
+  // written [2, 1] — knuckle DOWN to the keel chamfer, i.e. decreasing index — and
+  // `facetProfile` winds counter-clockwise with the index increasing UP the starboard
+  // side, so the "(dy, -dx)" it computes is the INWARD normal. At z -500 the knuckle
+  // is at (114.0, 5.6) and the 13 m offset lands at (104.5, 14.6), which is inside the
+  // section. These three plates a side are therefore 13 m INSIDE the skin with their
+  // outer faces coplanar with it, not 13 m proud of it, and the second value is being
+  // rendered by whichever of two coplanar faces wins the depth test.
+  //
+  // It is reported rather than corrected because flipping the sign moves the hull's
+  // own outline by up to 9 m over 620 m of flank at six stations, and this wave's
+  // brief is that the hull form is not to move. `#skinPlate`, which the mount seats
+  // use, takes the sign FROM THE INDEX ORDER and cannot have this bug.
   // -------------------------------------------------------------------------
   for (const s of [-1, 1]) {
     for (const [z0, z1] of [[-620, -418], [-404, -200], [-186, 18]]) {

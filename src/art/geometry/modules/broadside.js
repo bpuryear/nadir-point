@@ -35,12 +35,36 @@
  * the other is a slab at deck level - separable before a single detail resolves.
  * The flak's extra reach is fan, not slab: in plan it is a starburst where the
  * other two are rectangles.
+ *
+ * ---------------------------------------------------------------------------
+ * EVERY PRIMARY MASS IN THIS FILE IS NOW A LOFT OF THE HULL'S OWN SECTION
+ * ---------------------------------------------------------------------------
+ * They were `panelledSlab`s - rectangular prisms, 100% of their surface area within
+ * five degrees of a cardinal axis - bolted to a hull that had just spent five thousand
+ * triangles becoming a twelve-point plate family. That mismatch is what "trash strewn
+ * on a decent hull" measures: a broadside module spans about 30% of the ship's
+ * silhouette and carried about 7% of its triangles, and the eye reads density.
+ *
+ * So each of the five gets `massLoft` - the same `facetProfile` the hull is lofted
+ * from, six large planes a side, a knuckle at 80.8 degrees - plus `massFrames` at the
+ * hull's 90-140 m structural rhythm, a `massStrake` cut from the mass's own section
+ * with `dark` below the knuckle and `plating` above, and a `massRecess` for the
+ * machinery to sit IN rather than on. See `kit.js`.
+ *
+ * The mechanism is untouched. Barrels, rails, emitter rods and the flak fan are what
+ * separates these five from each other and they are all still exactly where they were;
+ * what changed is what they come OUT of. `BUDGET.moduleTris` is 1200, the worst module
+ * in the library was 398, and this file had not spent one of the eight hundred free
+ * triangles that the hull redesign authorised.
  */
 
 import { registerModule } from '../../../core/contracts.js';
 import { RANGE } from '../../../core/units.js';
 import * as G from '../greeble.js';
-import { ModuleBuilder, MODULE_TRI_BUDGET, barrel, aimed, muzzleAlong } from './kit.js';
+import {
+  ModuleBuilder, MODULE_TRI_BUDGET, barrel, aimed, muzzleAlong,
+  massLoft, massFrames, massStrake, massRecess,
+} from './kit.js';
 
 const HALF_PI = Math.PI * 0.5;
 /** Rotation that sends a +Z-authored primitive outboard to port. */
@@ -61,6 +85,8 @@ const OUTBOARD_DIR = [-1, 0, 0];
  * the declared muzzle list is the LOD0 set at every quality level (see kit.js).
  */
 const CANNON_ROWS = [[-66, 70, -106], [-22, 90, -114], [22, 110, -122], [66, 130, -130]];
+/** The casemate's own station table, `[z, half, top, bottom]`, at module x -38. */
+const CASEMATE = [[-105, 46, -30, -66], [-34, 56, -24, -72], [40, 56, -24, -72], [105, 48, -28, -68]];
 const CANNON_ROWS_LOD1 = [[-52, 80, -110], [36, 120, -126]];
 /** Barrels are canted 15 degrees down and struck outboard from y = -58. */
 const CANNON_AIM = [-1, -0.27, 0];
@@ -85,11 +111,21 @@ function buildCannonBank(ctx) {
   // and standing the other is a difference in kind, and it is the same fix that
   // separated the bow's breaching prow from its torpedo tubes. It also happens to
   // be how a casemate works: guns low, magazine above them, hoists between.
-  b.add('hull', G.panelledSlab({ width: 112, height: 48, depth: 210, chamfer: 14, detail: D }),
-    { pos: [-38, -48, 0] });
-  // The outer casemate face, skewed in plan so it agrees with the gun steps.
-  b.add('plating', G.panelledSlab({ width: 92, height: 46, depth: 168, chamfer: 12, detail: D }),
-    { pos: [-100, -60, -4], rot: [0, 0.40, 0] });
+  // THE CASEMATE, in the hull's own section. `[z, half, top, bottom]` - beam : depth
+  // 2.3 at the middle and 2.5 at the ends, against M-F4's 1.6.
+  b.add('hull', G.place(massLoft(CASEMATE, { detail: D, label: 'casemate' }), { pos: [-38, 0, 0] }));
+  // M-F5: two frames, 108 m apart and off-centre, so the 210 m mass reads as 210 m.
+  b.add('plating', G.place(massFrames(CASEMATE, [-66, 42], { detail: D }), { pos: [-38, 0, 0] }));
+  // M-F6 / F10: one plate on the lower flank, `dark`, stopping at the knuckle.
+  b.add('dark', G.place(massStrake(CASEMATE, {
+    z0: -88, z1: 74, side: -1, facet: [2, 1], t0: 0.12, t1: 0.66, drift: 0.14, out: 4, detail: D,
+  }), { pos: [-38, 0, 0] }));
+  // The outer casemate face, skewed in plan so it agrees with the gun steps. A
+  // `bevelBox` rather than a slab: drafted ends and a canted section put all four of
+  // its long faces off their axes for 32 triangles (M-F1's beam clause).
+  b.add('plating', G.bevelBox({
+    width: 92, height: 46, depth: 168, chamfer: 12, draft: 9, cant: 0.13, rake: -8, detail: D,
+  }), { pos: [-100, -60, -4], rot: [0, 0.40, 0] });
   b.graft([0, -4, 0], [-HALF_PI, 0, 0], 34);
 
   // The two brackets that carry it. Coalition shows its structure.
@@ -135,10 +171,17 @@ function buildCannonBank(ctx) {
       CANNON_AIM, [x, CANNON_BREECH_Y, z]));
   }
 
+  // M-F7: the loading gear sits IN a cut, not on a proud face. A recess 20 m deep
+  // self-shadows; a greeble band on a flat does not, under any key.
+  b.add('dark', G.place(massRecess(CASEMATE, {
+    z: -18, side: -1, facet: [2, 3], t: 0.46, width: 86, height: 30, depth: 20, wall: 4, detail: D,
+  }), { pos: [-38, 0, 0] }));
+
   // Ammunition hoist. It is the one part that stands ABOVE the shelf, so the module
   // still reads as attached to something rather than as a pod in space.
-  b.add('hull', G.panelledSlab({ width: 52, height: 58, depth: 60, chamfer: 10, detail: D }),
-    { pos: [-62, 24, -118] });
+  b.add('hull', G.bevelBox({
+    width: 52, height: 58, depth: 60, chamfer: 10, draft: 7, cant: -0.11, detail: D,
+  }), { pos: [-62, 24, -118] });
   if (full) {
     b.add('greeble', G.pipeRun({ length: 88, radius: 10, sides: 6, axis: 'z', flanges: 1, detail: D }),
       { pos: [-92, 4, -88] });
@@ -181,6 +224,8 @@ registerModule({
  * THE FIRING ROD — see the `muzzles` note on the def below.
  */
 const BEAM_RODS = [[-74, 12, 168], [2, 36, 216], [76, 12, 168]];
+/** The fairing's stations, `[z, half, top, bottom]`, authored along +Z then swung. */
+const FAIRING = [[0, 112, 32, -32], [96, 88, 27, -25], [168, 55, 19, -17]];
 /** At LOD1/2 only the long middle rod is built. Same rod, so the aperture is stable. */
 const BEAM_RODS_LOD1 = [BEAM_RODS[1]];
 /** The rod's root is at x = -186 and it runs outboard; the aperture sits 8 m proud. */
@@ -195,10 +240,20 @@ function buildBeamArray(ctx) {
   const b = new ModuleBuilder(ctx, 'concord');
   const D = b.detail, full = b.full;
 
-  // The fairing. Authored along +Z then swung outboard, so `width0` is fore-aft.
-  b.add('hull', G.taperedWedge({
-    length: 168, width0: 224, height0: 64, width1: 110, height1: 36, chamfer: 12, detail: D,
-  }), { pos: [-4, 22, 0], rot: OUTBOARD });
+  // THE FAIRING, authored along +Z and swung outboard, so its `half` column is
+  // fore-aft. A three-station `massLoft` where a two-station `taperedWedge` was: one
+  // clean primary form is Concord's whole language, and a lofted one is still one
+  // form - it just shades like the hull instead of like a doorstop. Beam : depth runs
+  // 3.5 at the root to 3.1 at the tip.
+  b.add('hull', G.place(massLoft(FAIRING, { detail: D, label: 'beam fairing' }),
+    { pos: [-4, 22, 0], rot: OUTBOARD }));
+  // M-F5, and on this module they are the cooling ribs. Two, unevenly placed.
+  b.add('plating', G.place(massFrames(FAIRING, [58, 128], { detail: D }),
+    { pos: [-4, 22, 0], rot: OUTBOARD }));
+  // M-F6. Concord gets ONE long plate rather than Coalition's several short ones.
+  b.add('dark', G.place(massStrake(FAIRING, {
+    z0: 14, z1: 156, side: 1, facet: [2, 1], t0: 0.14, t1: 0.70, drift: -0.10, out: 4, detail: D,
+  }), { pos: [-4, 22, 0], rot: OUTBOARD }));
   b.graft([0, -4, 0], [-HALF_PI, 0, 0], 34);
 
   // THE EMITTER HOUSING, and it is the difference between three rods and a hairbrush.
@@ -211,8 +266,12 @@ function buildBeamArray(ctx) {
   // primitive into structure ... the lance needs a recoil cradle and a mount collar".
   // This is that collar: a 208 m transverse block across the fairing's outboard end
   // that all three rods are seated in, so the mechanism emerges from a housing.
-  b.add('plating', G.panelledSlab({ width: 44, height: 76, depth: 208, chamfer: 12, detail: D }),
-    { pos: [-178, 20, 0] });
+  // 84 x 52 rather than 44 x 76: M-F4 wants beam : depth >= 1.6 on any mass over 80 m
+  // long and this one is 208, so a housing that was taller than it was wide had to
+  // turn over. It also reads better - a collar a gun sits IN is wide.
+  b.add('plating', G.bevelBox({
+    width: 84, height: 52, depth: 208, chamfer: 12, draft: 10, cant: -0.12, detail: D,
+  }), { pos: [-178, 20, 0] });
 
   // Three emitter rods, staggered fore-aft and in height so they never read as a
   // grille. The middle one is longest.
@@ -430,6 +489,9 @@ registerModule({
 
 /** Two turrets in a superfiring pair. `s` scales the aft one down to 0.86. */
 const BROADSIDE_TURRETS = [{ z: 100, y: 82, s: 1.0 }, { z: -98, y: 44, s: 0.86 }];
+/** The shelf and its outboard skirt, `[z, half, top, bottom]`, at module x -100 / -206. */
+const SHELF = [[-170, 96, 26, -6], [-56, 112, 33, -9], [70, 112, 33, -9], [170, 100, 28, -4]];
+const SKIRT = [[-150, 38, 4, -40], [10, 44, 9, -45], [150, 36, 2, -38]];
 /** Twin barrels per turret: struck from x = -156, 150 m long, split +-28 m in z. */
 const BROADSIDE_BARREL_X = -156;
 const BROADSIDE_BARREL_LEN = 150;
@@ -439,20 +501,33 @@ function buildBroadsideBattery(ctx) {
   const b = new ModuleBuilder(ctx, 'coalition');
   const D = b.detail, full = b.full;
 
-  // Extended shelf, overhanging outboard and running past both ends of the sponson.
-  b.add('hull', G.panelledSlab({ width: 224, height: 42, depth: 340, chamfer: 18, detail: D }),
-    { pos: [-100, 12, 0] });
+  // THE SHELF, and it was the single worst offender in the library: a 224 x 42 x 340 m
+  // rectangular prism, the biggest flat-sided thing anyone had bolted to this hull.
+  // Same envelope, the hull's own section, beam : depth 5.3.
+  b.add('hull', G.place(massLoft(SHELF, { detail: D, label: 'broadside shelf' }), { pos: [-100, 0, 0] }));
+  // M-F5: three frames at 116 / 132 m. The shelf is 340 m long and has to say so.
+  b.add('plating', G.place(massFrames(SHELF, [-118, -2, 130], { detail: D }), { pos: [-100, 0, 0] }));
+  // M-F6, two plates and NOT a mirrored pair: different lengths, different z, one on
+  // the lower flank in `dark` and one on the upper in `plating`.
+  b.add('dark', G.place(massStrake(SHELF, {
+    z0: -150, z1: 40, side: -1, facet: [2, 1], t0: 0.10, t1: 0.62, drift: 0.16, out: 5, detail: D,
+  }), { pos: [-100, 0, 0] }));
+  b.add('plating', G.place(massStrake(SHELF, {
+    z0: -30, z1: 150, side: 1, facet: [3, 2], t0: 0.18, t1: 0.58, drift: -0.12, out: 4, detail: D,
+  }), { pos: [-100, 0, 0] }));
   // Outboard skirt: the shelf steps DOWN at its outer edge rather than stopping, so
-  // the plan outline has a step in it and the mass reads as carried.
-  b.add('plating', G.panelledSlab({ width: 66, height: 76, depth: 300, detail: D }),
-    { pos: [-206, -18, 0] });
+  // the plan outline has a step in it and the mass reads as carried. 88 x 54 rather
+  // than 66 x 76 - M-F4 again, on a 300 m mass that was taller than it was wide.
+  b.add('plating', G.place(massLoft(SKIRT, { detail: D, label: 'broadside skirt', keep: G.FACET_LOD.far }),
+    { pos: [-206, 0, 0] }));
   b.graft([0, -6, 0], [-HALF_PI, 0, 0], 36);
 
   // Two turrets. The forward one is superfiring on a barbette - the height step is
   // what makes this read as a battery rather than as two boxes.
   for (const t of BROADSIDE_TURRETS) {
-    b.add('plating', G.panelledSlab({
-      width: 100 * t.s, height: 52 * t.s, depth: 116 * t.s, chamfer: 15 * t.s, detail: D,
+    b.add('plating', G.bevelBox({
+      width: 100 * t.s, height: 52 * t.s, depth: 116 * t.s, chamfer: 15 * t.s,
+      draft: 9 * t.s, cant: t.s > 0.9 ? 0.11 : -0.14, detail: D,
     }), { pos: [-104, t.y, t.z] });
     if (t.y > 60) {
       b.add('hull', G.pipeRun({ length: 42, radius: 54, sides: 6, axis: 'y', flanges: 0, detail: D }),
@@ -466,8 +541,13 @@ function buildBroadsideBattery(ctx) {
 
   // Ammunition tower behind the turrets. Deliberately NOT the tallest thing on the
   // module: this fit's read is "low and wide" and a spire would undo it.
-  b.add('hull', G.panelledSlab({ width: 58, height: 96, depth: 74, detail: D }),
-    { pos: [-42, 74, -170] });
+  b.add('hull', G.bevelBox({
+    width: 58, height: 96, depth: 74, chamfer: 9, draft: 8, cant: 0.12, rake: 10, detail: D,
+  }), { pos: [-42, 74, -170] });
+  // M-F7: the shell hoists live in a cut in the shelf's own flank.
+  b.add('dark', G.place(massRecess(SHELF, {
+    z: -66, side: 1, facet: [2, 3], t: 0.44, width: 96, height: 26, depth: 18, wall: 4, detail: D,
+  }), { pos: [-100, 0, 0] }));
 
   // Armour belt along the outboard edge of the shelf.
   if (full) {
@@ -536,6 +616,8 @@ registerModule({
  */
 
 /** The rail's line in module space, and the aperture 8 m off the end of the cap. */
+/** The base's stations, `[z, half, top, bottom]`, at module x -30. Beam : depth 2.7. */
+const GAUSS_BASE = [[-130, 40, 28, -6], [-40, 48, 32, -4], [60, 48, 32, -4], [130, 42, 26, -8]];
 const GAUSS_RAIL_X = -176;
 const GAUSS_RAIL_Y = 212;
 const GAUSS_MUZZLE_Z = 350;
@@ -544,8 +626,11 @@ function buildGaussOutrigger(ctx) {
   const b = new ModuleBuilder(ctx, 'concord');
   const D = b.detail, full = b.full;
 
-  b.add('hull', G.panelledSlab({ width: 96, height: 36, depth: 260, chamfer: 12, detail: D }),
-    { pos: [-30, 14, 0] });
+  b.add('hull', G.place(massLoft(GAUSS_BASE, { detail: D, label: 'gauss base' }), { pos: [-30, 0, 0] }));
+  b.add('plating', G.place(massFrames(GAUSS_BASE, [-74, 52], { detail: D }), { pos: [-30, 0, 0] }));
+  b.add('dark', G.place(massStrake(GAUSS_BASE, {
+    z0: -110, z1: 112, side: -1, facet: [2, 1], t0: 0.16, t1: 0.68, drift: -0.12, out: 4, detail: D,
+  }), { pos: [-30, 0, 0] }));
   b.graft([0, -4, 0], [-HALF_PI, 0, 0], 34);
 
   // Two A-frame pylons standing up and outboard. Different heights - the forward
@@ -573,8 +658,14 @@ function buildGaussOutrigger(ctx) {
 
   // Capacitor blister slung under the rail between the pylons, so the gap between
   // rail and shelf is broken once rather than being one long empty rectangle.
-  b.add('hull', G.panelledSlab({ width: 60, height: 44, depth: 168, chamfer: 10, detail: D }),
-    { pos: [-158, 148, 4] });
+  // 72 x 44, so a 168 m mass clears M-F4's 1.6.
+  b.add('hull', G.bevelBox({
+    width: 72, height: 44, depth: 168, chamfer: 10, draft: 9, cant: -0.13, detail: D,
+  }), { pos: [-158, 148, 4] });
+  // M-F7: the capacitor bank's own service cut, in the base's upper flank.
+  b.add('dark', G.place(massRecess(GAUSS_BASE, {
+    z: 34, side: -1, facet: [3, 4], t: 0.42, width: 74, height: 24, depth: 16, wall: 4, detail: D,
+  }), { pos: [-30, 0, 0] }));
 
   b.lightRun([-176, 238, -200], [-176, 238, 280], [0, 1, 0], { max: 12 });
 

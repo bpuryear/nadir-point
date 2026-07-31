@@ -264,13 +264,29 @@ registerModule({
  */
 
 /** Three arms at 20, 128 and 235 degrees around the axis - deliberately not thirds. */
+/**
+ * `r` IS A ROOT RADIUS INSIDE THE DRUM, and it was 84-96 against a drum 62 m in
+ * radius. So all three arms were struck from a point 22-34 m outside the only thing
+ * on this module that could have been holding them, and in the bow-on view -
+ * `tools/silhouette.mjs` - the whole array read as a SIXTY-SIX METRE detached
+ * fragment beside the ship, the largest loose piece in the library. It was printed
+ * every run and never gated, so it survived four waves.
+ *
+ * Roots are now 46-52, i.e. inside the drum's own section, and struck from z -20
+ * rather than z 0 so they are buried in it along the axis as well as across it.
+ * `len` grew by 60 each to keep the array's reach, and because every other number on
+ * this module is derived from these three by `miningArm`, the emitter heads, the
+ * apertures and the ModuleDef's declared muzzles all followed on their own.
+ */
 const MINING_ARMS = [
-  { a: 0.35, len: 320, r: 96 },
-  { a: 2.24, len: 244, r: 84 },
-  { a: 4.10, len: 282, r: 88 },
+  { a: 0.35, len: 380, r: 52 },
+  { a: 2.24, len: 304, r: 46 },
+  { a: 4.10, len: 342, r: 50 },
 ];
 const MINING_SPLAY = 0.52;
 const MINING_HUB_Y = 18;
+/** Struck from inside the drum, which spans z -82 .. -6. */
+const MINING_ROOT_Z = -20;
 
 /**
  * Everything about one arm derived from its three authored numbers: where it is
@@ -280,10 +296,10 @@ const MINING_HUB_Y = 18;
  */
 function miningArm(arm) {
   const ca = Math.cos(arm.a), sa = Math.sin(arm.a);
-  const root = [ca * arm.r, MINING_HUB_Y + sa * arm.r, 0];
+  const root = [ca * arm.r, MINING_HUB_Y + sa * arm.r, MINING_ROOT_Z];
   const dir = [ca * MINING_SPLAY, sa * MINING_SPLAY, 1];
   const k = arm.len / Math.hypot(dir[0], dir[1], dir[2]);
-  const head = [root[0] + dir[0] * k, root[1] + dir[1] * k, k];
+  const head = [root[0] + dir[0] * k, root[1] + dir[1] * k, root[2] + k];
   return { ca, sa, root, dir, head, aperture: [head[0] + ca * 13, head[1] + sa * 13, head[2] + 52] };
 }
 
