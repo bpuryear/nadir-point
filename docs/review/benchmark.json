@@ -3,7 +3,7 @@
   "width": 2560,
   "height": 1440,
   "frames": 420,
-  "quality": "medium",
+  "quality": "high",
   "measuredAt": "hardware rasterisation (hardware) on darwin",
   "budgets": {
     "drawCalls": 320,
@@ -12,30 +12,30 @@
   },
   "peak": {
     "calls": 231,
-    "triangles": 75899,
-    "programs": 53
+    "triangles": 81325,
+    "programs": 59
   },
   "counters": {
-    "fps": 108.52713178294576,
-    "cpuMs": 2.5000000357631507,
-    "stepMs": 0.10000002384185791,
-    "renderMs": 1,
-    "steps": 1,
+    "fps": 120.07874015748025,
+    "cpuMs": 0.9999999880792529,
+    "stepMs": 0,
+    "renderMs": 0.8999999761581421,
+    "steps": 0,
     "calls": 231,
-    "triangles": 75899,
-    "points": 7000,
+    "triangles": 81325,
+    "points": 13000,
     "lines": 0,
-    "programs": 53,
-    "geometries": 190,
-    "textures": 147
+    "programs": 59,
+    "geometries": 186,
+    "textures": 150
   },
   "frameMs": {
-    "mean": 9.230000000056766,
-    "median": 9.199999988079071,
-    "p95": 10.400000035762787,
-    "p99": 11.699999988079071,
-    "min": 1.800000011920929,
-    "max": 45
+    "mean": 8.34714285717124,
+    "median": 8.399999976158142,
+    "p95": 9.899999976158142,
+    "p99": 10.599999964237213,
+    "min": 0.7999999523162842,
+    "max": 30.700000047683716
   },
   "sceneCounts": {
     "capitalShips": 1,
@@ -43,12 +43,13 @@
     "instancedObjects": 930,
     "distinctMeshes": 265,
     "totalShips": 13,
-    "postChain": "medium"
+    "postChain": "high"
   },
   "fpsClaim": {
-    "mean": 108.3423618628223,
-    "low1pct": 85.47008555716947
+    "mean": 119.80147184624674,
+    "low1pct": 94.33962295979697,
+    "refreshCapped": true
   },
-  "fpsNote": "Measured on hardware rasterisation. These are real frame rates at the stated resolution.",
+  "fpsNote": "Measured on hardware rasterisation with vsync ON, so these are a LOWER BOUND on the frame rate at the stated resolution, not the frame rate. A figure near the display refresh rate is the display. Re-run with NP_UNCAP_FPS=1 for the unbounded cost.",
   "pass": true
 }
