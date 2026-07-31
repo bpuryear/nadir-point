@@ -155,3 +155,44 @@ against a correctly-lit field, that is still an albedo problem.
   industrial salvager; EVE Frontier is the closer model for the *ship*, Homeworld for the
   *field*.
 - **Do not add geometry.** There are 11 triangles of headroom on the cruiser core.
+
+---
+
+## 6. The rust pass was attempted and failed, and the failure is the finding
+
+The owner ruled for a rust/green blend and then asked for a dedicated pass to make the rust
+actually read. It was attempted three ways and none of them worked. Recording it because
+the next person will otherwise try the same three.
+
+**What was tried, in order:**
+
+1. **Rust in the broad `zenith` and `ground` washes.** Arithmetically correct, completely
+   invisible. Once the dome fell to a seventh of its output to stop being a wall, those
+   tiers sit near black — and a hue nobody can see is not a hue.
+2. **Rust in the band's wide `halo` term**, green kept in the bright thin core, which is
+   the right structural split: the two are separated on both the value axis and the
+   structural axis, so they cannot average to mud. **This made the band nearly vanish.**
+   Whole-frame luma fell 0.044 → 0.033.
+3. **The same, with a luminance compensation constant on the halo term.** Still did not
+   restore it.
+
+**Why, and this is the part that generalises.** Luminance is `0.2126R + 0.7152G + 0.0722B`.
+Substituting rust for green at equal nominal brightness costs about **three-quarters of the
+luminance**. In a field whose whole design is that it is *nearly black*, there is not enough
+light left for a second hue to survive that trade. The rust is not too weak; there is not
+enough of anything for it to modulate.
+
+**So this is a genuine fork, and it is the owner's:**
+
+- **Accept green.** The graveyard stays a single sick-green field over near-black. This is
+  what ships today and three independent judges preferred it to plain stars on black.
+- **Lift the field until rust reads** — which trades directly against the darkness the
+  owner said they preferred, and risks the wall coming back.
+- **Invert the split: rust in the bright core, green in the faint halo.** Rust in the one
+  place with enough luminance to carry it. Costs the "sick derelict green" identity at the
+  exact point the eye goes, which may be the wrong trade for the fiction.
+- **Put the rust on lit geometry instead of in the sky** — the hull, the wrecks, the debris
+  — where there is real light to colour, and leave the field green.
+
+The last one is probably right and is not a sky job at all. It is also consistent with what
+already works: the hull's warm amber identity landed, and it landed on lit surfaces.
