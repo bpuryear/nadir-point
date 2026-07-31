@@ -133,6 +133,41 @@ const HARDWARE_ARGS = [
 ];
 
 /**
+ * THE FRAME-RATE CEILING. OPT-IN, AND THE REASON IT IS OPT-IN IS THE INTERESTING PART.
+ *
+ * Chromium drives requestAnimationFrame from a BeginFrame source running at the
+ * display's refresh rate. On a 120 Hz panel NO rAF-timed tool in this repo can report a
+ * frame faster than 8.333 ms, whatever the GPU is actually capable of. That is a silent
+ * floor, and it was caught the only way a silent floor ever is - by an impossible
+ * reading. `tools/perfattrib.mjs` measured FIVE different configurations at "8.33 ms"
+ * to the hundredth: three post-chain combinations and two render scales, which have no
+ * reason whatsoever to cost the same. They did not. They were all faster than the tool
+ * could see.
+ *
+ * A benchmark whose job is to find HEADROOM must not be capped at the refresh rate.
+ *
+ * SO WHY NOT JUST PUT THESE IN HARDWARE_ARGS? Because it breaks a gate, and it breaks it
+ * silently, which is exactly the failure mode this file's other comments are about.
+ * Measured: with the flags on, `node tools/poicheck.mjs` reports "FAIL: only 0 of 3 POIs
+ * were reached on the live path"; with them off, "poicheck ok". Nothing about the POIs
+ * changed. The tools that DRIVE the game advance it by counting FRAMES, and uncapping
+ * the frame rate makes a frame worth several times less wall-clock and therefore several
+ * times less simulated time - so a settle loop that used to cover a journey now covers a
+ * fraction of one. Every frame-counting tool in `tools/` has that shape.
+ *
+ * Therefore: off by default, so no existing tool or number moves, and on for the two
+ * tools that measure milliseconds and count no frames of game progress.
+ *
+ *   NP_UNCAP_FPS=1 npm run bench     # when the frame may be faster than the refresh rate
+ */
+const UNCAP_ARGS = ['--disable-gpu-vsync', '--disable-frame-rate-limit'];
+
+/** True when this process wants the refresh-rate cap removed. */
+export function frameRateUncapped() {
+  return process.env.NP_UNCAP_FPS === '1';
+}
+
+/**
  * 'hardware' | 'swiftshader'. Defaults to hardware on darwin, where this project is
  * actually played, and to swiftshader elsewhere, which is what the headless review
  * container needs. Override with NP_RASTER.
@@ -229,7 +264,10 @@ export { killAllServers };
 export async function launchBrowser() {
   return chromium.launch({
     executablePath: chromePath(),
-    args: rasterMode() === 'hardware' ? HARDWARE_ARGS : SWIFTSHADER_ARGS,
+    args: [
+      ...(rasterMode() === 'hardware' ? HARDWARE_ARGS : SWIFTSHADER_ARGS),
+      ...(frameRateUncapped() ? UNCAP_ARGS : []),
+    ],
   });
 }
 
