@@ -415,6 +415,19 @@ export function createSockets(root) {
 //   swelling. It also fixes an old bug quietly: modules used to be authored with
 //   their base at y = 0 and then sunk nine metres into the mount pad.
 //
+//   SEVEN METRES WAS THE WRONG WAY TO BUY THAT LINE, and the arithmetic says so
+//   rather than the taste. Under the old furniture a module met the hull at a 32-44 m
+//   disc SIXTEEN METRES CLEAR OF THE SKIN - pad 0..9, collar 9..16, module from 7 -
+//   with nothing crossing the gap. Worse, the collar's 9..16 and the module's own cut
+//   plate at 7..13.2 (`modules/kit.js#graft`) OVERLAPPED: the hull's bolt ring passed
+//   through the module at all six mounts, two interpenetrating solids that nothing
+//   rendered because the module is opaque. `cruiser.js#mountSeat` now cuts a 9 m
+//   apron with a 4 m coaming around every mount, which draws the dark line AROUND the
+//   module instead of UNDER it and does it with a real shadowed edge. The pad drops
+//   onto the apron floor at -9..-3, the collar spans -3..+3, and this constant is 3 -
+//   so the module's cut plate starts exactly where the bolt ring ends. Nothing
+//   interpenetrates and nothing hovers.
+//
 //   THE MISALIGNMENT. A fixed 3-7 degree tilt about an axis perpendicular to the
 //   mount normal, seeded from the socket id so a given mount always leans the same
 //   way and a seed reproduces exactly. Nothing on this ship left a yard as a set;
@@ -426,8 +439,8 @@ export function createSockets(root) {
 // a ring that has to be concentric) opts out with `def.rigidMount = true`.
 // ---------------------------------------------------------------------------
 
-/** Metres a module stands proud of its anchor. Matches the bolt-ring height. */
-export const SEAT_STANDOFF = 7;
+/** Metres a module stands proud of its anchor. Lands on the bolt ring's top face. */
+export const SEAT_STANDOFF = 3;
 
 const _seatCache = new Map();
 

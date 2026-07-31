@@ -36,6 +36,26 @@
  * sheets were simply rendered from different code states, months of edits apart. If
  * the two sheets in front of you disagree, ONE OF THEM IS STALE; re-render both
  * before believing either.
+ *
+ * ---------------------------------------------------------------------------
+ * THIS PROBE IS NOT THE GATE, AND IT NEVER WAS
+ * ---------------------------------------------------------------------------
+ * Everything above computes PASS/FAIL and writes it into a PNG. A browser probe
+ * cannot set a process exit code, `tools/probe.mjs` only fails on a console error,
+ * and `loadouts` was absent from `tools/gates.mjs` - so for the whole life of this
+ * criterion the only way to know it held was for a human to open an image and read
+ * a caption off it. `docs/review/acceptance.md` records that exact pattern producing
+ * a false PASS once already, from a stale sheet.
+ *
+ * So the three things a gate needs - THE LOADOUT TABLE, THE DIVERGENCE MATHS and
+ * THE TARGETS - are exported from here and consumed by `src/probes/loadoutsAudit.mjs`,
+ * which runs the same measurement in node against a stubbed material registry in
+ * about two seconds, prints the per-channel breakdown, and EXITS NON-ZERO. It is
+ * `{ id: 'loadouts' }` in `tools/gates.mjs` and it is non-browser, so it runs under
+ * `--fast`, so it runs every wave.
+ *
+ * They cannot disagree, because there is one table and one `diff` and this file owns
+ * both. The picture stays the judgement; the exit code stops the picture going stale.
  */
 
 import * as THREE from 'three';
@@ -49,11 +69,57 @@ import '../art/geometry/modules/index.js';
 const POI = 'giant-orbit';
 
 /**
+ * ship-language.md §6 M2, and the only two numbers this criterion has ever had.
+ * 45 m is one pixel at the 30 px max-zoom read of a 1400 m hull; 120 m is three.
+ */
+export const LOADOUT_TARGETS = { mean: 45, max: 120 };
+
+/**
+ * Mean and peak absolute difference per z-bin of (halfWidth, top, bottom), metres.
+ *
+ * MEAN AND MAX, because they fail differently. A low mean says the two builds are the
+ * same ship wearing different hats. A low MAX says worse: there is no single place on
+ * the outline where the difference is big enough to see at a glance, so even a player
+ * who knows what to look for cannot find it.
+ *
+ * THE PER-CHANNEL BREAKDOWN IS RETURNED AND IT IS NOT DECORATION. `halfWidth` is what
+ * the sponsons move, `top` is the dorsal and the bow, and `bottom` is the ventral and
+ * ONLY the ventral - measured, with the ventral mount emptied, at 0.1 / 4.6 / 4.8 m of
+ * keel-line divergence across the three pairs. Any change to the ventral is a change to
+ * one channel out of three, and a worst-pair mean quoted without the decomposition
+ * cannot tell a design that survives recession from one that does not.
+ */
+export function diff(a, b) {
+  let s = 0, n = 0, mx = 0;
+  const per = { halfWidth: 0, top: 0, bottom: 0 };
+  for (let i = 0; i < a.bins.length; i++) {
+    const d = {
+      halfWidth: Math.abs(a.bins[i].halfWidth - b.bins[i].halfWidth),
+      top: Math.abs(a.bins[i].top - b.bins[i].top),
+      bottom: Math.abs(a.bins[i].bottom - b.bins[i].bottom),
+    };
+    for (const k of ['halfWidth', 'top', 'bottom']) {
+      const v = d[k];
+      per[k] += v;
+      s += v;
+      if (v > mx) mx = v;
+    }
+    n += 3;
+  }
+  const bins = a.bins.length || 1;
+  return {
+    mean: s / n,
+    max: mx,
+    per: { halfWidth: per.halfWidth / bins, top: per.top / bins, bottom: per.bottom / bins },
+  };
+}
+
+/**
  * Three builds a player would actually make. Each one is a different ANSWER to the
  * same ship, and each answer changes a different part of the outline: A grows
  * forward and up, B grows down, C grows up and out.
  */
-const LOADOUTS = [
+export const LOADOUTS = [
   {
     id: 'sniper',
     name: 'A — STANDOFF',
@@ -303,28 +369,8 @@ export default {
     pose.target.set(view.target[0], view.target[1], view.target[2]);
 
     // ---- divergence --------------------------------------------------------
-    // Mean absolute difference per bin of (halfWidth, top, bottom), in metres.
-    // Two loadouts that produce the same outline score ~0; anything the eye can
-    // separate at a glance scores in the tens of metres.
-    //
-    // MEAN AND MAX, because they fail differently. A low mean says the two builds are
-    // the same ship wearing different hats. A low MAX says worse: there is no single
-    // place on the outline where the difference is big enough to see at a glance, so
-    // even a player who knows what to look for cannot find it. The targets are the
-    // ones in docs/design/ship-language.md §6 M2: mean >= 45 m per z-bin, max >= 120 m.
-    const diff = (a, b) => {
-      let s = 0, n = 0, mx = 0;
-      for (let i = 0; i < a.bins.length; i++) {
-        const d = [
-          Math.abs(a.bins[i].halfWidth - b.bins[i].halfWidth),
-          Math.abs(a.bins[i].top - b.bins[i].top),
-          Math.abs(a.bins[i].bottom - b.bins[i].bottom),
-        ];
-        for (const v of d) { s += v; if (v > mx) mx = v; }
-        n += 3;
-      }
-      return { mean: s / n, max: mx };
-    };
+    // `diff` is module scope and exported, so `src/probes/loadoutsAudit.mjs` runs
+    // BYTE-IDENTICAL maths in node with an exit code. See this file's header.
     const pairs = [
       ['A/B', diff(sigs[0].sig, sigs[1].sig)],
       ['A/C', diff(sigs[0].sig, sigs[2].sig)],
@@ -361,11 +407,13 @@ export default {
       el.textContent = [
         `LOADOUT SILHOUETTES  view=${viewName}${silhouette ? '  BLACK ON WHITE' : '  LIT'}`,
         `outline divergence per z-bin, metres:  ${pairs.map(([k, v]) => `${k} mean ${v.mean.toFixed(1)} max ${v.max.toFixed(0)}`).join('   ')}`,
-        `worst pair: mean ${worstMean.toFixed(1)} (target >= 45)   max ${worstMax.toFixed(0)} (target >= 120)`
-          + `   ${worstMean >= 45 && worstMax >= 120 ? 'PASS' : 'FAIL'}`,
+        `worst pair: mean ${worstMean.toFixed(1)} (target >= ${LOADOUT_TARGETS.mean})`
+          + `   max ${worstMax.toFixed(0)} (target >= ${LOADOUT_TARGETS.max})`
+          + `   ${worstMean >= LOADOUT_TARGETS.mean && worstMax >= LOADOUT_TARGETS.max ? 'PASS' : 'FAIL'}`
+          + '   (the GATE is node src/probes/loadoutsAudit.mjs)',
         `same measure binned over the FITTED envelope, not the bare hull's z range:`
           + `  worst mean ${fitMean.toFixed(1)}  max ${fitMax.toFixed(0)}`
-          + `   ${fitMean >= 45 && fitMax >= 120 ? 'PASS' : 'FAIL'}`,
+          + `   ${fitMean >= LOADOUT_TARGETS.mean && fitMax >= LOADOUT_TARGETS.max ? 'PASS' : 'FAIL'}`,
       ].join('\n');
       el.style.whiteSpace = 'pre';
       el.style.color = silhouette ? '#2a3a44' : '#6f8ea0';

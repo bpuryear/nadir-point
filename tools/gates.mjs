@@ -53,6 +53,28 @@ const GATES = [
   { id: 'poicheck',    cmd: ['node', 'tools/poicheck.mjs'],                    what: 'POI lighting rigs' },
   { id: 'ships-audit', cmd: ['node', 'src/art/geometry/ships/audit.mjs'],      what: 'class silhouettes held apart by measured outline distance' },
   { id: 'mods-audit',  cmd: ['node', 'src/art/geometry/modules/audit.mjs'],    what: 'same-mount module silhouettes held apart' },
+  /**
+   * ADDED, AND IT IS THE SECOND TIME THIS FILE'S OWN THESIS HAS BEEN PROVED.
+   *
+   * `src/probes/loadouts.js` has computed this criterion for its whole life and
+   * written PASS/FAIL into a PNG. It set NO PROCESS EXIT CODE - it runs in Chromium
+   * and cannot - and it was not in this array, so "three loadouts of the same cruiser
+   * distinguishable in silhouette" was enforced by a human opening an image. That is
+   * precisely the "a gate that is a paragraph is optional" failure this file was
+   * written about, and `docs/review/acceptance.md` records it producing a false PASS
+   * once already off a stale sheet.
+   *
+   * `loadoutsAudit.mjs` runs the same table and the same `diff`, imported from
+   * `loadouts.js` so there is one source of truth, headless in ~2 s. NON-BROWSER, so
+   * it runs under --fast, so it runs every wave.
+   */
+  { id: 'loadouts',    cmd: ['node', 'src/probes/loadoutsAudit.mjs'],           what: 'three loadouts separable in outline' },
+  /**
+   * The FRONT view of the silhouette audit gates now too - see tools/silhouette.mjs
+   * #GATED. It printed `(fyi)` and exited 0 while four modules and one whole loadout
+   * showed detached fragments up to 69 m against a 26 m precedent.
+   */
+  { id: 'silhouette',  cmd: ['node', 'tools/silhouette.mjs'],                   what: 'one piece per ship in all three views, every LOD the same ship' },
   { id: 'smoke',       cmd: ['node', 'tools/smoke.mjs'],                       what: 'boots with no console error',            browser: true },
   { id: 'uicheck',     cmd: ['node', 'tools/uicheck.mjs'],                     what: 'contrast and panel layout',              browser: true },
   { id: 'widediag',    cmd: ['node', 'tools/widediag.mjs', 'close', '--assert'], what: 'the close shot is not black',          browser: true },

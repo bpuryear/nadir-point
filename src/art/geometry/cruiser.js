@@ -522,11 +522,43 @@ function sectionAt(z) {
   return { half: L(1), top: L(2), bot: L(3), knuckle: L(4), deckFlat: L(5), flare: L(6) };
 }
 
+/** Linear interpolation of the RIDGE table at an arbitrary z, same columns. */
+function ridgeSectionAt(z) {
+  const rows = RIDGE_STATIONS;
+  let a = rows[0], b = rows[1];
+  for (let i = 0; i < rows.length - 1; i++) {
+    if (z >= rows[i][0] && z <= rows[i + 1][0]) { a = rows[i]; b = rows[i + 1]; break; }
+  }
+  if (z <= rows[0][0]) { a = b = rows[0]; }
+  if (z >= rows[rows.length - 1][0]) { a = b = rows[rows.length - 1]; }
+  const span = b[0] - a[0];
+  const t = span === 0 ? 0 : (z - a[0]) / span;
+  const L = (i) => a[i] + (b[i] - a[i]) * t;
+  return { half: L(1), top: L(2), bot: L(3), knuckle: L(4), deckFlat: L(5), flare: L(6) };
+}
+
+/** The twelve-point section at z, from either table. The seat work's one primitive. */
+const profileAt = (z, section = sectionAt) => {
+  const c = section(z);
+  return G.facetProfile({
+    maxHalf: c.half, top: c.top, bottom: c.bot,
+    knuckle: c.knuckle, deckFlat: c.deckFlat, flare: c.flare,
+  });
+};
+
 /**
  * THE KNUCKLE at z, starboard side: the widest point of the section and the hard
- * 44-degree chine that runs the length of the ship. This is where the running lights
+ * 80.8-degree chine that runs the length of the ship. This is where the running lights
  * go, because it is the one edge that is visible from above, from abeam and from
  * ahead, and it is where a rim light lands from any key.
+ *
+ * EIGHTY-POINT-EIGHT, not forty-four. This comment and the one at the flank strakes
+ * both said "a hard 44-degree chine" and 44 is stale from the eight-facet build that
+ * `greeble.js#facetProfile` explains was thrown away. The six-facet section's five
+ * dihedrals are 6.2 / 35.3 / 80.8 / 32.6 / 10.6 (greeble.js:271-273) and the knuckle
+ * is the third. It matters because every module in the library is now asked to carry
+ * a chine that echoes it (modules/kit.js#MODULE_CHINE), and echoing 44 would put the
+ * module's hardest edge in a band the hull does not use.
  *
  * The outward normal is the average of the two facets that meet at it, which is what
  * makes a lamp sitting on it face out of the corner rather than out of one plane.
@@ -575,6 +607,89 @@ const _basis = new THREE.Matrix4();
  * Sampled at every spine station inside the range plus both ends, so the plate follows
  * the sweep. `side` is -1 for port.
  */
+/**
+ * THE SEAT'S LOAD-BEARING PRIMITIVE: a plate lying ON a lofted skin.
+ *
+ * `flankStrake` below does this for exactly one facet (the lower flank) of exactly
+ * one loft (the hull), which is all it needed to. A SEAT needs it for the deck, the
+ * upper flank, the deck chamfer and the dorsal ridge's own section, so the maths is
+ * generalised here and `flankStrake` keeps its own body byte-for-byte.
+ *
+ * Given two `facetProfile` indices it walks the station table, takes the two points
+ * that bound that facet at each station, insets along the facet, offsets along the
+ * facet's OUTWARD NORMAL, and lofts the result. The plate is therefore parallel to
+ * the surface underneath it at every station BY CONSTRUCTION, which is the property
+ * that separates a plate run from a bar laid across a hull whose section moves.
+ *
+ * `drift` walks the plate ACROSS the facet as it runs in z, which is how the 7 and
+ * 16 degree plate angles the seat wants are built: an angled plate that is still on
+ * the surface. A plate rotated in world space is a plate that leaves the surface.
+ *
+ * TWO THINGS THAT ARE NOT COPIED FROM `flankStrake`, and both are deliberate.
+ *
+ *  1. THE SIGN OF THE NORMAL. `facetProfile` winds counter-clockwise seen from +Z
+ *     with the index increasing UP the starboard side, so the outward normal of the
+ *     edge i -> j is (dy, -dx) ONLY when j > i. `flankStrake` is called with the
+ *     facet written as [2, 1] - knuckle down to the keel chamfer, i.e. decreasing -
+ *     so the normal it computes points INWARD and its three plates a side sit 13 m
+ *     inside the skin with their outer faces coplanar with it. Measured: at z -500
+ *     the offset lands at (104.5, 14.6) against a knuckle at (114.0, 5.6), which is
+ *     inside the section. That is a hull defect, it predates this file's seat work,
+ *     and correcting it would move the hull's own outline over 620 m of flank - so it
+ *     is REPORTED and not changed here. This function takes the sign from the index
+ *     order and is therefore proud whichever way the facet is written.
+ *  2. THE WINDING IS MEASURED, NOT ASSUMED. The four-point section is emitted, its
+ *     signed area taken, and the order reversed if it came out clockwise. Four
+ *     facets times two sides times two normal directions is sixteen chances to get a
+ *     hand-written winding wrong and see it only as a hollow plate in one view.
+ *
+ * @param {Object} p
+ * @param {number[][]} p.rows      station table to take z breaks from
+ * @param {Function} p.section     z -> {half, top, bot, knuckle, deckFlat, flare}
+ * @param {number[]} p.facet       two `facetProfile` indices bounding the facet
+ * @param {number} p.t0,p.t1       inset along the facet, 0 at facet[0], 1 at facet[1]
+ * @param {number} p.drift         t shift from z0 to z1; this is the plate's angle
+ * @param {number} p.out           metres proud of the skin
+ * @param {number[]} p.offset      world offset, for a loft that is not on the axis
+ */
+function skinPlate({
+  z0, z1, side = 1, rows = HULL_STATIONS, section = sectionAt, facet = [2, 1],
+  t0 = 0.08, t1 = 0.92, drift = 0, out = 3, offset = [0, 0], full = true,
+}) {
+  const zs = [z0];
+  for (const r of rows) if (r[0] > z0 && r[0] < z1) zs.push(r[0]);
+  zs.push(z1);
+  const thin = full || zs.length <= 3
+    ? zs : zs.filter((z, i) => i === 0 || i === zs.length - 1 || i % 2 === 0);
+  const sgn = facet[1] > facet[0] ? 1 : -1;
+  const span = (z1 - z0) || 1;
+
+  const stations = thin.map((z) => {
+    const P = profileAt(z, section);
+    const A = P[facet[0]], Bp = P[facet[1]];
+    const dx = Bp[0] - A[0], dy = Bp[1] - A[1];
+    const l = Math.hypot(dx, dy) || 1;
+    const nx = (dy / l) * out * sgn, ny = (-dx / l) * out * sgn;
+    const k = drift * ((z - z0) / span);
+    const ta = Math.min(0.97, Math.max(0.03, t0 + k));
+    const tb = Math.min(0.97, Math.max(0.03, t1 + k));
+    const ax = A[0] + dx * ta, ay = A[1] + dy * ta;
+    const bx = A[0] + dx * tb, by = A[1] + dy * tb;
+    let pts = [
+      [ax, ay], [bx, by], [bx + nx, by + ny], [ax + nx, ay + ny],
+    ].map(([x, y]) => [side * x + offset[0], y + offset[1]]);
+    // Signed area; a clockwise section lofts inside-out.
+    let a2 = 0;
+    for (let i = 0; i < 4; i++) {
+      const j = (i + 1) % 4;
+      a2 += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+    }
+    if (a2 < 0) pts = pts.slice().reverse();
+    return { z, points: pts };
+  });
+  return G.loft(stations);
+}
+
 function flankStrake(z0, z1, side, out, full) {
   const zs = [z0];
   for (const r of HULL_STATIONS) if (r[0] > z0 && r[0] < z1) zs.push(r[0]);
@@ -1153,14 +1268,17 @@ export function hullParts({ rng, lod = 0 }) {
   massBox('stern', -250, -86, -700, 250, 90, -400);
 
   // =========================================================================
-  // 6. THE SIX EMPTY MOUNTS, in one vocabulary
+  // 6. THE SIX SEATS, in one vocabulary. See `mountSeat`.
+  //
+  // These survive to LOD1, which is a change and a deliberate one. The old
+  // `emptyMount` returned early at anything past LOD0 on the grounds that "the whole
+  // mount assembly is under two pixels" - true of a bolt ring, false of a 130 m
+  // apron with three plate runs off it, and the benchmark's camera sits at 7.2 km,
+  // i.e. LOD1, so LOD1 is where this ship is actually seen.
   // =========================================================================
-  emptyMount(B, 'bow', CRUISER_ANCHORS.bow, { face: 'up', padRadius: 32, conduits: 0, detail: D, full, rng: r });
-  emptyMount(B, 'dorsal', CRUISER_ANCHORS.dorsal, { face: 'up', padRadius: 44, conduits: 0, detail: D, full, rng: r });
-  emptyMount(B, 'ventral', CRUISER_ANCHORS.ventral, { face: 'down', padRadius: 44, conduits: 0, detail: D, full, rng: r });
-  emptyMount(B, 'port', CRUISER_ANCHORS.port, { face: 'up', padRadius: 32, conduits: 0, detail: D, full, rng: r });
-  emptyMount(B, 'starboard', CRUISER_ANCHORS.starboard, { face: 'up', padRadius: 32, conduits: 0, detail: D, full, rng: r });
-  emptyMount(B, 'engine', CRUISER_ANCHORS.engine, { face: 'aft', padRadius: 44, conduits: 0, detail: D, full, rng: r });
+  for (const id of ['bow', 'dorsal', 'ventral', 'port', 'starboard', 'engine']) {
+    mountSeat(B, id, CRUISER_ANCHORS[id], { detail: D, full, rng: r, card });
+  }
 
   // =========================================================================
   // 7. THE THINGS THE CREW BOLTED ON. 8-14% of hull volume that does not match.
@@ -1499,16 +1617,36 @@ function buildStern(B, D, full, rng) {
     // load path forks rather than terminating in one point — and they are `dark`, so
     // they read as structure under the pod rather than as more hull.
     //
+    // IT NOW ACTUALLY REACHES THE FLANK, and that sentence used to be false. The two
+    // members ended at x +-152 and +-138 where the hull's own half-beam is 98-101, so
+    // a "load path into the flank" stopped thirty-seven to fifty-four metres short of
+    // the flank, in vacuum. The only thing joining the whole assembly to the ship in
+    // PLAN was a twelve-metre rasterisation bridge across to the aft pylon - under
+    // three pixels at `tools/silhouette.mjs`'s working scale, which is why the audit
+    // read one piece and why a four-metre change anywhere else could tip it into two.
+    // It did: dropping SEAT_STANDOFF from 7 to 3 moved the bow modules 4 m aft, the
+    // raster window shrank by that much, and the bridge stopped rounding closed.
+    //
+    // So the endpoints are now taken FROM `sectionAt`, at each member's own z, and
+    // driven a little inside the skin. That is the LOD2 rule ("every proxy has at
+    // least a third of its own depth buried inside the spine") applied to a member
+    // that was exempted from it by nobody deciding to. A member that terminates in
+    // space is the same defect as a module that does not look seated, at the stern.
+    //
     // It is the only new named feature at the stern and it costs 80 triangles a side.
     // -----------------------------------------------------------------------
     const root = [s * (POD.x - 14), 10, POD.frameZ];
-    B.add('engine', 'dark', beam(root, [s * 152, -14, POD.frameZ + POD.frameLen], 13, { detail: D }));
-    B.add('engine', 'dark', beam(root, [s * 138, 34, POD.frameZ + POD.frameLen * 0.72], 10, { detail: D }));
+    const lowZ = POD.frameZ + POD.frameLen;
+    const upZ = POD.frameZ + POD.frameLen * 0.72;
+    const lowSec = sectionAt(lowZ), upSec = sectionAt(upZ);
+    // The lower member lands ON the knuckle, the upper one up on the deck chamfer, so
+    // the fork terminates on two different facets as well as at two different z.
+    const lowEnd = [s * lowSec.half * 0.94, lowSec.top - lowSec.knuckle * (lowSec.top - lowSec.bot), lowZ];
+    const upEnd = [s * upSec.half * 0.72, upSec.top - 0.107 * (upSec.top - upSec.bot), upZ];
+    B.add('engine', 'dark', beam(root, lowEnd, 13, { detail: D }));
+    B.add('engine', 'dark', beam(root, upEnd, 10, { detail: D }));
     if (full) {
-      B.add('engine', 'greeble', beam(
-        [s * 152, -14, POD.frameZ + POD.frameLen],
-        [s * 138, 34, POD.frameZ + POD.frameLen * 0.72], 6, { caps: false, detail: D },
-      ));
+      B.add('engine', 'greeble', beam(lowEnd, upEnd, 6, { caps: false, detail: D }));
     }
 
     B.add('engine', 'greeble', G.thrusterBell({
@@ -1561,61 +1699,314 @@ function buildStern(B, D, full, rng) {
 // ---------------------------------------------------------------------------
 
 /**
- * An UNOCCUPIED mount, in the one vocabulary the whole ship uses: a plinth, a bolt
- * ring and capped conduits. This function existing once is why all six mounts read as
- * the same kind of thing, which is why filling one reads as progress rather than as a
- * random new lump.
+ * ============================================================================
+ * THE SEAT — what a hull grows so that a module lands INTO something
+ * ============================================================================
  *
- * The bolt ring goes in `trim` and the socket bore in `greeble`, so an empty mount is
- * DARKER inside than out - a warm, busy interior behind a clean rim is a far stronger
- * "something goes here" signal than a bolt circle on a flat pad (§4, recess colour).
+ * A mount used to be a pad and a bolt ring: a 9 m plinth and a 7 m collar, with the
+ * module standing a further 7 m proud on top (`hardpoints.js#SEAT_STANDOFF`). So a
+ * module met the hull at a 32-44 m disc, SIXTEEN METRES CLEAR OF THE SKIN, with no
+ * geometry anywhere carrying its mass outward. That is the whole "trash strewn on a
+ * decent hull" read, and it is a geometric statement rather than a taste one: there
+ * was no transition surface at any of the six junctions.
+ *
+ * A real ship has a SEAT. The hull thickens locally, the skin is cut and pans down
+ * into a bed, a coaming stands proud around the cut, plating runs off that bed and
+ * lies along the hull carrying the load away, and the module's overhang is chocked.
+ * Six parts, built at EVERY mount whether or not anything is fitted, so an empty
+ * hardpoint reads as a berth rather than as a boss:
+ *
+ *   APRON        an irregular hexagonal pan cut 9 m into the skin with a 4 m proud
+ *                coaming. Drafted - its wall runs from 0.80 r at the floor to 1.00 r
+ *                at the rim, so nothing about it is square to an axis (F3).
+ *   PAD          unchanged radius, but standing on the APRON FLOOR, so its top is
+ *                3 m BELOW the skin instead of 9 m above it.
+ *   COLLAR       on the pad, spanning -3 .. +3 about the skin.
+ *   PLATE RUN    two or three plates running off the apron rim and LYING ON the
+ *                hull, built by `skinPlate` so they are parallel to the surface at
+ *                every station. This is the load-bearing item, in both senses.
+ *   CHOCKS       wedges under the module's overhanging side. A cantilevered mass
+ *                with nothing under it is what the eye reads as unattached.
+ *   SERVICE RUN  a pipe and two conduits leaving the apron and disappearing under a
+ *                plate 60-120 m away, so something crosses the join.
+ *
+ * THE INTERPENETRATION IS FIXED BY THE SAME ARITHMETIC. Before: the pad spanned
+ * 0..9 outward of the anchor, the collar 9..16, and the module's own cut plate
+ * 7..13.2 (`modules/kit.js#graft`, plateH = max(4, r*0.14)). The hull's bolt ring
+ * passed THROUGH the module's cut plate at all six mounts - two interpenetrating
+ * solids, invisible only because the module is opaque. Now the pad is -9..-3, the
+ * collar -3..+3, `SEAT_STANDOFF` is 3, and the module's plate starts at exactly +3.
+ * The ring is the foot the plate lands on, which is what the standoff comment always
+ * claimed it was.
+ *
+ * COST: about 250 triangles a mount, ~1500 for all six, against `cruiserCoreTris`
+ * 9000 and a measured LOD0 of 5241. ZERO NEW DRAW CALLS - every part goes into
+ * hull / plating / dark / greeble in the `core` group, four buckets this hull already
+ * owns, and the header's rule is that primitives inside an existing surface are free.
+ *
+ * MOST OF IT SURVIVES TO LOD1. The apron, the pad, the plate run and the chocks are
+ * silhouette and value, not mechanism; the collar and the service run are LOD0.
  */
-function emptyMount(B, id, anchor, { face, padRadius, conduits, detail, full, rng }) {
+
+/**
+ * Irregular hexagon, six unequal radii. It is OUR structure rather than a torch cut
+ * (`modules/kit.js#cutOutline` is the torch), so it is competently irregular rather
+ * than ragged - but a regular hexagon on a hull with no other regular hexagon on it
+ * reads as a catalogue part, and §6 is explicit that this ship has never seen a
+ * catalogue.
+ */
+const APRON_R = [1.00, 0.87, 0.96, 1.00, 0.91, 0.84];
+function apronOutline(rx, ry, k = 1) {
+  const pts = [];
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + 0.26;
+    pts.push([Math.cos(a) * rx * APRON_R[i] * k, Math.sin(a) * ry * APRON_R[i] * k]);
+  }
+  return pts;
+}
+
+/**
+ * Per-mount seat data. Five of the six anchors are `hardpoints.js#CRUISER_ANCHORS`
+ * unchanged; this table says what the hull grows around each of them.
+ *
+ *   rx, ry   apron half-extent across and along. NOT one radius: the doc's
+ *            "1.9 x padRadius" is right about the size and wrong about the shape,
+ *            because a circle of that radius at the bow is wider than the foredeck
+ *            and a circle of it on the dorsal barbette hangs off both ends of the
+ *            barbette. Every apron is elongated along the feature it sits on.
+ *   tilt     world-space [x, y, z] rotation applied to the whole seat AFTER the face
+ *            rotation, so the pan lies on the local surface rather than on the world
+ *            axes. The bow deck falls 0.0875 m per metre going forward; the sponson
+ *            shelves are `bevelBox`es canted +-0.13 rad.
+ *   plates   plate runs, each { z0, z1, side, facet, t0, t1, drift, out, surface }.
+ *            NEVER MIRRORED port to starboard - the 170 m z offset between the two
+ *            sponsons is a deliberate asymmetry (F13) and a mirrored seat undoes it.
+ *   chocks   [across, alongShip, length, width, height, bearing] buttresses standing
+ *            ON the skin off the apron rim. `bearing` is radians in the skin plane.
+ *   service  { from: [across, alongShip], len, bearing, pitch }
+ *
+ * THE SEAT'S LOCAL FRAME, because getting it wrong is silent. Every part below is
+ * authored with +Z OUTWARD and is then turned onto the hull by `seated()`. For an
+ * `up` mount local X is world +X, local Y is world -Z (AFT) and local Z is world +Y;
+ * for `down` local Y is world +Z and local Z is world -Y; for `aft` local Z is world
+ * -Z. So local +Z is the mount normal at all six, which is the only invariant the
+ * table below relies on - the tuples are written in (across, along-ship) and mapped.
+ */
+const SEAT = {
+  bow: {
+    face: 'up', padRadius: 32, rx: 38, ry: 40, tilt: [0.0875, 0, 0],
+    // The forward rim lands at z 460, ON the prow knuckle break, and no further: the
+    // forward 200 m is calm reserve and the prow's job is convergence. The structural
+    // frame at z 430 (F8) crosses the pan and becomes its coaming rib for free, which
+    // is "the hull acknowledges the module" for no triangles at all.
+    plates: [
+      // Three, running AFT down the foredeck, at 0 / 7 / 16 degrees to the axis. The
+      // angle is `drift` - the plate walks across the deck facet as it runs - so it
+      // is an angled plate that is still ON the surface.
+      { z0: 196, z1: 386, side: 1, facet: [4, 5], t0: 0.12, t1: 0.52, drift: 0.22, out: 3, surface: 'plating' },
+      { z0: 240, z1: 380, side: -1, facet: [4, 5], t0: 0.30, t1: 0.74, drift: -0.14, out: 3, surface: 'plating' },
+      // One drops over the deck chamfer onto the upper flank, port only, so the run
+      // crosses a chine instead of stopping at one.
+      { z0: 268, z1: 388, side: -1, facet: [3, 2], t0: 0.10, t1: 0.44, drift: 0.10, out: 3, surface: 'plating' },
+    ],
+    chocks: [[-40, -34, 52, 30, 22, -1.24], [38, 28, 44, 24, 17, 0.62], [-26, 44, 36, 20, 14, 1.86]],
+    service: { from: [24, -30], len: 96, bearing: -1.36, pitch: 0.09 },
+  },
+  dorsal: {
+    // The one mount that already had a seat - a 30 m barbette - and not a coincidence
+    // that it is the one the module audit had to fix structurally rather than
+    // metrically. The apron is cut into the barbette's top face.
+    face: 'up', padRadius: 44, rx: 42, ry: 50, tilt: [0, 0, 0],
+    plates: [
+      // The ridge CROWN is calm reserve, so the run goes on the ridge FLANKS, below
+      // the crown, at the ridge's own rake. Built from RIDGE_STATIONS through
+      // `ridgeSectionAt`, so they lie on the ridge and not on a plane near it.
+      { z0: -190, z1: -46, side: -1, ridge: true, facet: [3, 2], t0: 0.14, t1: 0.58, drift: 0.16, out: 3, surface: 'plating' },
+      { z0: -36, z1: 44, side: 1, ridge: true, facet: [3, 2], t0: 0.20, t1: 0.62, drift: -0.12, out: 3, surface: 'plating' },
+      { z0: -128, z1: -58, side: 1, ridge: true, facet: [4, 3], t0: 0.24, t1: 0.70, drift: 0, out: 3, surface: 'plating' },
+    ],
+    chocks: [[-34, -52, 46, 28, 19, -1.42], [32, 46, 40, 24, 24, 0.48], [8, -58, 34, 18, 13, -1.96]],
+    service: { from: [-28, -46], len: 78, bearing: -1.72, pitch: 0.12 },
+  },
+  ventral: {
+    face: 'down', padRadius: 44, rx: 58, ry: 76, tilt: [0, 0, 0],
+    plates: [
+      // The keel. `dark` below the knuckle, which is every plate on this mount.
+      { z0: -180, z1: 8, side: 1, facet: [0, 1], t0: 0.10, t1: 0.56, drift: 0.18, out: 3, surface: 'dark' },
+      { z0: -96, z1: 132, side: -1, facet: [0, 1], t0: 0.22, t1: 0.70, drift: -0.12, out: 3, surface: 'dark' },
+      { z0: 30, z1: 190, side: -1, facet: [1, 2], t0: 0.08, t1: 0.40, drift: 0.14, out: 3, surface: 'dark' },
+    ],
+    chocks: [[-56, -58, 54, 30, 23, -1.18], [52, 66, 46, 26, 18, 0.56], [-36, 84, 36, 20, 15, 1.92]],
+    service: { from: [32, 62], len: 104, bearing: 0.74, pitch: 0.10 },
+  },
+  port: {
+    face: 'up', padRadius: 32, rx: 26, ry: 40, tilt: [0, 0, -0.13],
+    plates: [
+      // ONE 150 m plate running inboard from the shelf onto the upper flank, at the
+      // local facet angle. Port and starboard differ in length, in z and in facet.
+      { z0: -34, z1: 116, side: -1, facet: [2, 3], t0: 0.16, t1: 0.52, drift: 0.20, out: 3, surface: 'plating' },
+      { z0: 22, z1: 128, side: -1, facet: [3, 4], t0: 0.20, t1: 0.60, drift: -0.10, out: 3, surface: 'plating' },
+    ],
+    chocks: [[-24, -44, 44, 26, 21, -1.30], [-22, 40, 34, 20, 15, 1.74], [20, 14, 30, 16, 12, 0.22]],
+    service: { from: [10, -34], len: 84, bearing: -1.44, pitch: 0.11 },
+  },
+  starboard: {
+    face: 'up', padRadius: 32, rx: 26, ry: 40, tilt: [0, 0, 0.13],
+    plates: [
+      { z0: -222, z1: -84, side: 1, facet: [2, 3], t0: 0.24, t1: 0.64, drift: -0.16, out: 3, surface: 'plating' },
+      { z0: -168, z1: -32, side: 1, facet: [3, 4], t0: 0.12, t1: 0.46, drift: 0.18, out: 3, surface: 'plating' },
+      { z0: -246, z1: -156, side: 1, facet: [1, 2], t0: 0.30, t1: 0.68, drift: 0, out: 3, surface: 'dark' },
+    ],
+    chocks: [[22, 44, 48, 28, 19, 1.66], [26, -38, 36, 22, 16, -1.22], [-18, -10, 28, 15, 11, 2.96]],
+    service: { from: [-12, 36], len: 92, bearing: 1.52, pitch: 0.09 },
+  },
+  // The drive well IS the apron - a 108 m socket cut in the transom, deeper than any
+  // pan this file could add. Its seat is what a socket needs and a pan does not:
+  // KEYWAYS. Six bolt bosses at the well profile's OWN vertex positions and four
+  // longitudinal ribs up its inner wall, so a drive plugs into something with visible
+  // register features instead of touching a flat annulus.
+  engine: { face: 'aft', padRadius: 44, well: true },
+};
+
+/**
+ * A mount, occupied or not. This function existing once is why all six read as the
+ * same kind of thing, which is why filling one reads as progress rather than as a
+ * random new lump.
+ */
+function mountSeat(B, id, anchor, { detail, full, rng, card }) {
+  const S = SEAT[id];
   const [ax, ay, az] = anchor;
-  const padRot = face === 'down' ? [Math.PI, 0, 0] : [0, 0, 0];
-  const collarRot = face === 'up' ? [-Math.PI * 0.5, 0, 0]
+  const { face, padRadius } = S;
+  const faceRot = face === 'up' ? [-Math.PI * 0.5, 0, 0]
     : face === 'down' ? [Math.PI * 0.5, 0, 0]
       : [0, Math.PI, 0];
   const sign = face === 'down' ? -1 : 1;
+  // Outward, in world metres, for placing things along the mount normal.
+  const outv = (d) => (face === 'aft' ? [ax, ay, az - d] : [ax, ay + sign * d, az]);
+  /** Place a part authored in the seat's own +Z-outward frame onto the hull. */
+  const seated = (geo) => G.place(G.place(geo, { rot: faceRot }),
+    { rot: S.tilt ?? [0, 0, 0], pos: [ax, ay, az] });
 
-  // Past the LOD1 switch the whole mount assembly is under two pixels.
+  if (S.well) return wellSeat(B, anchor, { detail, full, card });
+
+  // ---- APRON: the pan, and the coaming that stands proud around it ---------
+  const rim = apronOutline(S.rx, S.ry);
+  const floorPts = apronOutline(S.rx, S.ry, 0.80);
+  const outer = apronOutline(S.rx, S.ry, 1.13);
+  // Floor `dark`, coaming `plating`: a dark hole behind a bright rim is the read, and
+  // it is the same one every recess on this hull uses (§4, recess colour).
+  B.add('core', 'dark', seated(G.loft(
+    [{ z: -9, points: floorPts }, { z: 4, points: rim }],
+    { capFront: false, capBack: true, flip: true },
+  )));
+  B.add('core', 'plating', seated(G.mergeParts([
+    { geo: G.prism(outer, -2, 4, { capFront: false, capBack: false }) },
+    { geo: G.ringFace(outer, rim, 4) },
+  ])));
+
+  // ---- PAD, on the apron floor, and COLLAR, spanning the skin --------------
+  // The pad is `plating`, not `hull`. On `hull` the five pads came back in the khaki
+  // tier-2 variant and read as five bright tan patches evenly spread down a grey ship.
+  B.add('core', 'plating', G.mountPad({ radius: padRadius, height: 6, sides: 5, detail }),
+    { pos: outv(-9), rot: face === 'down' ? [Math.PI, 0, 0] : [0, 0, 0] });
+
+  // ---- PLATE RUN: the load path, lying on the skin -------------------------
+  for (const p of S.plates) {
+    B.add('core', p.surface, skinPlate({
+      z0: p.z0, z1: p.z1, side: p.side, facet: p.facet, t0: p.t0, t1: p.t1,
+      drift: p.drift, out: p.out, full,
+      rows: p.ridge ? RIDGE_STATIONS : HULL_STATIONS,
+      section: p.ridge ? ridgeSectionAt : sectionAt,
+      offset: p.ridge ? [RIDGE_X, 0] : [0, 0],
+    }));
+  }
+
+  // ---- CHOCKS: something under the overhang --------------------------------
+  // Unequal, unequally spaced, and never a mirrored pair. They were cut to fit what
+  // was actually there.
+  //
+  // `lay` is the only rotation maths in this function and it is two nested places
+  // rather than one composed Euler, for the reason `modules/kit.js#aimed` gives:
+  // composing two rotations into one XYZ triple is the most reliable way to build a
+  // part that is twelve degrees wrong in a way nobody sees until it is on the ship.
+  // Inner: the primitive's +Z (its length) turns into the skin plane and its +Y (its
+  // height) turns OUTWARD. Outer: a bearing within that plane, then the position.
+  const lay = (geo, bearing, across, along, up) => G.place(
+    G.place(geo, { rot: [Math.PI * 0.5, 0, 0] }),
+    { rot: [0, 0, bearing], pos: [across, -along, up] },
+  );
+
+  for (const [across, along, len, w0, h0, bearing] of S.chocks) {
+    B.add('core', 'plating', seated(lay(G.taperedWedge({
+      length: len, width0: w0, height0: h0, width1: w0 * 0.44, height1: h0 * 0.30,
+      shear: -h0 * 0.26, chamfer: 4, detail,
+    }), bearing, across, along, h0 * 0.5 - 2)));
+  }
+
   if (!full) return;
 
-  // The pad is `plating`, not `hull`. On `hull` the five pads came back in the khaki
-  // tier-2 variant and read as five bright tan patches evenly spread down a grey ship
-  // - five more co-equal features on a hull that already had too many, and the only
-  // saturated albedo anywhere except the accent trim. A mount pad is a flat bed; it
-  // does not need to be a different colour to say so, the bolt ring says it.
-  const padH = 9;
-  if (face !== 'aft') {
-    B.add('core', 'plating', G.mountPad({ radius: padRadius, height: padH, sides: 5, detail }),
-      { pos: [ax, ay, az], rot: padRot });
-  }
-
   B.add('core', 'greeble', G.dockingCollar({
-    radius: padRadius * 0.74, innerRadius: padRadius * 0.5, depth: 7, sides: 4, detail,
-  }), {
-    pos: face === 'aft' ? [ax, ay, az - 7] : [ax, ay + sign * padH, az],
-    rot: collarRot,
-  });
+    radius: padRadius * 0.74, innerRadius: padRadius * 0.5, depth: 6, sides: 4, detail,
+  }), { pos: outv(-3), rot: faceRot });
 
+  // ---- SERVICE RUN: something crosses the join -----------------------------
+  // A trunk leaving the apron, running along the skin and disappearing under one of
+  // the plate runs 80-100 m away. It is the cheapest thing on the seat and it is the
+  // one that says the module is PLUMBED IN rather than parked.
+  const sv = S.service;
+  B.add('core', 'greeble', seated(G.place(
+    lay(G.pipeRun({ length: sv.len, radius: 6, sides: 6, axis: 'z', flanges: 1, detail }),
+      sv.bearing, sv.from[0], sv.from[1], 5),
+    { rot: [sv.pitch, 0, 0] },
+  )));
   const jitter = rng.fork(`mount:${id}`);
-  for (let i = 0; i < conduits; i++) {
-    const a = Math.PI * (0.25 + i * (1.5 / Math.max(1, conduits))) + jitter.range(0, 0.3);
-    const rr = padRadius * 1.16;
-    const len = 20 + jitter.range(0, 12);
-    if (face === 'aft') {
-      B.add('core', 'greeble', G.cappedConduit({ length: len, radius: 7, axis: 'z', detail }), {
-        pos: [ax + Math.cos(a) * rr, ay + Math.sin(a) * rr, az],
-        rot: [0, Math.PI, 0],
-      });
-    } else {
-      B.add('core', 'greeble', G.cappedConduit({ length: len, radius: 7, axis: 'y', detail }), {
-        pos: [ax + Math.cos(a) * rr, ay, az + Math.sin(a) * rr],
-        rot: padRot,
-      });
-    }
+  for (let i = 0; i < 2; i++) {
+    const a = 0.9 + i * 2.7 + jitter.range(0, 0.4);
+    B.add('core', 'greeble', seated(G.place(
+      G.cappedConduit({ length: 14 + jitter.range(0, 9), radius: 5, axis: 'z', detail }),
+      { rot: [0.7 + jitter.range(0, 0.3), a, 0], pos: [Math.cos(a) * S.rx * 1.18, Math.sin(a) * S.ry * 1.06, 1] },
+    )));
   }
+}
+
+/**
+ * THE ENGINE SEAT. The well outline is the transom's own section scaled 0.36 x 0.55,
+ * so its vertices are real register points on the hull's plate family - put the bolt
+ * bosses THERE and a drive plugs into a socket with keyways rather than touching a
+ * flat annulus. Four ribs run the well's inner wall mouth to back and stop a 108 m
+ * bore reading as a smooth pipe.
+ */
+function wellSeat(B, anchor, { detail, full, card }) {
+  const transom = stationProfile(HULL_STATIONS[0], card);
+  const well = wellProfile(transom);
+  const n = well.length;
+  // SIX bosses on a profile with eight or twelve vertices, and not every other one:
+  // an even tiling of a socket is machine rhythm, and this one was cut by a crew.
+  const pick = n >= 12 ? [0, 2, 3, 5, 7, 10] : [0, 1, 3, 4, 5, 7];
+  for (let i = 0; i < pick.length; i++) {
+    const p = well[pick[i] % n];
+    const k = 0.88 + (i % 3) * 0.05;
+    B.add('core', 'plating', G.bevelBox({
+      width: 20 + (i % 2) * 6, height: 14, depth: 22, chamfer: 3, draft: 3,
+      cant: (i % 2 ? 0.14 : -0.11), detail,
+    }), { pos: [p[0] * k, p[1] * k, WELL.backZ + 12] });
+  }
+  if (!full) return;
+  // Longitudinal ribs on the bore, at four unequal angles.
+  for (const [t, r] of [[0.14, 9], [0.42, 7], [0.63, 9], [0.88, 6]]) {
+    const i = Math.floor(t * n) % n;
+    const p = well[i];
+    const l = Math.hypot(p[0], p[1]) || 1;
+    B.add('core', 'greeble', G.bevelBox({
+      width: r * 2, height: 9, depth: WELL.mouthZ - WELL.backZ - 14, chamfer: 2, draft: 2, detail,
+    }), {
+      pos: [p[0] * 0.90, p[1] * 0.90, (WELL.mouthZ + WELL.backZ) * 0.5 - 4],
+      rot: [0, 0, Math.atan2(p[1], p[0]) - Math.PI * 0.5 + (l > 0 ? 0 : 0)],
+    });
+  }
+  B.add('core', 'greeble', G.dockingCollar({
+    radius: 34, innerRadius: 22, depth: 6, sides: 4, detail,
+  }), { pos: [anchor[0], anchor[1], anchor[2] + 3], rot: [0, Math.PI, 0] });
 }
 
 /** A flat additive disc with 0..1 UVs for the engine-glow texture. 8 triangles. */
