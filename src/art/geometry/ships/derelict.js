@@ -64,13 +64,13 @@
  *   `hulkSection`, built to the same three RULES the fleet's section is built to
  *   and to none of its geometry:
  *
- *     no facet is a large fraction of the perimeter    largest is 8.8-10.3%
- *     no dihedral lands in the 12-28 degree band       measured, `sectionFindings`
- *     the section is convex, so a loft cap is sound    measured, `sectionFindings`
+ *     no facet is a large fraction of the perimeter    7.3-10.7% over 19 stations
+ *     no dihedral lands in the 12-28 degree band       0 of 285, measured
+ *     the section is convex, so a loft cap is sound    0 concave points, measured
  *
  *   FIFTEEN POINTS, five-fold: each lobe is a CHAMFERED CORNER, then two flats
- *   meeting at a RIDGE. The corner breaks are 7-10 degrees — a fair panel seam —
- *   and the ridge is a 52-58 degree chine that runs the whole 3.4 km and catches a
+ *   meeting at a RIDGE. The corner breaks are 5.7-9.8 degrees — a fair panel seam —
+ *   and the ridge is a 52-61 degree chine that runs the whole 3.4 km and catches a
  *   rim light from any direction, which is the radial answer to the cruiser's
  *   knuckle. The ridges are also where the vanes come out, so the chine is the
  *   vane's spar continuing into the body rather than a decoration on top of one.
@@ -90,15 +90,16 @@
  *   plating thickness and a dark throat instead of the sliced-cheese cap the first
  *   pass shipped (docs/probes/derelict-breach.png, the flat pentagon).
  *
- *   THE SKIN IS ARMOUR AND MOST OF IT IS GONE. Every lobe carries a belt of skin
- *   plates cut from the body's own section. The five lobes are NOT equally
- *   plated — one is nearly intact, one has been stripped to the frames, one has a
- *   400 m salvage cut down it, two have plates hanging off by one edge. Where a
- *   plate is missing there is a SCAR the exact shape of the plate it used to be,
- *   with the ribs it was bolted to standing in the bottom of it. That asymmetry is
- *   the whole "picked over" read and it costs nothing in the silhouette: the form
- *   stays rigorously five-fold, only the DAMAGE is asymmetric, which is what
- *   damage is.
+ *   THE SKIN IS ARMOUR AND A THIRD OF IT IS GONE. Every lobe carries a belt of skin
+ *   plates cut from the body's own section, and 21 of the 72 footprints are empty —
+ *   16 of 52 on the aft flanks, 3 of 4 on the tail, 2 of 16 on the forward corners.
+ *   The five lobes are NOT equally plated: one is nearly intact, one has been
+ *   stripped to the frames front to back, one has a 420 m salvage cut down it, three
+ *   have plates hanging off by one edge. Where a plate is missing there is a SCAR
+ *   the exact shape of the plate it used to be, with the ribs it was bolted to
+ *   standing in the bottom of it. That asymmetry is the whole "picked over" read and
+ *   it costs nothing in the silhouette: the form stays rigorously five-fold, only
+ *   the DAMAGE is asymmetric, which is what damage is.
  *
  *   One vane is a stump with shards still attached. The debris that came out is
  *   still nearby, turning slowly, because there has been nothing to disturb it.
@@ -173,10 +174,10 @@ export const LOBE_FACET = ['rise', 'fall', 'corner'];
  * 15 / 15 / 10. LOD1 keeps all fifteen for the same measured reason the fleet's
  * section keeps all twelve: the saving belongs on the STATION axis, where a station
  * is fifteen points and a facet is two. LOD2 drops the RIDGE points, which is the
- * cheapest cardinality cut available here — the chord between the two chamfer cuts
- * passes 9% of the pentagon radius inside the ridge, i.e. 21 m at the widest station
- * of a 3400 m hull. That is 0.6% of length, and one pixel at the 30 px tactical read
- * is 113 m.
+ * cheapest cardinality cut available here — with the ridge gone the outline at that
+ * angle falls back to the pentagon edge line, worst case 46.6 m at the widest
+ * station (z 1000). That is 1.37% of a 3402 m hull, against 113 m to the pixel at
+ * the 30 px tactical read this level exists for: four tenths of a pixel.
  */
 export const HULK_SECTION_LOD = {
   full: null,                                    // 15
@@ -696,7 +697,7 @@ class Spindle {
    * capped by a flat disc.
    *
    * This is the single most important forty triangles in the file. The first pass
-   * capped both breach lofts, so a 224 m-radius pentagon of solid plate faced the
+   * capped both breach lofts, so a 226 m-radius pentagon of solid plate faced the
    * player at the exact place the fiction says the ship was ripped open — visible
    * in docs/probes/derelict-breach.png as the flat facet the yellow emissive sits
    * on. A funnel gives the breach a PLATING THICKNESS and a throat, which is what
@@ -957,9 +958,13 @@ const SPOKES = [0.35, 0.35 + TAU / 3, 0.35 + 2 * TAU / 3];
  *   fore       plates missing from the forward corner belt; `null` means this lobe
  *              carries no forward plating at all.
  *
- * 23 of the 47 belt footprints on the aft body are empty. That ratio is the design:
- * under about a third the object reads as damaged, and over about a half it reads as
- * a frame with no skin, and the thing has to read as a SHIP that was stripped.
+ * 21 of the 72 belt footprints on the object are empty — 16 of 52 on the aft flanks,
+ * 3 of 4 on the tail, 2 of 16 on the forward corners. That gradient is the design:
+ * the tail was cleaned out, the flanks were worked, the forward corners were barely
+ * touched, which is the order somebody stripping a wreck would actually work in. And
+ * a third is the fraction, not a half: under about a fifth the object reads as
+ * merely damaged, and over about a half it reads as a frame that never had a skin.
+ * It has to read as a SHIP THAT WAS STRIPPED.
  */
 const LOBE_DAMAGE = [
   // 0 — the reference face. Nearly whole: this is what the other four were.
