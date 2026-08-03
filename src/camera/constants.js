@@ -43,7 +43,15 @@ export const ORBIT = {
   tauOrbitKey: 0.055,
   tauZoom: 0.090,
   tauFocusKey: 0.120,
-  followLead: 0.35,
+  /*
+   * 0.35 led the locked focus ahead of the ship by its velocity, so the hull sat behind
+   * centre whenever it moved — correct for an RTS "show me where it is going", wrong for
+   * the owner's ruling that this camera is third-person: "the ship kept as the
+   * center-focused ... like most third person games show the character in the middle".
+   * Zero means the ship IS the pivot. If a forward read is ever wanted again it should
+   * be a small screen-space offset, not a focus lead, so the pivot never leaves the hull.
+   */
+  followLead: 0,
 
   // snap
   snapMs: 450,

@@ -123,6 +123,27 @@ export class TacticalCamera {
    * @param {number} notches   wheel notches, positive zooms out
    * @param {THREE.Vector3|null} cursorPlanePoint  where the cursor hits the combat plane
    */
+  /*
+   * THE CAMERA IS SHIP-LOCKED, AND THREE INPUTS USED TO SILENTLY BREAK THAT.
+   *
+   * Owner feedback, verbatim: "the camera and zoom should be locked to the ship and that
+   * kept as the center-focused, much like how most third person games show the character
+   * in the middle ... zoom and stuff should still work but the camera should rotate
+   * around the main cruiser."
+   *
+   * Before this, three ordinary inputs each flipped the camera to FREE and walked the
+   * focus off the ship: zoom-to-cursor (its bias lerped the focus toward the cursor and
+   * set FREE), middle-drag pan, and key pan. Each was individually defensible for an RTS
+   * and together they meant the ship left the centre of the screen the moment you touched
+   * anything, which is the "very weird" the owner reported. The cruiser IS the game — the
+   * camera treats it the way a third-person game treats its character.
+   *
+   * What remains in LOCKED mode: drag ORBITS around the ship, wheel ZOOMS along the look
+   * axis, and the pan inputs are REMAPPED to orbit rather than dead — a control that does
+   * nothing reads as broken, and "no input requires fighting the camera" is an acceptance
+   * criterion. FREE mode still exists as a state (snaps pass through it) but no default
+   * input reaches it.
+   */
   zoom(notches, cursorPlanePoint = null, modifier = 'none') {
     this._cancelSnap();
     this._idleTime = 0;
@@ -132,22 +153,29 @@ export class TacticalCamera {
       this._zoomTTarget + notches * ORBIT.stepT * scale, 0, ORBIT.strategicT1,
     );
 
-    // Zoom to cursor, one directionally. Bidirectional bias makes the focus drift and
-    // is a well known source of "where did my ship go".
+    // Zoom to cursor only when ALREADY free (a snap mid-flight). While locked, zoom is
+    // a dolly on the ship: the one thing zoom-to-cursor must never do again is steal
+    // the focus from the hull.
     const zoomingIn = this._zoomTTarget < before;
     const bias = zoomingIn ? ORBIT.cursorBiasIn : ORBIT.cursorBiasOut;
-    if (bias > 0 && cursorPlanePoint) {
-      this.mode = 'FREE';
+    if (bias > 0 && cursorPlanePoint && this.mode === 'FREE') {
       this._focusTarget.lerp(cursorPlanePoint, bias * Math.abs(notches));
       this._focusTarget.y = 0;
     }
   }
 
-  /** Screen-exact drag pan. Unsmoothed, because screen-exact means unsmoothed. */
+  /**
+   * Drag pan, remapped: while locked it orbits, because the ship owns the centre of the
+   * frame. The FREE branch keeps the old screen-exact translation for the moments a
+   * snap has the camera detached.
+   */
   pan(dxPx, dyPx, viewportHeight) {
+    if (this.mode !== 'FREE') {
+      this.orbit(dxPx, dyPx);
+      return;
+    }
     this._cancelSnap();
     this._idleTime = 0;
-    this.mode = 'FREE';
 
     // Convert pixels to world metres at the focus plane.
     const vFov = THREE.MathUtils.degToRad(this.camera.fov);
@@ -169,11 +197,23 @@ export class TacticalCamera {
     this.focus.copy(this._focusTarget);
   }
 
+  /** Key pan, remapped the same way: yaw with x, pitch with z, around the ship. */
   keyPan(x, z, dt, modifier = 'none') {
     if (x === 0 && z === 0) return;
+    if (this.mode !== 'FREE') {
+      this.keyYaw(x, dt);
+      if (z) {
+        this._cancelSnap();
+        this._idleTime = 0;
+        this._pitchTarget = THREE.MathUtils.clamp(
+          this._pitchTarget + z * ORBIT.keyYawRate * 0.6 * dt,
+          0, CAMERA.maxPitch - this.pitchFloor(),
+        );
+      }
+      return;
+    }
     this._cancelSnap();
     this._idleTime = 0;
-    this.mode = 'FREE';
     const mul = modifier === 'fast' ? ORBIT.panFastMul : modifier === 'slow' ? ORBIT.panSlowMul : 1;
     const rate = ORBIT.keyPanRate * this.distance * mul * dt;
     const right = Math.cos(this.yaw), rightZ = -Math.sin(this.yaw);

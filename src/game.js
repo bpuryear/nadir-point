@@ -281,13 +281,32 @@ export async function bootGame(world, params) {
   if (refitSys && params.get('fit') !== 'none') {
     const occupied = [...player.hardpoints.values()].some((hp) => hp.module);
     if (!occupied) {
+      /*
+       * THREE MODULES, NOT SIX, AND THE EMPTY MOUNTS ARE THE POINT.
+       *
+       * Owner ruling: "the ship shouldn't start fully decked out -- like maybe start it
+       * with just a plain cruiser, some basic weapons and a cutter, the point of the game
+       * is to get and acquire gear/modules/parts."
+       *
+       * So: the cutter, because without it there is no salvage loop at all (the deadlock
+       * the arrival fit was created to break), and one tier-1 cannon bank per flank,
+       * because a single armed side would make side-select a fiction rather than a
+       * decision. Everything else is now something you go and get:
+       *
+       *   - the SALVAGE TRACTOR is deliberately the first thing worth acquiring.
+       *     `salvage.js` treats it as a MULTIPLIER (tractorRating: cut rate +65%, reach
+       *     +40%), not a requirement -- base rate 0.34/s stands without it -- so a bare
+       *     ship cuts slowly at short range and feels exactly why the tractor matters.
+       *   - the sensor mast, the thruster upgrade, and everything heavier: cargo for the
+       *     hold, guns for the flanks, a reactor to unseal power routing. The dorsal,
+       *     ventral and engine mounts arrive EMPTY, and the seats the hull grows for
+       *     them (seatFor) show a bare pan waiting for something -- which is the fiction
+       *     working for us: this ship has carried more than it carries now.
+       */
       const ARRIVAL_FIT = [
         ['bow', 'bow_mining_array'],
-        ['ventral', 'ventral_salvage_tractor'],
-        ['dorsal', 'dorsal_sensor_mast'],
         ['port', 'port_cannon_bank'],
         ['starboard', 'port_cannon_bank'],
-        ['engine', 'engine_thruster_upgrade'],
       ];
       const fitted = [];
       for (const [hardpoint, moduleId] of ARRIVAL_FIT) {
