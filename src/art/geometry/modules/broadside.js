@@ -72,6 +72,20 @@ const OUTBOARD = [0, -HALF_PI, 0];
 /** …and the direction that rotation actually sends +Z, for `muzzleAlong`. */
 const OUTBOARD_DIR = [-1, 0, 0];
 
+/**
+ * A SPAR IN THE HULL'S SECTION, from widths alone. Same construction and reasoning as
+ * `bow.js#spar`: depth follows the beam at a fixed 1.72 : 1, so a spar built through
+ * here cannot violate M-F4 whatever length it is given. The four modules this file
+ * rebuilt last wave got their primary masses; the flak cluster got nothing, and its
+ * arms and stalks were the `hexStrut`s this replaces.
+ */
+const SPAR_DEPTH = 0.58;
+const spar = (len, w0, w1, mid = 0.46) => {
+  const wm = (w0 + w1) * 0.52;
+  const row = (z, w, k, df, fl) => [z, w, w * SPAR_DEPTH, -w * SPAR_DEPTH, k, df, fl];
+  return [row(0, w0, 0.44, 0.48, 0.92), row(len * mid, wm, 0.44, 0.48, 0.92), row(len, w1, 0.42, 0.46, 0.96)];
+};
+
 // ---------------------------------------------------------------------------
 // T1 — Coalition Cannon Bank
 // ---------------------------------------------------------------------------
@@ -401,15 +415,26 @@ function buildFlakCluster(ctx) {
   // TWO TRUNNION ARMS, not a casemate. The gap between them is the first hole, and
   // they CONVERGE - 88 m apart at the plate, 39 m apart where they take the hub.
   // Splayed arms and a narrow hub is the geometry of a thing that has fallen off.
+  //
+  // They are SPARS now, rolled a quarter turn so the blade stands on edge: the whole
+  // point of this pair is the sky between them, and a spar lying flat would spend its
+  // 36 m of beam closing the gap it exists to open. On edge it is 21 m thick in z and
+  // the 88 -> 39 m hole is untouched.
   for (const s of [-1, 1]) {
-    b.add('hull', aimed(G.hexStrut({ length: 132, radius: 17, radiusEnd: 13, axis: 'z', detail: D }),
-      [-1, 0.34, -s * 0.20], [-16, 4, s * 44]));
+    b.add('hull', aimed(G.place(
+      massLoft(spar(132, 18, 13), { detail: D, label: 'trunnion arm' }), { rot: [0, 0, HALF_PI] },
+    ), [-1, 0.34, -s * 0.20], [-16, 4, s * 44]));
   }
 
-  // The hub: small, canted, and hung out in space on the arms. `pipeRun` runs from
-  // its origin along +X, so this spans x -158..-96 and the arms land at -139.
-  b.add('hull', G.pipeRun({ length: 62, radius: 30, sides: 6, axis: 'x', flanges: 0, detail: D }),
-    { pos: [-158, 52, 0], rot: [0, 0, 0.26] });
+  // The hub: small, canted, and hung out in space on the arms. Authored along +Z and
+  // aimed outboard, so it spans x -158..-96 exactly as the `pipeRun` did and the arms
+  // still land at -139. 72 across by 42 deep rather than 60 round - the derelicts
+  // built it, but the crew that cut it free owned one torch and it shows.
+  b.add('hull', G.place(aimed(massLoft([
+    [0, 30, 18, -18, 0.44, 0.48, 0.92],
+    [22, 36, 21, -21, 0.46, 0.50, 0.88],
+    [62, 32, 19, -19, 0.42, 0.46, 0.94],
+  ], { detail: D, label: 'flak hub' }), [1, 0, 0], [-158, 52, 0]), { rot: [0, 0, 0.26] }));
 
   // Six barrels across a 190 degree fan in yaw and a 60 degree spread in pitch.
   // Adjacent yaw separations are 0.42/0.55/0.47/0.61/0.44 rad - all over 24 degrees
@@ -433,11 +458,12 @@ function buildFlakCluster(ctx) {
   ];
   for (const h of hoppers) {
     const d = [h.x - h.root[0], h.y - h.root[1], h.z - h.root[2]];
-    b.add('greeble', aimed(G.hexStrut({
-      length: Math.hypot(d[0], d[1], d[2]) - h.w * 0.34, radius: 9, axis: 'z', detail: D,
+    b.add('greeble', aimed(massLoft(spar(Math.hypot(d[0], d[1], d[2]) - h.w * 0.34, 10, 8), {
+      detail: D, label: 'hopper stalk', keep: G.FACET_LOD.far,
     }), d, h.root));
-    b.add('plating', G.panelledSlab({
-      width: h.w, height: h.w * 0.86, depth: h.w * 0.94, chamfer: h.w * 0.16, detail: D,
+    b.add('plating', G.bevelBox({
+      width: h.w, height: h.w * 0.86, depth: h.w * 0.94, chamfer: h.w * 0.16,
+      draft: h.w * 0.11, cant: h.z < 0 ? 0.15 : -0.12, rake: h.z < 0 ? -6 : 5, detail: D,
     }), { pos: [h.x, h.y, h.z] });
   }
 

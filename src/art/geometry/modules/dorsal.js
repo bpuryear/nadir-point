@@ -38,6 +38,19 @@ import {
 
 const HALF_PI = Math.PI * 0.5;
 
+/**
+ * A SPAR IN THE HULL'S SECTION, from widths alone; same construction and reasoning as
+ * `bow.js#spar`. Depth follows the beam at a fixed 1.72 : 1, so a spar cannot violate
+ * M-F4 whatever length it is given - which matters because M-F4 is an assertion inside
+ * `massLoft`, i.e. a red gate rather than a bad picture.
+ */
+const SPAR_DEPTH = 0.58;
+const spar = (len, w0, w1, mid = 0.46) => {
+  const wm = (w0 + w1) * 0.52;
+  const row = (z, w, k, df, fl) => [z, w, w * SPAR_DEPTH, -w * SPAR_DEPTH, k, df, fl];
+  return [row(0, w0, 0.44, 0.48, 0.92), row(len * mid, wm, 0.44, 0.48, 0.92), row(len, w1, 0.42, 0.46, 0.96)];
+};
+
 /** Twin rails: struck from z = 56, 208 m long, muzzle glow 8 m proud of the tip. */
 const RAIL_SIDES = [-1, 1];
 const RAIL_X = 30;
@@ -257,13 +270,38 @@ const VLS_CELLS_LOD1 = [VLS_CELLS[0], VLS_CELLS[2], VLS_CELLS[4]];
 const VLS_CELL_Y = 20;
 const VLS_CELL_LEN = 74;
 
+/**
+ * THE RAFT, in the hull's own section. `[z, half, top, bottom, knuckle, deckFlat,
+ * flare]`. It was a `panelledSlab` 252 x 22 x 178, and it is the single largest
+ * horizontal plate on the ship when this fit is installed - "wide and FLAT" is the
+ * whole read - so it was also the single largest axis-aligned face in the library.
+ * Beam : depth 10.5-11.5, so M-F4 never came near it; what the section buys here is
+ * the cambered deck, the knuckle and the keel deadrise, which is why the raft now
+ * takes a gradient across its top instead of one flat value.
+ */
+const VLS_RAFT = [
+  [-89, 118, 20, -6, 0.42, 0.46, 0.94],
+  [-24, 126, 22, -8, 0.45, 0.49, 0.90],
+  [40, 126, 22, -8, 0.45, 0.49, 0.90],
+  [89, 116, 19, -5, 0.40, 0.44, 0.96],
+];
+
 function buildMissileCells(ctx) {
   const b = new ModuleBuilder(ctx, 'coalition');
   const D = b.detail, full = b.full;
 
   // The raft, overhanging the plinth to both sides.
-  b.add('hull', G.panelledSlab({ width: 252, height: 22, depth: 178, chamfer: 10, detail: D }),
-    { pos: [0, 8, 0] });
+  b.add('hull', G.place(massLoft(VLS_RAFT, { detail: D, label: 'vls raft' }), { pos: [0, 8, 0] }));
+  // M-F5: two frames, 96 m apart and neither at the centre of length. Coalition
+  // shows its structure, and on a 178 m raft the frames are what say 178.
+  b.add('plating', G.place(massFrames(VLS_RAFT, [-58, 38], { detail: D }), { pos: [0, 8, 0] }));
+  // M-F6 / F10: one plate a side on the raft's lower flank, below its own knuckle,
+  // on `dark`, so the value boundary lands on a real chine with a shadow at it.
+  for (const [side, z0, z1, t0] of [[-1, -76, 52, 0.12], [1, -30, 78, 0.22]]) {
+    b.add('dark', G.place(massStrake(VLS_RAFT, {
+      z0, z1, side, facet: [2, 1], t0, t1: t0 + 0.52, drift: -side * 0.12, out: 4, detail: D,
+    }), { pos: [0, 8, 0] }));
+  }
   b.graft([0, -8, 0], [-HALF_PI, 0, 0], 42);
 
   // Six cells. Open at the top; you can see down into them.
@@ -278,15 +316,25 @@ function buildMissileCells(ctx) {
   // Two hatches, hinged open at 70 degrees. These are the parts that say "loaded".
   if (full) {
     for (const s of [-1, 1]) {
-      b.add('plating', G.panelledSlab({ width: 62, height: 5, depth: 74, chamfer: 2, detail: D }),
-        { pos: [s * 132, 40, -4], rot: [0, 0, -s * 0.95] });
+      b.add('plating', G.bevelBox({
+        width: 62, height: 5, depth: 74, chamfer: 2, draft: 2, rake: s * 5, detail: D,
+      }), { pos: [s * 132, 40, -4], rot: [0, 0, -s * 0.95] });
     }
   }
 
-  // Reload crane over the port edge — the module's asymmetry.
-  b.add('greeble', G.hexStrut({ length: 110, radius: 7, axis: 'x', detail: D }),
-    { pos: [-150, 62, 62], rot: [0, 0, 0.26] });
-  b.add('greeble', G.panelledSlab({ width: 22, height: 26, depth: 26, detail: D }), { pos: [-74, 84, 62] });
+  // Reload crane over the port edge — the module's asymmetry. `spar` rather than
+  // `hexStrut`: a crane jib is a plate girder, not a pipe.
+  // Struck from the INBOARD, HIGH end and running outboard and down, which is the
+  // way the `hexStrut` ran: it was authored along +X from x -150 with a 0.26 rad lift
+  // about Z, so its high end was the inboard one at y 90 and its low end the outboard
+  // one at 62. The jib's top sets this module's whole silhouette height (see the
+  // header on why 22 m came off it), so the two ends are not interchangeable.
+  b.add('greeble', aimed(massLoft(spar(110, 8, 6), {
+    detail: D, label: 'crane jib', keep: G.FACET_LOD.far,
+  }), [-1, -0.26, 0], [-44, 90, 62]));
+  b.add('greeble', G.bevelBox({
+    width: 22, height: 26, depth: 26, chamfer: 4, draft: 4, cant: 0.16, detail: D,
+  }), { pos: [-74, 84, 62] });
 
   b.lightRun([-124, 24, -84], [-124, 24, 84], [-0.86, 0.5, 0], { max: 9 });
 
@@ -376,11 +424,31 @@ function pdMount(a) {
   return { c, s, reach, rise, root, head, muzzles };
 }
 
+/**
+ * THE PAD, in the hull's own section, where a `mountPad` - a regular eight-sided disc
+ * with a flat top square to +Y - used to be. 152 m across, 22 deep and 150 long, so
+ * beam : depth is 6.9 and M-F4 is never in question; what it buys is the same camber,
+ * knuckle and deadrise the raft gets, on the one horizontal face this module has.
+ */
+const PD_PAD = [
+  [-75, 66, 14, -8, 0.42, 0.46, 0.94],
+  [-22, 76, 16, -6, 0.45, 0.49, 0.90],
+  [26, 76, 16, -6, 0.45, 0.49, 0.90],
+  [75, 64, 13, -9, 0.40, 0.44, 0.96],
+];
+
 function buildPDRing(ctx) {
   const b = new ModuleBuilder(ctx, 'concord');
   const D = b.detail, full = b.full;
 
-  b.add('hull', G.mountPad({ radius: 76, height: 16, sides: 8, detail: D }), { pos: [0, 0, 0] });
+  b.add('hull', massLoft(PD_PAD, { detail: D, label: 'pd pad' }));
+  // M-F5: one frame, off-centre. Concord uses few parts and this module is a ring
+  // of stalks, so the pad gets one step rather than the Coalition raft's two.
+  b.add('plating', massFrames(PD_PAD, [-34], { detail: D }));
+  // M-F6: Concord's one long plate, on the port flank below the pad's knuckle.
+  b.add('dark', massStrake(PD_PAD, {
+    z0: -62, z1: 64, side: -1, facet: [2, 1], t0: 0.14, t1: 0.70, drift: -0.10, out: 4, detail: D,
+  }));
   b.graft([0, 16, 0], [-HALF_PI, 0, 0], 72);
 
   const mounts = full ? PD_MOUNTS : PD_MOUNTS_LOD1;
@@ -389,23 +457,33 @@ function buildPDRing(ctx) {
     // Lean each stalk away from the axis. The head lands at radius
     // 52 + 150 sin(SPLAY) = 102 m, i.e. outside the 76 m pad, so the four guns are
     // silhouetted against sky rather than against the module's own body.
-    b.add('greeble', G.hexStrut({ length: PD_STALK, radius: 8, radiusEnd: 6, axis: 'y', detail: D }),
-      { pos: root, rot: [s * PD_SPLAY, 0, -c * PD_SPLAY] });
-    b.add('plating', G.panelledSlab({ width: 26, height: 18, depth: 30, chamfer: 6, detail: D }),
-      { pos: head });
+    //
+    // The stalk is a SPAR - 18 m across the flat and 10 thick - rolled to stand on
+    // edge to the ring, so from any orbit angle at least two of the four present a
+    // thin edge and the sky between them survives. That gap is the whole reason the
+    // stalks went from 44 m to 150 (see the header): closing it with four round
+    // 16 m posts turned wide would undo the fix.
+    b.add('greeble', aimed(G.place(massLoft(spar(PD_STALK, 9, 7), {
+      detail: D, label: 'pd stalk', keep: G.FACET_LOD.far,
+    }), { rot: [0, 0, HALF_PI] }), [c * Math.sin(PD_SPLAY), Math.cos(PD_SPLAY), s * Math.sin(PD_SPLAY)], root));
+    b.add('plating', G.bevelBox({
+      width: 26, height: 18, depth: 30, chamfer: 6, draft: 4, cant: 0.14, rake: -4, detail: D,
+    }), { pos: head });
     // Twin barrels, pointing outboard along the ring radius.
-    b.add('greeble', G.panelledSlab({ width: PD_GUN_WIDTH, height: 6, depth: PD_GUN_DEPTH, detail: D }),
-      {
-        pos: [c * (PD_RING_R + reach + PD_GUN_OFFSET), 12 + rise, s * (PD_RING_R + reach + PD_GUN_OFFSET)],
-        rot: [0, HALF_PI - a, 0],
-      });
+    b.add('greeble', G.bevelBox({
+      width: PD_GUN_WIDTH, height: 6, depth: PD_GUN_DEPTH, chamfer: 2, draft: 2, detail: D,
+    }), {
+      pos: [c * (PD_RING_R + reach + PD_GUN_OFFSET), 12 + rise, s * (PD_RING_R + reach + PD_GUN_OFFSET)],
+      rot: [0, HALF_PI - a, 0],
+    });
   }
 
   // Central AESA panel: a flat plate standing on edge, canted forward. It stays
   // BELOW the gun heads - the crown is the read, and a mast in the middle of it
   // would put this module back in the sensor mast's band.
-  b.add('plating', G.panelledSlab({ width: 62, height: 66, depth: 9, chamfer: 4, detail: D }),
-    { pos: [0, 62, 0], rot: [-0.26, 0, 0] });
+  b.add('plating', G.bevelBox({
+    width: 62, height: 66, depth: 9, chamfer: 4, draft: 3, cant: -0.09, detail: D,
+  }), { pos: [0, 62, 0], rot: [-0.26, 0, 0] });
   if (full) {
     b.add('greeble', G.hexStrut({ length: 40, radius: 9, axis: 'y', detail: D }), { pos: [0, 14, 0] });
   }
