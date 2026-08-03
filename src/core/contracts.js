@@ -208,6 +208,17 @@ export const FIT_SERVICES = ['reactor', 'magazine', 'coolant', 'hold', 'sensor',
  *                        in z, so the same module fitted both sides produces two
  *                        different joints for free.
  *
+ * ---------------------------------------------------------------------------
+ * TWO DIFFERENT THINGS ARE CALLED `fit` IN THIS CODEBASE. THEY ARE NOT RELATED.
+ * ---------------------------------------------------------------------------
+ *   `ModuleDef.fit`   THIS - one module's declaration of how it meets the skin.
+ *   `Loadout.fit`     a map of `{ hardpoint: moduleId }`, i.e. the whole ship's
+ *                     six-mount configuration (`probes/loadoutsAudit.mjs:83`,
+ *                     `probes/loadouts.js:291`), and the sense `hullParts({ fit })`
+ *                     uses.
+ * The name is kept on both because both were already in the vocabulary and renaming
+ * either would silently break the other's readers. Read the type, not the word.
+ *
  * @typedef {Object} FitDecl
  * @property {[number,number]} footprintM
  *     THE MODULE'S ROOT PLAN EXTENT AT THE MOUNT FACE, `[across, alongShip]`, metres.
