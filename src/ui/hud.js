@@ -43,6 +43,7 @@ import {
 } from './theme.js';
 import { PIP, drawSalvoPip } from './weapons.js';
 import { moduleName, MOUNT_EMPTY } from './names.js';
+import { ATTN } from './layout.js';
 
 const RING_SEGS = 44;
 
@@ -121,6 +122,9 @@ export class HUD {
     this._arc = screenPointRing(HEADING_ARC_SEGS + 1);
     /** Wall-clock stamp of the last frame on which a salvo was in flight. See `WAVE_HOLD`. */
     this._waveAt = -100;
+    /** The time-strip banners, built once per frame by `measureTimeBanner`. */
+    this._banner = '';
+    this._transit = '';
   }
 
   // =========================================================================
@@ -152,6 +156,8 @@ export class HUD {
     this._drawTargetPanel(P, player);
     P.owner = 'stores';
     this._drawHoldStrip(P);
+    P.owner = 'attention';
+    this._drawAttention(P);
     P.owner = 'notify';
     this._drawNotifications(P);
     this._drawOrderBar(P);
@@ -433,28 +439,26 @@ export class HUD {
       x += cellW + gap;
     }
 
-    if (engine.paused) {
+    // Both banners read the strings `measureTimeBanner` already built for the layout
+    // this frame. Asking `travel.status()` again here would be a second allocating call
+    // per frame for a string that has already been computed and measured.
+    if (this._banner) {
       const pulse = 0.55 + 0.45 * Math.sin(P.t * 3.4);
       P.hline(0, 0, P.w, C.warn, 2);
       // Its own plate, clear of the strip's. A pulsing string half-behind a border
       // reads as a glitch rather than as the most important state in the game.
-      const tw = P.measure('SIMULATION HELD', F.microBold, TRACK.head);
+      const tw = P.measure(this._banner, F.microBold, TRACK.head);
       P.ctx.globalAlpha = pulse;
       P.plate(P.w * 0.5 - tw * 0.5 - 10, y + cellH + 8, tw + 20, 18, { border: C.warnDim });
-      P.text('SIMULATION HELD', P.w * 0.5, y + cellH + 21,
+      P.text(this._banner, P.w * 0.5, y + cellH + 21,
         { font: F.microBold, color: C.warn, align: 'center', track: TRACK.head });
       P.ctx.globalAlpha = 1;
     }
 
-    const travel = this.world.systems?.travel;
-    const st = travel?.status?.();
-    if (st && st.state && st.state !== 'idle') {
-      const line = st.state === 'spooling'
-        ? `TRANSIT SPOOL ${st.spoolRemaining.toFixed(0)} S`
-        : `TRANSIT ${st.state.toUpperCase()} · LEG ${st.leg + 1}/${st.legs}`;
-      const tw = P.measure(line, F.microBold, TRACK.head);
+    if (this._transit) {
+      const tw = P.measure(this._transit, F.microBold, TRACK.head);
       P.plate(P.w * 0.5 - tw * 0.5 - 10, y + cellH + 8, tw + 20, 18, { border: C.salvageGhost });
-      P.text(line, P.w * 0.5, y + cellH + 21,
+      P.text(this._transit, P.w * 0.5, y + cellH + 21,
         { font: F.microBold, color: C.salvage, align: 'center', track: TRACK.head });
     }
   }
@@ -1192,6 +1196,145 @@ export class HUD {
       P.struck(P.clip('POWER ROUTING SEALED', F.micro, iw - 14, TRACK.label), x, y + 8,
         { font: F.micro, color: C.inkFaint });
     }
+  }
+
+  /**
+   * THE ATTENTION LEDGER — the number that decides whether you get attacked.
+   *
+   * `src/world/factionWar.js` charges the player a CLAIM for every section they cut off
+   * a faction's hulls, and at 110 of it that faction launches a recovery tender, at 260
+   * a picket and at 480 a hunter-killer that plots to the player's position. On the live
+   * path a player working Coalition wrecks is warned at 48 s, has a tender launched at
+   * 88 s and is being borne down on at 131 s. All of that was legible ONLY as three
+   * notifications, four seconds each: `grep -rniE "ledger|attention|claim" src/ui/`
+   * returned one line, and it was the SORTIE earnings ledger, which is a different
+   * ledger entirely. `docs/design/scope-decision.md` §4 is the standing test — "Hidden
+   * state that changes outcomes is a bug, not depth" — and a number that decides whether
+   * a hunter-killer is dispatched at you is the largest possible failure of it.
+   *
+   * FOUR THINGS, in the order the decision is made:
+   *
+   *   THE CLAIM AGAINST THE NEXT THRESHOLD, as a figure and as a bar. The bar's scale is
+   *   `nextAt` and nothing else — the claim has no meaning against any other number,
+   *   because `nextAt` is the line that launches the ships.
+   *
+   *   WHICH RUNG IS NEXT, named. `→TENDER` and `→HUNTER` are not the same warning and a
+   *   player who has read the first should not have to guess that the third is coming.
+   *
+   *   WHETHER IT IS FALLING, AND HOW FAST. This is the spatial decision the whole system
+   *   exists to create: the claim does not decay at all while you are still in the field
+   *   you took their hulls out of — `HELD`, in the warn colour, because standing there is
+   *   a choice with a price — and once you leave it sheds `LEDGER.decay` a second, up to
+   *   three times that outside their space entirely. The rate is the live one from
+   *   `decayPerSecond`, which is 0 while held, so the readout can never say `shedding`
+   *   at a claim that is pinned.
+   *
+   *   WHETHER THEY HAVE ANSWERED. `inField > 0` means something is already out looking
+   *   for the player, and it takes the whole row to the hostile colour.
+   *
+   * WHAT IT COSTS. The block is claimed only while a faction has a claim worth a point
+   * or something in the field — see `layout.js` — so the first ten minutes of a run pay
+   * nothing for it, exactly like the notification column. Measured welded coverage with
+   * one faction row up is 35.6 % of a 1280x720 frame against a 38 % ceiling, and the 22
+   * px this commit gives back off the `time` region (see `measureTimeBanner`) pays about
+   * half of it.
+   */
+  _drawAttention(P) {
+    const L = this.L;
+    const rect = L?.attention;
+    const rows = this.ui.ledgerRows;
+    if (!rect || rect.w <= 0 || rect.h <= 0 || rows.length === 0) return;
+
+    const i = L.compact ? 1 : 0;
+    const px = rect.x;
+    const py = rect.y;
+    const x = px + 10;
+    const iw = rect.w - 20;
+    P.plate(px, py, rect.w, rect.h, { border: C.rule });
+
+    // The word has to be on the block. `COALITION 79/110` with no heading is a pair of
+    // numbers, and a player who has never been told what they are cannot act on them.
+    P.label('ATTENTION', x, py + 14, { color: C.inkFaint });
+    P.hline(x, py + 19, iw, C.ruleDim);
+
+    for (let n = 0; n < rows.length; n++) {
+      const r = rows[n];
+      const ry = py + ATTN.head[i] + n * ATTN.row[i];
+      const y3 = ry + ATTN.line3[i];
+      const fi = factionInk(r.faction);
+      const hot = r.inField > 0;
+      const warned = this.ui.warnedOf(r.faction);
+      // Three states, three colours, ordered by what the player has to do about them:
+      // something is already hunting you, you have been told it is coming, or the claim
+      // is merely accumulating.
+      const key = hot ? C.hostile : warned ? C.warn : C.ink;
+
+      // Faction identity as a stripe, the way every other list in this interface carries
+      // it. The name itself is the faction's own dim ink — on the TEXT_INK whitelist and
+      // contrast-checked — and the alarm is spent on the figures, not on the name.
+      P.fill(px + 4, ry - 9, 2, ATTN.line3[i] + 11, fi.stripe);
+
+      const figure = r.nextAt ? `${Math.round(r.claim)}/${r.nextAt}` : `${Math.round(r.claim)}`;
+      const figW = P.measure(figure, F.bodyBold, TRACK.value);
+      P.label(fi.name, x, ry, { color: fi.dim, maxW: Math.max(24, iw - figW - 8) });
+      P.text(figure, x + iw, ry, { font: F.bodyBold, color: key, align: 'right' });
+
+      P.bar(x, ry + ATTN.barDy, iw, ATTN.barH, r.nextAt ? r.claim / r.nextAt : 1, {
+        color: hot ? C.hostile : warned ? C.warn : C.salvage,
+        track: C.track, segments: 4,
+      });
+
+      const rate = r.holding ? 'HELD' : `−${r.decayPerSecond.toFixed(2)}/S`;
+      const rateW = P.measure(rate, F.micro, TRACK.label);
+      P.label(r.next ? `→${r.next}` : '→ALL OUT', x, y3,
+        { color: C.inkFaint, maxW: Math.max(24, iw - rateW - 8) });
+      P.text(rate, x + iw, y3, {
+        font: F.micro, color: r.holding ? C.warn : C.inkDim,
+        align: 'right', track: TRACK.label,
+      });
+    }
+  }
+
+  /**
+   * THE BANNER UNDER THE TIME STRIP, MEASURED BEFORE IT IS DRAWN.
+   *
+   * Two facts about `_drawTimeStrip` that nothing measured, because `tools/uicheck.mjs`
+   * only ever boots an unpaused combat screen:
+   *
+   *   the SIMULATION HELD / TRANSIT banner is a SOMETIMES, and the `time` region
+   *   reserved its 22 px unconditionally — 22 px x the strip's width of frame held for
+   *   something that is on screen during a jump and at no other time;
+   *
+   *   the banner is centred on the FRAME and sized to its own string, and
+   *   `TRANSIT ACCELERATING · LEG 1/3` measures wider than the strip the region was
+   *   sized to. So the same rectangle was over-claiming in height and under-claiming in
+   *   width at once.
+   *
+   * Returning the width from here lets `layout.js` reserve exactly the block that is
+   * about to be drawn, which is rule 2 of that file. `travel.status()` allocates, so the
+   * line is computed ONCE per frame here and `_drawTimeStrip` reads `this._banner`
+   * rather than asking the travel system a second time — the call count on the render
+   * path is unchanged.
+   *
+   * @returns {number} the banner's plate width, or 0 when there is no banner
+   */
+  measureTimeBanner(P) {
+    this._banner = '';
+    let w = 0;
+    if (this.world.engine?.paused) {
+      this._banner = 'SIMULATION HELD';
+      w = P.measure(this._banner, F.microBold, TRACK.head) + 20;
+    }
+    const st = this.world.systems?.travel?.status?.();
+    if (st && st.state && st.state !== 'idle') {
+      // Both at once is possible — held mid-jump — and the two banners share a plate
+      // position, so the reservation has to cover the wider of them.
+      this._transit = st.state === 'spooling'
+        ? `TRANSIT SPOOL ${st.spoolRemaining.toFixed(0)} S`
+        : `TRANSIT ${st.state.toUpperCase()} · LEG ${st.leg + 1}/${st.legs}`;
+      w = Math.max(w, P.measure(this._transit, F.microBold, TRACK.head) + 20);
+    } else this._transit = '';
+    return w;
   }
 
   /**

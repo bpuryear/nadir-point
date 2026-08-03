@@ -69,6 +69,15 @@ export { C as UI_COLORS, F as UI_FONTS, BREACH_WARN_FRACTION };
  * camera, and `UILayer` already owned M and backquote. Nothing below collides, so no
  * flight control had to be moved to make room for a readout.
  */
+/**
+ * How often `factionWar.ledgerStatus()` is called. 5 Hz, matching the rate the other
+ * allocating reads in this interface run at, because it allocates two rows and does a
+ * `SystemMap.containing` lookup per call. The claim moves by `LEDGER.decay` 0.55 a
+ * second at its slowest and 1.65 at its fastest, so 5 Hz is between three and nine
+ * samples per unit of claim — finer than the readout's own rounding.
+ */
+const LEDGER_HZ = 5;
+
 const PANEL_KEYS = {
   keyx: 'armament',
   keyc: 'codex',
@@ -252,6 +261,25 @@ export class UILayer {
      * a second so a single shell does not spike it to a meaningless number.
      */
     this.vitals = { hull: -1, shield: -1, hullRate: 0, shieldRate: 0, acc: 0 };
+
+    /**
+     * THE ATTENTION LEDGER, SAMPLED ONCE AND READ BY EVERYONE.
+     *
+     * `factionWar.ledgerStatus()` builds two objects and calls `SystemMap.containing`
+     * on the way — a spatial query — so it is not a read to make on the draw path at
+     * 60 Hz. It is polled here at `LEDGER_HZ` and both consumers read this one sample:
+     * the welded block in `hud.js#_drawAttention` and the ATTENTION section of the
+     * SORTIE window. One call site, one rate, and the two readouts cannot disagree
+     * about the number the way two independent polls at two rates would.
+     *
+     * Polled on the RENDER step off wall clock, not on the fixed step: at pause the
+     * fixed step never runs, and a panel opened while held would otherwise show
+     * whatever was true when the player hit the key.
+     */
+    this.ledger = null;
+    /** The subset worth drawing. Filtered in place — never reallocated. */
+    this.ledgerRows = [];
+    this._ledgerAt = -1e9;
 
     this.hit = [];
     this.pointer = { x: -1, y: -1, down: false };
@@ -676,6 +704,9 @@ export class UILayer {
 
     this._updateMarkers();
     this._measureShip(P);
+    // Before the layout: the attention block's height is a function of how many rows
+    // this sample has in it.
+    this._pollLedger();
     this._computeLayout(P);
     this.hit.length = 0;
 
@@ -735,6 +766,49 @@ export class UILayer {
    * asks where anything is. See `./layout.js` for why the blocks are a function of
    * the frame rather than a set of literals.
    */
+  /**
+   * Sample the attention ledger. See `this.ledger`.
+   *
+   * A row earns its place on the always-on layer when a faction has a claim on the
+   * player worth a whole point, or has something in the field looking for them. Below
+   * one point the readout would print `0 / 110` and a bar with nothing in it, which is
+   * the `NO LOCK` plate this layout system was written to delete.
+   */
+  _pollLedger() {
+    const war = this.world.systems?.factionWar;
+    const rows = this.ledgerRows;
+    if (typeof war?.ledgerStatus !== 'function') {
+      this.ledger = null;
+      rows.length = 0;
+      return;
+    }
+    if (this.time - this._ledgerAt < 1 / LEDGER_HZ) return;
+    this._ledgerAt = this.time;
+    this.ledger = war.ledgerStatus();
+    rows.length = 0;
+    for (let i = 0; i < this.ledger.length; i++) {
+      const r = this.ledger[i];
+      if (r.claim >= 1 || r.inField > 0) rows.push(r);
+    }
+  }
+
+  /**
+   * HAS THE WARNING FOR THE NEXT RUNG ALREADY BEEN ISSUED?
+   *
+   * Read off the war system's own entry rather than derived here, because
+   * `ledgerStatus()` does not publish it and the only other way to know is to compare
+   * the claim against `LEDGER.warnAt` — a constant that is private to
+   * `src/world/factionWar.js` and would have to be copied into this file to be used.
+   * A copied threshold is a threshold that drifts silently the first time the sim
+   * retunes it, and the whole point of this readout is that it agrees with the system
+   * that decides whether the player gets attacked. `entry.warned > entry.tier` is the
+   * sim's OWN expression, verbatim from `_updateLedger`, so it cannot disagree.
+   */
+  warnedOf(faction) {
+    const e = this.world.systems?.factionWar?.ledger?.[faction];
+    return !!e && e.warned > e.tier;
+  }
+
   _computeLayout(P) {
     const player = this.world.player;
     const target = player?.target && !player.target.dead ? player.target : null;
@@ -759,6 +833,7 @@ export class UILayer {
       notifyL = Math.min(notifyL, -192);
       notifyR = Math.max(notifyR, -192 + tw + 22);
     }
+    const bannerW = this.hud.measureTimeBanner(P);
     this.layout = frameLayout(P, {
       locked: !!target,
       subsystems: target?.subsystems?.size ?? 8,
@@ -770,6 +845,12 @@ export class UILayer {
       arcCollapsed: this.tactical.arcCount(player) === 0,
       tabsW: this.hud.measureTabs(P),
       timeW: this.hud.measureTimeStrip(P),
+      // Asked of the block BEFORE it draws, same contract as `arcCollapsed`: the
+      // banner has two states and the reserved rectangle has to be the one the strip
+      // is about to take, not the one it took last frame.
+      timeBanner: bannerW > 0,
+      timeBannerW: bannerW,
+      attentionRows: this.ledgerRows.length,
       notifyBottom,
       notifyL,
       notifyR,

@@ -93,6 +93,43 @@ const PITCH = {
 /** The sealed banner's own row. See power.js — it used to be drawn as an overlay. */
 export const SEALED_ROW_H = 40;
 
+/**
+ * THE ATTENTION BLOCK'S OWN GEOMETRY, published because `hud.js#_drawAttention` draws
+ * against these exact numbers and rule 2 above says the rectangle IS what the block
+ * draws. Two files, one set of constants, so they cannot drift the way the welded
+ * rectangles and the welded blocks drifted before this file existed.
+ *
+ *   head  plate top -> the first row's line-1 baseline
+ *   row   row pitch
+ *   line3 line-1 baseline -> the state line's baseline, within a row
+ *   tail  the last state baseline -> plate bottom
+ *
+ * `tail` is 28 / 26 and not 22: a 10 px glyph box ends 0.5 px under its baseline, so
+ * the last line needs 22 to be inside the plate at all and the rest is the border and
+ * the same optical pad the stores strip above it carries.
+ */
+export const ATTN = {
+  head: [28, 28],
+  row: [36, 33],
+  line3: [21, 19],
+  tail: [28, 26],
+  barDy: 4,
+  barH: 5,
+};
+
+/**
+ * THE TIME STRIP'S TWO HEIGHTS.
+ *
+ * `_drawTimeStrip` plates the scale row at 30 px and then draws the SIMULATION HELD /
+ * TRANSIT banner on its OWN plate 34 px below the rect's top — but only when the sim is
+ * held or a transit leg is running. The region was a flat 54 whether or not that banner
+ * existed, which is rule 2 in the other direction from the one this file was written to
+ * fix: 22 px x the strip's width, permanently reserved for something that is on screen
+ * during a jump and at no other time.
+ */
+const TIME_STRIP_H = 32;
+const TIME_BANNER_H = 54;
+
 /** The arc rose hangs this far above the own-ship block. Read by tactical.js too. */
 export const ARC_BASE = 26;
 
@@ -119,10 +156,13 @@ const L = {
   layersCollapsed: false,
   /** How many rows the layer stack actually draws. */
   layerRows: 3,
+  /** Rows the attention block will draw. 0 means the block is not on screen at all. */
+  attentionRows: 0,
   ship: _rect(),
   target: _rect(),
   power: _rect(),
   stores: _rect(),
+  attention: _rect(),
   tabs: _rect(),
   time: _rect(),
   arc: _rect(),
@@ -130,7 +170,9 @@ const L = {
   /** Live rects this frame, in draw order. Rebuilt in place; never reallocated. */
   regions: [],
 };
-for (const id of ['time', 'notify', 'tabs', 'stores', 'ship', 'power', 'target', 'arc']) L[id].id = id;
+for (const id of ['time', 'notify', 'tabs', 'stores', 'attention', 'ship', 'power', 'target', 'arc']) {
+  L[id].id = id;
+}
 
 const clampW = (spec, frameW) => Math.round(Math.min(spec.max, Math.max(spec.min, frameW * spec.frac)));
 
@@ -150,6 +192,9 @@ const clampW = (spec, frameW) => Math.round(Math.min(spec.max, Math.max(spec.min
  * @param {number}  s.notifyBottom  lowest y the notify column reaches, 0 when silent
  * @param {number}  s.notifyL       left edge of the notify column, relative to centre
  * @param {number}  s.notifyR       right edge of the notify column, relative to centre
+ * @param {number}  s.attentionRows faction claims worth printing, 0 when none
+ * @param {boolean} s.timeBanner    the held / in-transit banner is up under the strip
+ * @param {number}  s.timeBannerW   measured width of that banner, 0 when it is down
  * @returns {typeof L} the shared instance
  */
 export function frameLayout(P, s = {}) {
@@ -214,14 +259,36 @@ export function frameLayout(P, s = {}) {
   const storesH = compact ? 84 : 96;
   set(L.stores, fw - storesW - g, g + 22, storesW, storesH, false);
 
+  // --- attention block ------------------------------------------------------
+  // THE NUMBER THAT DECIDES WHETHER YOU GET ATTACKED, in the same right-hand column
+  // as the hold, directly under it. It is claimed ONLY while a faction has a claim on
+  // the player or has something in the field — the `notify` precedent, and for the same
+  // reason: a permanent plate for a number that is zero for the first ten minutes of a
+  // run is furniture, and the owner's standing note on this HUD is about furniture.
+  //
+  // It shares the stores column's width so the right edge is one edge, and it is the
+  // hold's neighbour on purpose: both answer "how long can I keep working here", which
+  // is how `sortie.js#_drawState` groups the tank and the hold already.
+  const attnRows = Math.max(0, Math.min(2, s.attentionRows | 0));
+  L.attentionRows = attnRows;
+  const attnH = attnRows > 0
+    ? ATTN.head[i] + (attnRows - 1) * ATTN.row[i] + ATTN.tail[i]
+    : 0;
+  set(L.attention, fw - storesW - g, L.stores.y + L.stores.h + 6, storesW, attnH, false);
+
   // --- top strips -----------------------------------------------------------
   const tabsW = Math.min(fw - g * 2, Math.max(120, s.tabsW ?? 620));
   set(L.tabs, g - 6, 2, tabsW, 24, false);
-  // 54 not 32: the paused / in-transit banner sits under the strip on its own plate,
-  // and a region that does not cover what the block draws is the same lie in the
-  // other direction.
-  const timeW = Math.max(120, s.timeW ?? 250);
-  set(L.time, Math.round(fw * 0.5 - timeW * 0.5), 38, timeW, 54, false);
+  // The banner under the strip is a SOMETIMES, so its 22 px are reserved only when it
+  // is up — and when it is, the region has to be as wide as the banner, which is
+  // measured and centred on the FRAME rather than on the strip. `TRANSIT ACCELERATING ·
+  // LEG 1/3` measures wider than the strip itself, so the old flat rect was under-claiming
+  // in width at the same time it was over-claiming in height. Neither showed up, because
+  // the frame audit only ever boots an unpaused combat screen.
+  const banner = !!s.timeBanner;
+  const timeW = Math.max(120, s.timeW ?? 250, banner ? (s.timeBannerW ?? 0) : 0);
+  set(L.time, Math.round(fw * 0.5 - timeW * 0.5), 38, timeW,
+    banner ? TIME_BANNER_H : TIME_STRIP_H, false);
   // The notification column and the order bar, claimed ONLY while something is in
   // them, and only as tall as what is actually in them. This band used to be folded
   // into a permanent 560 x 150 `time` region — 5.8 % of a 1600x900 frame held for text
@@ -247,6 +314,7 @@ export function frameLayout(P, s = {}) {
   const r = L.regions;
   r.length = 0;
   r.push(L.tabs, L.time, L.stores, L.ship, L.power, L.target, L.arc);
+  if (attnH > 0) r.push(L.attention);
   if (notifyH > 0) r.push(L.notify);
   return L;
 }

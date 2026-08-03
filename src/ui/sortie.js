@@ -35,7 +35,7 @@
 
 import { angleDelta, yawOf } from '../sim/physics.js';
 import { MEV } from '../sim/meta/events.js';
-import { C, F, TRACK, fmtRange } from './theme.js';
+import { C, F, TRACK, fmtRange, factionInk } from './theme.js';
 import { Panel, PAD, fmtClock, columns, columnHead, cell } from './panels.js';
 
 /** Refresh rate for the read APIs that allocate. `debrief()` builds a fresh object. */
@@ -45,11 +45,11 @@ export class SortiePanel extends Panel {
   constructor(ui) {
     super({
       id: 'sortie',
-      title: 'SORTIE · LEDGER · WRECKSITES',
+      title: 'SORTIE · ATTENTION · LEDGER · WRECKSITES',
       hint: 'B',
       w: 520,
-      h: 430,
-      maxH: 600,
+      h: 470,
+      maxH: 640,
     });
     this.ui = ui;
     this.world = ui.world;
@@ -106,6 +106,7 @@ export class SortiePanel extends Panel {
 
     let cy = y + 8;
     cy = this._drawState(P, x, cy, w, sortie, derelict);
+    cy = this._drawAttention(P, x, cy, w);
     cy = this._drawLedger(P, x, cy, w, sortie, derelict);
     cy = this._drawRefit(P, x, cy, w, gate);
     cy = this._drawSites(P, x, cy, w, clip);
@@ -192,6 +193,96 @@ export class SortiePanel extends Panel {
       cy += 18;
     }
     return cy + 6;
+  }
+
+  // =========================================================================
+
+  /**
+   * THE ATTENTION LEDGER, IN FULL.
+   *
+   * The welded block in `hud.js#_drawAttention` carries the live figure and the one word
+   * that says whether it is falling, because that is all a 168 px strip can afford and
+   * all a player mid-cut can read. This is where the system is LEARNED: both factions
+   * whether or not they have a claim, the rung the claim is heading for, and — the part
+   * the welded block cannot fit — the two halves of the spatial decision stated as
+   * numbers rather than as a state word.
+   *
+   *   HELD is not "decay is off". It is "you are standing in the field you cut, and the
+   *   moment you leave it this claim starts falling at `awayDecay` a second". So the row
+   *   prints what leaving would buy, WHILE the claim is pinned, which is when the player
+   *   is deciding whether to cut one more section.
+   *
+   *   Their space is a multiplier, not a place. `theirSpace` is the faction's control
+   *   share where the player is standing, and `awayDecay` already has it folded in —
+   *   0.55/s at full control of the ground under you, up to 1.65/s outside it entirely.
+   *   Printing the share next to the rate is what makes "burn for neutral space" a move
+   *   the player can choose rather than one they discover.
+   *
+   * Both factions always, even at zero: `docs/design/scope-decision.md` §4 is about
+   * whether the player CAN see the state, and a section that appears only once you are
+   * already being hunted teaches nothing before the fact. A zero row is one struck line.
+   */
+  _drawAttention(P, x, y, w) {
+    let cy = y;
+    P.label('ATTENTION', x, cy, { color: C.inkFaint });
+    P.label('WHAT THEY WILL SEND', x + w, cy, { color: C.inkFaint, align: 'right' });
+    P.hline(x, cy + 4, w, C.rule);
+    cy += 18;
+
+    const rows = this.ui.ledger;
+    if (!rows || !rows.length) {
+      P.struck('NO FACTION WAR INSTALLED', x, cy, { font: F.small, color: C.inkFaint });
+      return cy + 20;
+    }
+
+    const barW = Math.max(60, w - 190);
+    for (const r of rows) {
+      const fi = factionInk(r.faction);
+      const hot = r.inField > 0;
+      const warned = this.ui.warnedOf(r.faction);
+      const key = hot ? C.hostile : warned ? C.warn : C.ink;
+
+      P.fill(x - 6, cy - 9, 2, 40, fi.stripe);
+      P.label(fi.name, x, cy, { color: fi.dim });
+      if (r.tier) {
+        // The rung they have ALREADY answered. A player who has taken a tender and shed
+        // the claim still has that on their record, and the next rung is the picket.
+        P.chip(String(r.tier).toUpperCase(), x + 76, cy - 10, {
+          fill: C.warn, color: C.void, h: 13,
+        });
+      }
+      P.text(r.nextAt ? `${Math.round(r.claim)} / ${r.nextAt}` : `${Math.round(r.claim)}`,
+        x + w, cy, { font: F.bodyBold, color: key, align: 'right' });
+      cy += 15;
+
+      P.label(r.next ? `→ ${r.next}` : '→ ALL OUT', x, cy, { color: C.inkFaint });
+      P.bar(x + 92, cy - 7, barW, 7, r.nextAt ? r.claim / r.nextAt : 1, {
+        color: hot ? C.hostile : warned ? C.warn : C.salvage, track: C.track, segments: 4,
+      });
+      P.text(hot ? `${r.inField} IN FIELD` : warned ? 'WARNED' : 'QUIET', x + w, cy, {
+        font: F.micro, color: hot ? C.hostile : warned ? C.warn : C.inkFaint,
+        align: 'right', track: TRACK.label, maxW: 90,
+      });
+      cy += 15;
+
+      // The spatial decision, as the two numbers it is actually made of.
+      if (r.holding) {
+        P.text(`HELD AT ${String(r.holdingAt ?? 'THIS FIELD').toUpperCase()}`
+          + ` — LEAVING SHEDS ${r.awayDecay.toFixed(2)}/S`,
+        x, cy, { font: F.micro, color: C.warn, track: TRACK.label, maxW: w });
+      } else {
+        const clear = r.decayPerSecond > 0 ? Math.ceil(r.claim / r.decayPerSecond) : 0;
+        P.text(`SHEDDING ${r.decayPerSecond.toFixed(2)}/S · CLEAR IN ${clear} S`,
+          x, cy, { font: F.micro, color: C.inkDim, track: TRACK.label, maxW: w });
+      }
+      cy += 13;
+
+      P.label(`THEIR GROUND ${Math.round(r.theirSpace * 100)}%`, x, cy, { color: C.inkFaint });
+      P.label(r.cooldown > 0 ? `NEXT NO SOONER THAN ${Math.ceil(r.cooldown)} S` : 'READY TO ANSWER',
+        x + w, cy, { color: C.inkFaint, align: 'right' });
+      cy += 18;
+    }
+    return cy + 2;
   }
 
   // =========================================================================
