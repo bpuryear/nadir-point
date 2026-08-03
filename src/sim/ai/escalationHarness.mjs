@@ -36,6 +36,7 @@
  * certify anything.
  */
 
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { Engine } from '../../core/loop.js';
 import { World } from '../../core/world.js';
@@ -57,6 +58,36 @@ import { makeSystemsRead, readSystems, aimFor, pressReason } from './pressure.js
 
 const DT = 1 / 60;
 const OTHER = { coalition: 'concord', concord: 'coalition' };
+
+/** The warning line names the rung it is about, which is what pairs it with a launch. */
+const WARN_RE = /HAS NOTICED — ([A-Z-]+) AT (\d+) CLAIM, YOU ARE AT (-?\d+)/;
+
+/**
+ * `LEDGER.warnLead` IS THE CONSTANT THE LEAD CHECK EXISTS TO DEFEND, AND IT WAS NOT
+ * THE CONSTANT THE LEAD CHECK ASSERTED.
+ *
+ * Section 3-5 used to read `spawnAt - warnAt >= 8` against a shipped `warnLead: 12`.
+ * A change that cut the player's warning by a third — from a readable lead down to the
+ * floor — would have left this file printing 28 of 28. `factionWar.js` exports
+ * `ESCALATION` and nothing else, so the constant is lifted out of the source it is
+ * declared in and asserted in its own right. If it is renamed or moved the read yields
+ * NaN and the check fails; if it is lowered the check fails; and every observed lead is
+ * then measured against the value that was actually read, not against a softer number
+ * written here.
+ */
+const WAR_SRC = readFileSync(new URL('../../world/factionWar.js', import.meta.url), 'utf8');
+const WARN_LEAD = Number(/^\s{2}warnLead:\s*([\d.]+),\s*$/m.exec(WAR_SRC)?.[1] ?? NaN);
+/** What the timings printed in this file, and in factionWar.js's LEDGER block, assume. */
+const WARN_LEAD_FLOOR = 12;
+
+/**
+ * How long one worked session runs in sections 3-5. Unchanged at 400 s, and measured
+ * rather than assumed: coalition reaches rung 2 at 288 s, inside this window, so the
+ * ladder check in 5b costs nothing. Running to 620 s was tried and buys nothing — the
+ * concord half of the field is stripped bare (0 cuttable sections left) after 21 cuts,
+ * so its ladder is limited by material in the ground, not by the length of the run.
+ */
+const SESSION = 400;
 
 let passed = 0;
 let failed = 0;
@@ -289,13 +320,18 @@ const arrivals = [];
     let spawnTier = null;
     let spawnShips = 0;
     let cutsAtSpawn = 0;
+    /** Every warning this faction issued, with the rung each one names. */
+    const warnings = [];
+    /** Every group this faction launched, with the warning that preceded it. */
+    const launches = [];
 
     g.world.bus.on(EV.SALVAGE_CUT_START, () => { if (firstCutAt === null) firstCutAt = clock.t; });
     g.world.bus.on(EV.NOTIFY, (n) => {
-      if (warnAt === null && typeof n?.text === 'string'
-        && n.text.startsWith(`${faction.toUpperCase()} HAS NOTICED`)) {
-        warnAt = clock.t; warnText = n.text; warnClaim = war.ledger[faction].claim;
-      }
+      const m = typeof n?.text === 'string' && n.text.startsWith(`${faction.toUpperCase()} HAS NOTICED`)
+        ? WARN_RE.exec(n.text) : null;
+      if (!m) return;
+      warnings.push({ t: clock.t, tier: m[1].toLowerCase(), at: Number(m[2]), claim: Number(m[3]), text: n.text });
+      if (warnAt === null) { warnAt = clock.t; warnText = n.text; warnClaim = war.ledger[faction].claim; }
     });
     let openedAt = null;
     let squawked = 0;
@@ -303,8 +339,31 @@ const arrivals = [];
     g.world.bus.on(EV.NOTIFY, (n) => {
       if (squawkText === null && /SQUAWKING/.test(n?.text ?? '')) squawkText = n.text;
     });
+    /*
+     * EVERY RUNG, NOT JUST THE FIRST.
+     *
+     * This listener used to read `if (spawnAt !== null) return;` and throw away every
+     * MEV.ESCALATION after the first, so the only thing this gate could see was rung 1.
+     * A critic then measured what it was blind to: inside ONE graveyard session the
+     * coalition ladder went tender 88.0 s -> picket 288.0 s, both groups alive and
+     * shooting. That is better than the file claimed and it was completely ungated —
+     * a change that welded the ladder shut above rung 1 would have kept 28/28 green.
+     * Every launch now lands in `launches` with the warning that preceded IT, so the
+     * order check and the warning-lead check below run per rung.
+     */
     g.world.bus.on(MEV.ESCALATION, (e) => {
-      if (spawnAt !== null || e.faction !== faction) return;
+      if (e.faction !== faction) return;
+      // Each rung's warning names the rung it is about, so a launch is paired with its
+      // OWN warning rather than with whatever notification happened to be latest.
+      const w = warnings.filter((x) => x.tier === e.tier).pop() ?? null;
+      let live = 0;
+      for (const x of g.world.ships) if (x.__escalation && !x.dead && x.faction === faction) live++;
+      launches.push({
+        t: clock.t, tier: e.tier, ships: e.ships, claim: e.claim, live,
+        warnAt: w ? w.t : null, warnClaim: w ? w.claim : null,
+        lead: w ? clock.t - w.t : null,
+      });
+      if (spawnAt !== null) return;
       spawnAt = clock.t; spawnTier = e.tier; spawnShips = e.ships; cutsAtSpawn = clock.cuts;
       const s = g.world.ships.find((x) => x.__escalation && !x.dead);
       if (s) openedAt = s.position.distanceTo(g.player.position);
@@ -317,7 +376,7 @@ const arrivals = [];
 
     const clock = { t: 0, cuts: 0 };
     let sensorReach = 0;
-    const res = workField(g, faction, 400, {
+    const res = workField(g, faction, SESSION, {
       tick: (t, cuts) => {
         clock.t = t; clock.cuts = cuts; probe.sample(t);
         sensorReach = g.sim.discovery.sensorRange() * 1.35;   // RESOLVE.shipReach
@@ -327,7 +386,7 @@ const arrivals = [];
     const row = {
       faction, cuts: res.cuts, firstCutAt, warnAt, warnClaim, spawnAt, spawnTier, spawnShips,
       cutsAtSpawn, closest: probe.closest, inRangeAt: probe.inRangeAt,
-      propellant: g.world.propellant?.current ?? null,
+      propellant: g.world.propellant?.current ?? null, launches,
     };
     arrivals.push(row);
 
@@ -342,7 +401,18 @@ const arrivals = [];
     console.log(`    sensor reach on hulls   ${f(sensorReach / 1000, 1)} km `
       + `(terrain ${g.sim.discovery.terrain.id}) vs opening range ${f((openedAt ?? NaN) / 1000, 1)} km`);
     console.log(`    closest approach        ${Number.isFinite(probe.closest) ? `${f(probe.closest / 1000, 2)} km` : 'n/a'}`);
-    console.log(`    sections cut in 400 s   ${res.cuts}   propellant left ${f(row.propellant)}`);
+    console.log(`    sections cut in ${SESSION} s   ${res.cuts}   propellant left ${f(row.propellant)}`);
+    console.log(`    player at the end       dead ${g.player.dead} crippled ${g.player.crippled} `
+      + `hull ${f(g.player.hullHP, 0)}/${g.player.maxHullHP}  claim ${f(war.ledger[faction].claim)}  `
+      + `cuttable ${faction} sections left ${g.world.wrecks.reduce((n, w) => n + (w.faction === faction ? w.sections.filter((s) => s.cuttable).length : 0), 0)}`);
+    console.log(`    THE LADDER, rung by rung (this is what the old gate could not see):`);
+    if (!launches.length) console.log('      nothing launched');
+    for (const [i, L] of launches.entries()) {
+      console.log(`      ${i + 1}. ${String(L.tier).padEnd(7)} warned ${f(L.warnAt).padStart(6)} s `
+        + `(claim ${String(L.warnClaim).padStart(3)}) · launched ${f(L.t).padStart(6)} s `
+        + `· lead ${f(L.lead).padStart(5)} s · ${L.ships} hulls · claim at launch ${f(L.claim)}`
+        + ` · ${L.live} ${faction} hulls in the field with it`);
+    }
 
     check(spawnAt !== null,
       `${faction} answers a stripped field — a tier trips inside a single session`,
@@ -356,11 +426,17 @@ const arrivals = [];
         ? `NEVER bore. Closest approach ${Number.isFinite(probe.closest) ? f(probe.closest / 1000, 2) : 'n/a'} km.`
         : `bore at ${f(probe.inRangeAt)} s, closed to ${f(probe.closest, 0)} m; `
           + `${f(probe.inRangeAt - (firstCutAt ?? 0))} s from first cut to first hostile in range`);
-    check(warnAt !== null && spawnAt !== null && spawnAt - warnAt >= 8,
-      'and the player was WARNED first, with a readable lead and both numbers in the line',
-      warnAt === null ? 'no warning fired at all'
-        : `warned at ${f(warnAt)} s (claim ${f(warnClaim)}), group launched at ${f(spawnAt)} s — `
-          + `${f(spawnAt - warnAt)} s of lead`);
+    // EVERY rung, against the constant the rule is written in — not the first rung
+    // against a softer number. `unwarned` catches a launch with no warning naming its
+    // own tier as well as one whose lead was short.
+    const unwarned = launches.filter((L) => !(L.lead >= WARN_LEAD));
+    check(launches.length > 0 && unwarned.length === 0,
+      `and the player was WARNED first — every rung, with the full LEDGER.warnLead of lead`,
+      launches.length === 0 ? 'nothing launched, so nothing was warned'
+        : `${launches.length}/${launches.length} rungs warned; leads `
+          + `${launches.map((L) => `${L.tier} ${f(L.lead)} s`).join(', ')} against warnLead `
+          + `${f(WARN_LEAD)} s read from factionWar.js`
+          + (unwarned.length ? ` — SHORT: ${unwarned.map((L) => L.tier).join(', ')}` : ''));
     check(squawked > 0,
       'and it is ON THE SENSOR BOARD from the moment it launches — the warning comes with '
       + 'a bearing, not a mystery',
@@ -369,6 +445,89 @@ const arrivals = [];
       + `for ${f((probe.inRangeAt ?? 0) - (spawnAt ?? 0), 0)} s. ${squawked} of `
       + `${spawnShips} hulls squawked at launch: "${squawkText}"`);
   }
+}
+
+// ===========================================================================
+// 5b. THE LADDER, NOT ITS FIRST STEP
+// ===========================================================================
+rule('5b. THE LADDER CLIMBS — rung 2 arrives on the real accrual path');
+{
+  /*
+   * WHAT THIS SECTION IS FOR.
+   *
+   * Everything above section 5 asserted about RUNG 1. The listener in 3-5 discarded
+   * every MEV.ESCALATION after the first, so `ESCALATION[1]` and `ESCALATION[2]` were
+   * imported, printed in the footer, and asserted by nothing on the real path — the
+   * same shape of hole that made the whole ladder unreachable content in the first
+   * place, one level up. A change that let rung 1 fire and then jammed the tier
+   * counter, or re-armed it into a tender loop, would have kept this file at 28 of 28.
+   *
+   * Three properties, all of them read off launches that a player's own cutting caused:
+   *   ORDER      the rungs arrive in the order the table declares them, no skipping and
+   *              no repeat of a rung already climbed inside one session.
+   *   DEPTH      both factions get past rung 1 inside one worked session.
+   *   THE PRICE  each rung costs more claim than the one below it, which is the only
+   *              thing that makes the table a ladder rather than a list.
+   */
+  const order = [];
+  for (const r of arrivals) {
+    const tiers = r.launches.map((L) => L.tier);
+    const want = ESCALATION.slice(0, tiers.length).map((e) => e.tier);
+    order.push({ faction: r.faction, tiers, want, ok: tiers.join('>') === want.join('>') });
+    console.log(`  ${r.faction.padEnd(10)} ${tiers.length} rung(s) in ${SESSION} s: `
+      + `${tiers.map((t, i) => `${t}@${f(r.launches[i].t)}s`).join(' -> ') || 'none'}`
+      + `   (table order: ${want.join(' -> ') || 'n/a'})`);
+  }
+  check(order.length === 2 && order.every((o) => o.ok),
+    'the rungs arrive in the order the table declares them — no skips, no repeats, no '
+    + 'rung re-firing inside one session',
+    order.map((o) => `${o.faction} ${o.tiers.join('>') || 'none'} vs table ${o.want.join('>') || 'none'}`).join(' · '));
+
+  /*
+   * DEPTH IS ASSERTED WHERE IT IS REACHABLE, AND THE ASYMMETRY IS MEASURED, NOT ASSUMED.
+   *
+   * Coalition climbs to picket at 288 s. Concord stops at tender, and the reason is
+   * printed above: after 21 cuts there are ZERO cuttable concord sections left in the
+   * field, so its claim has nothing left to charge against — the ladder is limited by
+   * material in the ground, not by the ladder. Running the session out to 620 s was
+   * tried and changed neither number. So the check is "the ladder gets past its first
+   * step on the real accrual path", asserted against the faction whose field can pay
+   * for it, and the reachable-material count is printed as the evidence for why the
+   * other one cannot. A regression that jams the tier counter above rung 1 fails this;
+   * the old listener could not have seen it at all.
+   */
+  const deep = arrivals.filter((r) => r.launches.length >= 2);
+  check(deep.length >= 1,
+    'and the ladder CLIMBS PAST ITS FIRST STEP on the real accrual path — a second rung '
+    + 'launches, inside one worked session, off nothing but the player cutting',
+    deep.length
+      ? deep.map((r) => `${r.faction} ${r.launches.map((L) => `${L.tier}@${f(L.t)}s`).join(' -> ')}`).join(' · ')
+        + `; the other side's field is stripped bare first (see the cuttable-sections-left line above)`
+      : `NO faction got past rung 1: ${arrivals.map((r) => `${r.faction} ${r.launches.length}`).join(', ')}. `
+        + `Rung 1 firing and the ladder working are not the same claim.`);
+  const stacked = deep.filter((r) => r.launches[1].live > r.launches[1].ships);
+  check(deep.length > 0 && stacked.length === deep.length,
+    'and the second rung lands ON TOP of the first — the group already in the field is '
+    + 'still alive when its replacement arrives, so pressure compounds instead of '
+    + 'taking turns',
+    deep.map((r) => `${r.faction}: ${r.launches[1].tier} brought ${r.launches[1].ships} hulls `
+      + `into a field already holding ${r.launches[1].live - r.launches[1].ships} live one(s)`).join(' · ') || 'nothing to measure');
+  check(ESCALATION.every((e, i) => i === 0 || e.at > ESCALATION[i - 1].at),
+    'and each rung costs more claim than the one below it, which is what makes the table '
+    + 'a ladder rather than a list',
+    ESCALATION.map((e) => `${e.tier}@${e.at}`).join(' < '));
+
+  // The constant the warning-lead check exists to defend, asserted in its own right.
+  // Reading it out of the source is the only way in: factionWar.js exports ESCALATION
+  // and nothing else, and a check written against a hard-coded 8 could not see a cut.
+  check(Number.isFinite(WARN_LEAD) && WARN_LEAD >= WARN_LEAD_FLOOR,
+    `LEDGER.warnLead is still at least ${WARN_LEAD_FLOOR} s — the lead itself is the check, `
+    + 'not a number this file chose to be comfortable with',
+    Number.isFinite(WARN_LEAD)
+      ? `warnLead ${f(WARN_LEAD)} s read from src/world/factionWar.js against a floor of `
+        + `${WARN_LEAD_FLOOR} s; every lead measured above is asserted against that value`
+      : 'COULD NOT READ warnLead out of src/world/factionWar.js — it has been renamed, '
+        + 'moved or deleted, and the lead assertion above has nothing to stand on');
 }
 
 // ===========================================================================

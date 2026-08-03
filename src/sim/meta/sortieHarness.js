@@ -10,6 +10,11 @@
  * save, reload, and check that the same world came back.
  *
  * Every number printed came out of the simulation.
+ *
+ * EXIT CODE. Sections 1-6 and 8-10 are a printer and stay one. SECTION 7 IS NOT: its
+ * three ledger checks set a non-zero exit. See the block above section 7 for why — it
+ * spent two waves printing a flattering escalation ledger for a system that had never
+ * once run in a game, and a printer is how that happens.
  */
 
 import * as THREE from 'three';
@@ -394,7 +399,60 @@ say(`the bill               : ${st3.bill} alloy borrowed, then settled out of `
 say(`site is now            : ${derelict.sites()[0]?.km.toFixed(0)} km away, live=${derelict.sites()[0]?.live}`);
 say(`  going back for them is a sortie, and the record is what makes that true.`);
 
-say(rule('7. THE ESCALATION LEDGER — earned, and spatially negotiable'));
+say(rule('7. THE ESCALATION LEDGER — what a sortie actually earns, and how it is shed'));
+/*
+ * WHAT THIS SECTION USED TO BE, AND WHY IT WAS WORSE THAN NOTHING.
+ *
+ * It printed a healthy-looking ledger — 311 claim off two hulls, a tender launched, 1169
+ * after eight — and it printed it for two waves while, on the live path, the peak claim
+ * a player had ever reached was 37.4 against a first rung of 110 and the number of
+ * hostiles that had ever arrived in a game was ZERO. It was green throughout the entire
+ * period in which the escalation table was unreachable content. It is the reason nobody
+ * looked.
+ *
+ * It got there by four choices, every one of them flattering:
+ *
+ *   1. it teleported the player onto Ironhold's node position, where the Coalition
+ *      control share is 0.95 and `accrueClaim`'s `0.30 + 0.70 * share` multiplier is at
+ *      its maximum — rather than the graveyard the game actually starts you in;
+ *   2. it MANUFACTURED AND KILLED its victims with `source: w4.player`, and a kill is
+ *      worth `LEDGER.perKill` = 30 claim, so eight hulls paid 240 claim before a single
+ *      section was cut;
+ *   3. it called `salvage._store(sec)` on every section directly, which charges the
+ *      ledger with ZERO CUT TIME and zero transit — and the decay rule the whole system
+ *      turns on is measured against exactly that time;
+ *   4. and it did all of it standing still, so nothing ever left the field it was
+ *      earned in.
+ *
+ * WHAT IT IS NOW. The same three properties, taken off the real path:
+ *
+ *   - the claim is EARNED, at the real cut rate, through `salvage.orderCut`, at the POI
+ *     the player starts in, with no kill billed to the player at all;
+ *   - it HOLDS while the player is still in that field and SHEDS once they have FLOWN
+ *     out of it under `orderMove` and the real `PlaneBody`;
+ *   - and docking at a berth the robbed faction runs buys a fixed fraction of it down.
+ *
+ * The first of those is a NEGATIVE CONTROL and it is the check this file should have
+ * been making all along: one hull's worth of honest work does not reach rung 1 and does
+ * not draw anybody. If it ever does, either the ladder has been made free or something
+ * is paying the ledger that should not be.
+ *
+ * WHAT IS NOT MEASURED HERE, AND CANNOT BE. Whether the ladder FIRES, whether the group
+ * that answers can find the player, and whether it climbs past rung 1. This harness's
+ * worlds are built `{ autoAdopt: false, enterStart: false }` — there is no seeded field
+ * to work and any hull that did spawn would never be adopted by the ship AI, so it would
+ * sit on its spawn point forever. Section 7 asserting the ladder from inside this world
+ * is how the last version ended up certifying a system that had never run. The gate for
+ * that is `node src/sim/ai/escalationHarness.mjs`, which builds the live assembly and
+ * exits non-zero; it is in `tools/gates.mjs`, and this file is not.
+ */
+let ledgerFailures = 0;
+const ledgerCheck = (ok, name, evidence) => {
+  if (!ok) ledgerFailures++;
+  say(`  ${ok ? 'PASS' : 'FAIL'}  ${name}`);
+  if (evidence) say(`        ${evidence}`);
+};
+
 const w4 = await buildGame('harness/sortie/ledger');
 const war4 = w4.systems.factionWar;
 const sys4 = w4.systems.system;
@@ -402,66 +460,176 @@ const salv4 = w4.systems.salvage;
 say(`${pad('TIER', 10)}${pad('AT CLAIM', 10)}${pad('SENDS', 34)}COOLDOWN`);
 for (const e of ESCALATION) say(`${pad(e.tier, 10)}${num(e.at, 8)}  ${pad(e.roles.join(' + '), 34)}${e.cooldown}s`);
 
-// Work deep in Coalition space.
-const ironhold = sys4.get('ironhold');
-w4.player.position.copy(ironhold.position);
+// Where the game starts you, not where the number is biggest.
+const grave4 = sys4.get('graveyard');
+w4.player.position.copy(grave4.position);
+w4.player.body.position.copy(grave4.position);
+w4.systems.travel.adoptCurrent('graveyard');
+w4.propellant.current = w4.propellant.max;
 const shareIn = war4._controlShare('coalition', w4.player.position.x, w4.player.position.z);
-say(`\nat Ironhold, Coalition control share of the field: ${shareIn.toFixed(2)}`);
+say(`\nat ${grave4.name} — the POI the player starts in. Coalition control share here: `
+  + `${shareIn.toFixed(2)} (it is 0.95 at Ironhold, which is where this section used to stand)`);
 
 let escalations = 0;
 w4.bus.on(MEV.ESCALATION, (e) => { escalations++; say(`  >> ${e.faction} sent a ${e.tier}: ${e.ships} hulls at ${e.poiId ?? 'open space'}`); });
 
-const cutSome = (n, faction) => {
-  for (let i = 0; i < n; i++) {
-    const v = new Ship({ classDef: VICTIM_CLASS(`v${i}`, faction), world: w4, faction, root: new THREE.Group() });
-    v.position.copy(w4.player.position).add(new THREE.Vector3(600, 0, 0));
-    w4.addShip(v);
-    v.applyDamage(v.hullHP + 1, { source: w4.player, rng: w4.rng });
-    advance(w4.engine, 0.05);
-    const wr = w4.wrecks.find((x) => !x.detachedModule && !x.spent);
-    if (!wr) continue;
-    for (const sec of wr.sections) salv4._store(sec);
-    advance(w4.engine, 0.5);
+/*
+ * One hull to work on. It is destroyed with `source: null` — the war killed it, not the
+ * player — because `LEDGER.perKill` bills 30 claim for a kill and this section is about
+ * what CUTTING earns. Everything after this point is the shipped salvage path: order the
+ * cut, wait for the torch, wait for the tow, and the ledger charges itself off the
+ * events the game emits.
+ */
+const target = new Ship({ classDef: VICTIM_CLASS('h_ledger', 'coalition'), world: w4, faction: 'coalition', root: new THREE.Group() });
+target.position.copy(w4.player.position).add(new THREE.Vector3(700, 0, 0));
+w4.addShip(target);
+target.applyDamage(target.hullHP + 1, { source: null, rng: w4.rng });
+advance(w4.engine, 0.05);
+const hulk = w4.wrecks.find((x) => !x.detachedModule && !x.spent);
+const charges = [];
+w4.bus.on(MEV.LEDGER_CHANGED, (e) => {
+  if (e.faction === 'coalition' && e.delta > 0) charges.push({ delta: e.delta, reason: e.reason });
+});
+
+let cutT = 0;
+let cutSections = 0;
+let peakClaim = 0;
+while (cutT < 240 && hulk) {
+  if (!salv4.cutting) {
+    const next = hulk.sections.find((s) => s.cuttable);
+    if (!next) break;
+    if (!salv4.orderCut(hulk, next)) break;
+    cutSections++;
   }
-};
+  advance(w4.engine, 1 / 60);
+  cutT += 1 / 60;
+  peakClaim = Math.max(peakClaim, war4.ledger.coalition.claim);
+}
+// A section still under the tractor is a charge that has not landed yet. Drain the tow
+// before anything below reads the claim, or the "it holds" measurement would be watching
+// the last two sections arrive and calling a rise a hold.
+while (cutT < 320 && (salv4.cutting || salv4.inTow.length > 0)) {
+  advance(w4.engine, 1 / 60);
+  cutT += 1 / 60;
+  peakClaim = Math.max(peakClaim, war4.ledger.coalition.claim);
+}
+const kills = charges.filter((c) => c.reason === 'kill');
+const gross = charges.reduce((a, c) => a + c.delta, 0);
+say(`\ncut ${cutSections} sections off ${hulk?.name ?? 'nothing'} through salvage.orderCut, on the real`);
+say(`torch clock: ${cutT.toFixed(1)} s of simulation, ${(cutT / Math.max(1, cutSections)).toFixed(1)} s per section.`);
+say(`  charges landed        : ${charges.length}  (${kills.length} of them kills)`);
+say(`  gross claim earned    : ${gross.toFixed(1)}   peak on the coalition ledger ${peakClaim.toFixed(1)}`);
+say(`  rung 1 wants          : ${ESCALATION[0].at}`);
+ledgerCheck(escalations === 0 && peakClaim < ESCALATION[0].at && kills.length === 0,
+  'ONE HULL, HONESTLY CUT, DRAWS NOBODY — the ladder is earned, not handed over',
+  `${cutSections} sections in ${cutT.toFixed(0)} s of torch time, peak claim `
+  + `${peakClaim.toFixed(1)} against rung 1 at ${ESCALATION[0].at}, ${escalations} responses, `
+  + `${kills.length} kills billed. The old section reached 311 off two hulls because it `
+  + `killed them and skipped the clock.`);
 
-say('');
-say(`${pad('AFTER', 34)}${pad('COALITION CLAIM', 17)}${pad('TIER', 9)}DECAY/s`);
-const report = (label) => {
-  const row = war4.ledgerStatus().find((r) => r.faction === 'coalition');
-  say(`${pad(label, 34)}${num(row.claim, 15)}  ${pad(row.tier ?? '--', 9)}${row.decayPerSecond.toFixed(2)}`);
-  return row;
-};
-report('start');
-cutSome(2, 'coalition');
-report('2 Coalition hulls stripped');
-advance(w4.engine, 40);
-report('40 s later, still in their space');
-cutSome(6, 'coalition');
-advance(w4.engine, 20);
-report('6 more');
-say(`escalation responses so far: ${escalations}, hostile hulls in world: `
-  + `${w4.ships.filter((s) => s.__escalation).length}`);
+// ---------------------------------------------------------------------------
+// It holds while you are standing in it, and sheds once you have gone.
+// ---------------------------------------------------------------------------
+const holdStart = war4.ledger.coalition.claim;
+advance(w4.engine, 90);
+const heldFor90 = war4.ledger.coalition.claim;
+const inField = war4.ledgerStatus().find((r) => r.faction === 'coalition');
+say(`\nstanding in the field  : claim ${holdStart.toFixed(2)} -> ${heldFor90.toFixed(2)} over 90 s  `
+  + `("${inField.text}")`);
 
-// Now move to the other side of the map and watch it fall.
-const meridian = sys4.get('meridian-gate');
-w4.player.position.copy(meridian.position);
-const shareOut = war4._controlShare('coalition', w4.player.position.x, w4.player.position.z);
-say(`\nmoved to Meridian Gate. Coalition control share here: ${shareOut.toFixed(2)}`);
-report('on arrival');
-advance(w4.engine, 120);
-report('120 s in Concord space');
-say(`  same 120 s in Coalition space would have shed `
-  + `${(0.55 * (1 + (1 - shareIn) * 2) * 120).toFixed(0)}; here it shed `
-  + `${(0.55 * (1 + (1 - shareOut) * 2) * 120).toFixed(0)}. That is the negotiation.`);
+// Fly out for real. The boundary is what the rule is written against, so crossing it by
+// teleport would be measuring a different game — see the decay note in factionWar.js.
+const away4 = new THREE.Vector3(grave4.position.x + grave4.radius * 1.6, 0, grave4.position.z);
+let flyT = 0;
+while (flyT < 600 && w4.player.position.distanceTo(grave4.position) <= grave4.radius) {
+  w4.player.orderMove(away4);
+  advance(w4.engine, 1);
+  flyT += 1;
+}
+const leftAt = w4.player.position.distanceTo(grave4.position) > grave4.radius ? flyT : null;
+const onLeaving = war4.ledger.coalition.claim;
+advance(w4.engine, 60);
+const after60 = war4.ledger.coalition.claim;
+const outField = war4.ledgerStatus().find((r) => r.faction === 'coalition');
+say(`flew out of it         : ${leftAt === null ? 'NEVER CROSSED' : `crossed at ${leftAt} s`}, `
+  + `${(w4.player.position.distanceTo(grave4.position) / KM).toFixed(1)} km from the marker `
+  + `(radius ${(grave4.radius / KM).toFixed(0)} km)`);
+say(`60 s outside it        : claim ${onLeaving.toFixed(2)} -> ${after60.toFixed(2)}  `
+  + `("${outField.text}")`);
+ledgerCheck(heldFor90 === holdStart && inField.holding === true && inField.decayPerSecond === 0
+  && leftAt !== null && after60 < onLeaving && outField.holding === false,
+  'and the claim HOLDS while you are still in the field and SHEDS once you have flown out '
+  + '— the pressure is spatially negotiable, and the readout agrees with the arithmetic',
+  `held ${holdStart.toFixed(2)} flat for 90 s in the field (holding=${inField.holding}, `
+  + `decay ${inField.decayPerSecond.toFixed(2)}/s), then shed `
+  + `${(onLeaving - after60).toFixed(2)} in 60 s outside it at ${outField.awayDecay.toFixed(2)}/s`);
 
-// And paying a berth buys it down.
-w4.player.position.copy(sys4.get('ironhold').position);
-w4.reputation.coalition = 30;
-w4.systems.travel.adoptCurrent('ironhold');
+// ---------------------------------------------------------------------------
+// And paying a berth buys it down. `LEDGER.dockRelief` is 0.35 and is not exported, so
+// the assertion is on the RATIO the real MEV.DOCKED path produced.
+// ---------------------------------------------------------------------------
+const ironhold = sys4.get('ironhold');
+say(`\nflying to their yard   : ${(w4.player.position.distanceTo(ironhold.position) / KM).toFixed(0)} km, `
+  + `standing ${w4.reputation.coalition.toFixed(1)} against Ironhold's minimum of `
+  + `${ironhold.anchorage.minStanding}`);
+// At 0.8 u/km the yard is out of reach on the tank the graveyard leaves you with — the
+// course quotes 835 against 594 spendable. SILENT running is 0.5 u/km and it is the
+// answer the game already has for exactly this, so the harness takes it rather than
+// topping the tank up by hand and pretending the burn was free.
+w4.systems.travel.setSilent(true);
+const toYard = runCourse(w4, 'ironhold', 6000);
+say(`  under SILENT running : ok=${toYard.ok}${toYard.reason ? ` (${toYard.reason})` : ''}, `
+  + `${toYard.elapsed ?? 0} s of burn, at ${w4.systems.travel.currentPOI ?? 'open space'}, `
+  + `${Math.round(w4.propellant.current)} propellant left`);
+w4.systems.travel.setSilent(false);
+
+/*
+ * 739 s of transit at 1.12/s shed the whole graveyard claim on the way, which is the
+ * decay rule doing exactly what it says. So the bill this section settles is one the
+ * player runs up HERE: a Coalition hull cut in the Coalition yard's own field, on the
+ * same real `orderCut` path as above, at a control share of 0.95 rather than 0.49. That
+ * is also the honest version of what the old section was reaching for when it teleported
+ * here — the difference is that the charge is cutting, not two manufactured kills.
+ */
+w4.player.orderMove(ironhold.position);
+let settle = 0;
+while (settle < 400 && w4.player.body.velocity.length() > 60) { advance(w4.engine, 1); settle += 1; }
+const shareYard = war4._controlShare('coalition', w4.player.position.x, w4.player.position.z);
+const yardVictim = new Ship({ classDef: VICTIM_CLASS('h_yard', 'coalition'), world: w4, faction: 'coalition', root: new THREE.Group() });
+yardVictim.position.copy(w4.player.position).add(new THREE.Vector3(700, 0, 0));
+w4.addShip(yardVictim);
+yardVictim.applyDamage(yardVictim.hullHP + 1, { source: null, rng: w4.rng });
+advance(w4.engine, 0.05);
+const yardHulk = w4.wrecks.find((x) => !x.detachedModule && !x.spent && x.faction === 'coalition');
+let yardT = 0;
+let yardCuts = 0;
+while (yardT < 200 && yardHulk) {
+  if (!salv4.cutting) {
+    const next = yardHulk.sections.find((s) => s.cuttable);
+    if (!next) break;
+    if (!salv4.orderCut(yardHulk, next)) break;
+    yardCuts++;
+  }
+  advance(w4.engine, 1 / 60);
+  yardT += 1 / 60;
+}
+while (yardT < 320 && (salv4.cutting || salv4.inTow.length > 0)) { advance(w4.engine, 1 / 60); yardT += 1 / 60; }
+say(`  settled alongside    : ${Math.round(w4.player.body.velocity.length())} m/s after ${settle} s of `
+  + `braking, ${(w4.player.position.distanceTo(ironhold.position) / KM).toFixed(1)} km off the berth`);
+say(`  cut ${yardCuts} sections here : control share ${shareYard.toFixed(2)}, claim now `
+  + `${war4.ledger.coalition.claim.toFixed(2)}`);
+
 const beforeDock = war4.ledger.coalition.claim;
-w4.systems.travel.dock('ironhold');
-say(`\ndocking at their yard  : claim ${beforeDock.toFixed(1)} -> ${war4.ledger.coalition.claim.toFixed(1)} (you paid them)`);
+const docked4 = w4.systems.travel.dock('ironhold');
+const afterDock = war4.ledger.coalition.claim;
+const relief = beforeDock > 0 ? 1 - afterDock / beforeDock : NaN;
+say(`docking at their yard  : ok=${docked4.ok}${docked4.reason ? ` (${docked4.reason})` : ''} — `
+  + `claim ${beforeDock.toFixed(2)} -> ${afterDock.toFixed(2)}, ${(relief * 100).toFixed(1)}% bought off`);
+ledgerCheck(docked4.ok === true && beforeDock > 1 && Math.abs(relief - 0.35) < 1e-9,
+  'and docking at a berth the robbed faction runs settles exactly LEDGER.dockRelief of it '
+  + '— you paid them, and it is a receipt rather than forgiveness',
+  `${beforeDock.toFixed(2)} -> ${afterDock.toFixed(2)} on the real travel.dock path, `
+  + `relief ${(relief * 100).toFixed(4)}% against the constant's 35%`);
 
 say(rule('8. PERSISTENCE — save, reload, and check it is the same world'));
 const storage = memoryStorage();
@@ -589,3 +757,19 @@ say(`Before this change the check was permanently undefined and every burn paid 
 say(`published 0.8/km and the per-delta-v manoeuvring rate.`);
 
 say('');
+/*
+ * THIS FILE NOW HAS AN EXIT CODE, AND IT HAS ONE BECAUSE OF SECTION 7.
+ *
+ * Everything else here is a printer and stays one — the sortie, the debrief, the
+ * save/load table are read by a human comparing numbers. Section 7 was a printer too,
+ * and being a printer is exactly how it printed a flattering ledger for two waves
+ * without anybody noticing that the system it described had never run. Its three
+ * assertions are cheap and they are the ones a regression would trip, so they get a
+ * process exit rather than a paragraph.
+ */
+if (ledgerFailures > 0) {
+  console.error(`\n${ledgerFailures} SECTION 7 LEDGER CHECK(S) FAILED — the salvage ledger no `
+    + `longer behaves the way the sortie loop is documented to depend on. The ladder itself is `
+    + `gated by src/sim/ai/escalationHarness.mjs, not here.`);
+  process.exit(1);
+}
