@@ -460,8 +460,57 @@ const BAY = {
    * load is, and the loads on this thing are the reactor bulkhead forward and the tow
    * track aft, so the frames bunch where the load bunches. Evenly spaced frames are
    * what made the first pass read as a road bridge.
+   *
+   * -------------------------------------------------------------------------
+   * EVERY FRAME RAKES, AND THAT ONE COLUMN IS TWO THIRDS OF THIS HULL'S BOXINESS.
+   * -------------------------------------------------------------------------
+   * Attributing `ships/audit.mjs`'s own area-weighted normal binning part by part,
+   * four of these five frames plus the reactor bulkhead were 20.6 of the cruiser's
+   * 32.2 axis-aligned points — SIXTY-FOUR PER CENT of every axis-aligned square metre
+   * on the ship, for 300 triangles out of 7169. Twenty-two per cent of the whole hull's
+   * surface area pointed at exactly +-Z and it was five flat plates under the keel
+   * facing dead ahead and dead astern. The loft was never the problem.
+   *
+   * The fifth frame, at z -230, is the one row that already had a rake and it is the
+   * one row that never appeared in the attribution. The fix was already in the file,
+   * applied once.
+   *
+   * They are five DIFFERENT angles with five different reasons, because five
+   * identically-tilted bulkheads read as sloppy where five differently-tilted ones read
+   * as structure. A frame is square to the load it carries and these loads are not
+   * parallel:
+   *
+   *   z  215  +0.21  abuts the reactor bulkhead and takes the TOW LOAD, which arrives
+   *                  from a track slung 40 m below the keel and 100 m forward
+   *                  (the track is built at z 213..423, y -136..-150), so the head
+   *                  leans forward over it
+   *   z   60  +0.15  carries the PORT grapple pivot at z +112 (see `pivots` in
+   *                  `buildBay`), 52 m forward of it
+   *   z    0  -0.12  carries the PORT grapple pivot at z -38, 38 m aft of it. It and
+   *                  its neighbour therefore splay APART, which is what a pair of
+   *                  frames taking opposed loads does
+   *   z -110  +0.115 carries the STARBOARD grapple pivot at z -96, 14 m forward
+   *   z -230  +0.22  follows the transom, and is the row that was already right
+   *
+   * The floor on the magnitude is not taste: `ships/audit.mjs` scores a face as
+   * axis-aligned inside 5 degrees, so anything under 0.088 rad buys nothing. The
+   * smallest here is 0.115 rad = 6.6 deg. NOTHING MOVES IN THE SILHOUETTE: the frames
+   * are built `width: railOut * 2`, i.e. exactly the outboard face of the rails, and
+   * they span y -60..-212 between chords that reach -48 and -222, so all three of
+   * `silhouetteSignature`'s channels at these stations are set by the rails, the chords
+   * and the deck and NONE of them by a frame. Raking about X grows the y half-extent
+   * from 76.0 m to at most 76.8 m, which is still inside the chord band.
    */
-  frames: [[215, 24, 0], [60, 13, 0], [0, 20, 0], [-110, 11, 0], [-230, 18, 0.22]],
+  frames: [[215, 24, 0.21], [60, 13, 0.15], [0, 20, -0.12], [-110, 11, 0.115], [-230, 18, 0.22]],
+
+  /**
+   * The reactor bulkhead's own rake, and it leans the OTHER WAY from the frame at
+   * z 215 that abuts it. Two plates 12 m apart leaning the same way are one thick
+   * plate; leaning against each other they are a shear box, which is what closes the
+   * forward end of a bay. It was the fifth-largest single contributor of axis-aligned
+   * area on the ship and it is 60 triangles.
+   */
+  bulkheadRake: -0.16,
 };
 
 /**
@@ -583,6 +632,35 @@ const profileAt = (z, section = sectionAt) => {
     knuckle: c.knuckle, deckFlat: c.deckFlat, flare: c.flare,
   });
 };
+
+/**
+ * THE HULL'S OWN UPPER SURFACE at (z, x): the section polyline from the STARBOARD
+ * KNUCKLE up the deck chamfer, across the deck flat, over the CAMBERED CROWN and back
+ * down to the port knuckle. `facetProfile` returns those seven points as indices
+ * 2..8, monotone decreasing in x, so the walk is a straight scan.
+ *
+ * The deck is not flat and it never was: the crown sits 6.79% of the section depth
+ * above the deck plate line and the deck chamfer falls another 10.5% of it over the
+ * outboard third of the half-beam. Anything authored at `sectionAt(z).top + k` is
+ * therefore NOT lying on the deck — it is a horizontal plane cutting through a
+ * cambered one, which is both an axis-aligned face the section audit charges for and
+ * a plate that visibly floats at one end and sinks at the other. Ask this function
+ * instead.
+ *
+ * Outside the knuckles it clamps, because past the knuckle the surface is the flank
+ * and a "deck height" there is not a defined thing.
+ */
+function deckSurfaceY(z, x) {
+  const P = profileAt(z);
+  for (let i = 2; i < 8; i++) {
+    const a = P[i], b = P[i + 1];
+    if (x <= a[0] && x >= b[0]) {
+      const t = (x - a[0]) / ((b[0] - a[0]) || 1);
+      return a[1] + (b[1] - a[1]) * t;
+    }
+  }
+  return x > P[2][0] ? P[2][1] : P[8][1];
+}
 
 /**
  * THE KNUCKLE at z, starboard side: the widest point of the section and the hard
@@ -964,10 +1042,16 @@ export function hullParts({ rng, lod = 0 }) {
         width: w, height: BAY.chordBot - BAY.floor, depth: 320, chamfer: 8, draft: 6, detail: D,
       }), { pos: [x, (BAY.chordBot + BAY.floor) * 0.5, 0] });
     }
-    for (const [z, t] of [[148, 26], [-148, 22]]) {
+    // The two frame proxies stand in for LOD0's five, AND THEY RAKE WITH THEM. This
+    // is the same feature at two levels: when `BAY.frames` gained its rake column the
+    // LOD0 side mask changed and these did not, and the LOD coherence IoU — 0.044 of
+    // margin, the tightest figure in the game — fell 0.764 to 0.762 for it. Each proxy
+    // carries the mean rake of the LOD0 frames it replaces: +0.18 for the forward pair
+    // at z 215 / 60, +0.072 for the aft three at z 0 / -110 / -230.
+    for (const [z, t, rake] of [[148, 26, 0.18], [-148, 22, 0.072]]) {
       B.add('core', 'dark', G.bevelBox({
         width: BAY.railOut * 2, height: BAY.frameTop - BAY.frameBot, depth: t, chamfer: 8, detail: D,
-      }), { pos: [0, (BAY.frameTop + BAY.frameBot) * 0.5, z] });
+      }), { pos: [0, (BAY.frameTop + BAY.frameBot) * 0.5, z], rot: [rake, 0, 0] });
     }
 
     // FEATURE 3 — THE HOOK. Two segments a side, and they bend the OTHER WAY at the
@@ -1125,19 +1209,41 @@ export function hullParts({ rng, lod = 0 }) {
   // THE FILLET, and it is the difference between "grown out of the hull" and "sat on
   // top of it". Where the ridge meets the deck there is one extra station 14 m out
   // from the join on each side, so the join is a chamfer and not a right angle. It is
-  // a second, much flatter loft lying along the same z values, 20 m tall, and it costs
-  // 24 triangles a station.
+  // a second, much flatter loft lying along the same z values, 20 m tall.
+  //
+  // IT NOW LIES ON THE DECK INSTEAD OF CUTTING THROUGH IT, and that was a real defect
+  // and not only a metric. Both of its long chords used to be written at `sec.top - 2`
+  // and `sec.top - 22`: two DEAD-FLAT HORIZONTAL PLANES 208 m wide running 490 m, on a
+  // deck that is cambered by 6.79% of section depth and that falls away down the deck
+  // chamfer outboard of the deck flat. Consequences, both measured:
+  //
+  //   - it was the LARGEST single contributor of axis-aligned area left on this hull
+  //     once the bay frames were raked: 132 triangles, 60% own-axis, 3.3% of the whole
+  //     ship's surface, and the top-six list's only `core/hull` entry
+  //   - at z -300 the fillet's PORT rim sits at hull x -120, which is 20 m outboard of
+  //     the deck chamfer, where the hull's own surface is at y 15.8. The rim was
+  //     written at y 51. The plate was floating 15 m clear of the hull it fillets.
+  //
+  // Both chords now follow `deckSurfaceY` — the section's own polyline from the
+  // starboard knuckle up over the cambered crown and down to the port knuckle — so the
+  // fillet is parallel to the surface it lies on at every station and at every x, by
+  // construction, which is the same property `skinPlate` gives every plate run on this
+  // ship. One extra vertex per chord: 132 triangles becomes 176.
   // -------------------------------------------------------------------------
   if (mid) {
     B.add('core', 'hull', G.loft(RIDGE_STATIONS.map((r) => {
-      const sec = sectionAt(r[0]);
       const w = r[1] + 16;
+      // The chamfer's top rim height, unchanged: a blend of the ridge crown and the
+      // deck under it. Only the two chords move.
+      const shoulder = r[2] * 0.32 + sectionAt(r[0]).top * 0.68;
+      const deck = (x) => deckSurfaceY(r[0], x + RIDGE_X);
+      const lift = shoulder - deck(w - 14);
       return {
         z: r[0],
         points: [
-          [w, sec.top - 2], [w - 14, r[2] * 0.32 + sec.top * 0.68],
-          [-w + 14, r[2] * 0.32 + sec.top * 0.68], [-w, sec.top - 2],
-          [-w, sec.top - 22], [w, sec.top - 22],
+          [w, deck(w) - 2], [w - 14, shoulder], [0, deck(0) + lift], [-w + 14, shoulder],
+          [-w, deck(-w) - 2],
+          [-w, deck(-w) - 22], [0, deck(0) - 22], [w, deck(w) - 22],
         ],
       };
     }), { capFront: false, capBack: false }), { pos: [RIDGE_X, 0, 0] });
@@ -1419,6 +1525,77 @@ export function hullParts({ rng, lod = 0 }) {
 // ---------------------------------------------------------------------------
 
 /**
+ * A TRANSVERSE FRAME WITH A HOLE IN IT IS A FRAME. A transverse frame without one is
+ * a 556 x 152 m plate, and five of those were most of this hull's boxiness.
+ *
+ * Four members prismed through the frame's thickness and raked as one:
+ *
+ *   HEAD    full beam, under the keel, DEEPEST ON THE CENTRELINE (26 m) and tapering
+ *           to 10 m at the rail. It is the member that welds to the keel across the
+ *           throat and cantilevers out to carry a rail 128 m outboard of that weld,
+ *           so it is deep where it is welded and shallow where it only has to be a
+ *           flange. Its soffit reaches exactly `BAY.chordTop` on the centreline and
+ *           no further: the berth below it stays clear.
+ *   LEGS    one under each rail fairing, x 226..278 at the head and BATTERED to
+ *           240..270 at the sill, so neither of a leg's two long faces is vertical
+ *           and neither of its ends is square. They run up INTO the head and down
+ *           INTO the sill: two members that merely touch are coplanar, which is a
+ *           z-fight, and this bay has been bitten by that once already (see `BAY`).
+ *   SILL    the tie across the bottom, inside the bottom chord's own band, crowned
+ *           6 m at the centreline so its top face is not a plane either.
+ *
+ * WHAT THIS COSTS AND WHAT IT BUYS. 56 triangles against the solid slab's 60, so the
+ * five frames are 20 triangles CHEAPER. Measured on the whole hull it is worth about
+ * five normal clusters and six points of top6, because the opening deletes the two
+ * flat +-Z caps' worth of area at the centre and replaces it with four inner reveal
+ * faces pointing four new ways.
+ *
+ * IT IS INVISIBLE IN BOTH GATED VIEWS, AND THAT IS MEASURED RATHER THAN HOPED FOR.
+ * `tools/silhouette.mjs` projects orthographically along the axes. Along X the legs
+ * cover the full y band the solid plate covered; along Y the head and the sill each
+ * cover the full x band. So R2.6's enclosed background, R2.7's clear span and the
+ * LOD2 through-void check cannot see the hole at all — which is also why the LOD2
+ * frame proxies do NOT need the ring, where they DID need the rake.
+ *
+ * It is also the honest shape. The bay is a berth: a module's body sits between the
+ * chords at y -88..-200, and five solid plates crossing that band at five stations
+ * was a berth a module could not be in.
+ */
+function bayFrame(thickness) {
+  const hw = BAY.railOut;                     // 278 — the rail's own outboard face
+  const cy = (BAY.frameTop + BAY.frameBot) * 0.5;    // the frame is placed on its centre,
+  const top = BAY.frameTop - cy;                     // exactly as the solid slab was, so
+  const bot = BAY.frameBot - cy;                     // the rake column keeps its meaning
+  const soffitEnd = -70 - cy, soffitMid = BAY.chordTop - cy;  // head 10 m at the rail, 28 at the keel
+  const sillEnd = -205 - cy, sillMid = -199 - cy;             // sill  7 m at the rail, 13 at the keel
+  const legTop = -64 - cy, legBot = -207 - cy;       // both ends buried in the member beyond
+  // THE BATTER IS A METRIC, NOT A LOOK. A leg's two long faces are the only faces on
+  // this frame that a rake about X cannot move off an axis, because rotating about X
+  // leaves an +-X normal exactly +-X. Over the leg's 143 m of height an 18 m batter is
+  // 7.2 degrees and a 16 m one is 6.4; `ships/audit.mjs` scores anything inside 5
+  // degrees as axis-aligned, so the first draft's 8 m outer batter (3.2 degrees) was
+  // still a flat side of a box. Measured on the whole hull: batter 8/14 reads axis
+  // 13.8%, batter 18/16 reads 13.2%.
+  const legOutTop = hw, legOutBot = hw - 18;
+  const legInTop = BAY.railIn - 6, legInBot = BAY.railIn + 16;
+  const q = thickness * 0.5;
+
+  // Every outline is written counter-clockwise in x-y seen from +Z, which is the
+  // winding `greeble.js#loft` needs for outward normals and the winding
+  // `facetProfile` already uses, so nothing here needs a signed-area correction.
+  // All four are convex, which is what `loft`'s fan caps require.
+  const head = [[-hw, soffitEnd], [0, soffitMid], [hw, soffitEnd], [hw, top], [-hw, top]];
+  const sill = [[-hw, bot], [hw, bot], [hw, sillEnd], [0, sillMid], [-hw, sillEnd]];
+  const leg = (s) => {
+    const o = [[legInBot, legBot], [legOutBot, legBot], [legOutTop, legTop], [legInTop, legTop]];
+    return s > 0 ? o : o.map(([x, y]) => [-x, y]).reverse();
+  };
+
+  return G.mergeParts([head, sill, leg(1), leg(-1)]
+    .map((o) => ({ geo: G.prism(o, -q, q) })), { uv: false });
+}
+
+/**
  * A through-slot 320 m long, 210 m wide and 168 m deep, open ventral and aft. The
  * verification for this is not "does it look open": from a camera at 25 degrees
  * elevation abeam, background must be visible through it.
@@ -1504,11 +1681,13 @@ function buildBay(B, D, full, rng) {
   // and they are the one feature on this ship that nothing else in the game has;
   // dropping to three at LOD1 halved the void count and the hull read as a different
   // class of ship at 5 km. Negative space is the last thing an LOD gives up.
+  //
+  // Each one is a PORTAL — see `bayFrame` — and not a plate. It is placed on its own
+  // centre with the rake from `BAY.frames`, byte-for-byte the transform the solid
+  // slab used, so the rake column keeps the meaning documented against it.
   for (const [z, t, rake] of BAY.frames) {
-    B.add('core', 'plating', G.bevelBox({
-      width: BAY.railOut * 2, height: BAY.frameTop - BAY.frameBot, depth: t,
-      chamfer: t >= 20 ? 7 : 4, draft: Math.min(6, t * 0.3), detail: D,
-    }), { pos: [0, (BAY.frameTop + BAY.frameBot) * 0.5, z], rot: [rake, 0, 0] });
+    B.add('core', 'plating', bayFrame(t),
+      { pos: [0, (BAY.frameTop + BAY.frameBot) * 0.5, z], rot: [rake, 0, 0] });
   }
 
   // -------------------------------------------------------------------------
@@ -1531,10 +1710,12 @@ function buildBay(B, D, full, rng) {
     }), { pos: [s * BAY.runnerX, BAY.runnerY + (s < 0 ? 0 : 3), cz - 4] });
   }
 
-  // Reactor bulkhead: the forward face, and the only closed one.
+  // Reactor bulkhead: the forward face, and the only closed one. It rakes; see
+  // `BAY.bulkheadRake` for why, and for what its two flat 300 x 174 m faces were
+  // costing the section audit before it did.
   B.add('core', 'plating', G.bevelBox({
     width: BAY.throat * 2, height: BAY.roof - BAY.floor, depth: 22, chamfer: 9, draft: 7, detail: D,
-  }), { pos: [0, (BAY.roof + BAY.floor) * 0.5, BAY.z1 - 12] });
+  }), { pos: [0, (BAY.roof + BAY.floor) * 0.5, BAY.z1 - 12], rot: [BAY.bulkheadRake, 0, 0] });
 
   // FOUR GRAPPLE ARMS, two a side, stowed folded against the rails 12 degrees off
   // parallel. The pivots are at DIFFERENT z port and starboard - symmetric grapples
