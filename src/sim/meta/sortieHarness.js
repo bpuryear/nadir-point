@@ -445,6 +445,12 @@ say(rule('7. THE ESCALATION LEDGER — what a sortie actually earns, and how it 
  * is how the last version ended up certifying a system that had never run. The gate for
  * that is `node src/sim/ai/escalationHarness.mjs`, which builds the live assembly and
  * exits non-zero; it is in `tools/gates.mjs`, and this file is not.
+ *
+ * SECTIONS 4 AND 9 STILL CALL `salvage._store()` AND THAT IS DELIBERATE. Section 4 is
+ * filling a hold so the debrief has something to report and section 9 is fingerprinting
+ * a seed; neither of them reads the ledger's clock, and the shortcut costs them nothing.
+ * It was only ever wrong HERE, where the whole property under test is what the claim
+ * does per second of real work.
  */
 let ledgerFailures = 0;
 const ledgerCheck = (ok, name, evidence) => {
