@@ -916,6 +916,12 @@ const PG_FRAMES = PG_HULL.frameStations({ length: 480, count: 6, from: -200, to:
  * pylons fill the gap and the trimaran collapses into one delta, which is exactly
  * what happened the first time. Slung LOW so the profile is a three-level stack:
  * crest on top, hull in the middle, nacelles below.
+ *
+ * Both of those are COMPOSITION, not gate. Measured while pinning the fins: setting
+ * `PG_NACELLE_Y` to 0 leaves concord_destroyer at height 169.3 and the
+ * frigate/destroyer peak at 49.6 unmoved, because the hull's own keel is deeper and
+ * the fins own the top. Keep the drop because the three-level read is the class; do
+ * not keep it under the impression that the audit is holding it up.
  */
 const PG_NACELLE = new Mass([
   [-150, 6.0, 3.2, -4.0, 0.52, 0.48, 0.88],
@@ -951,9 +957,14 @@ const PG_PYLON_Y = -24;
  * `rot [0, 0, s * 0.42]`, which leans the STARBOARD fin's tip to PORT: measured, the
  * starboard tip landed at x -22 having started at x +13, so the two fins crossed each
  * other over the centreline and the file's own comment ("from astern a V") described
- * a shape the geometry did not make. `HALF_PI - s * 0.42` splays them outward. It is
- * silhouette-NEUTRAL - the nacelles hold max |x| at 101 through every bin the fins
- * occupy, and both fins reach y 118 either way - so this buys a V for nothing.
+ * a shape the geometry did not make. `HALF_PI - s * 0.42` splays them outward.
+ *
+ * THAT FIX IS NOT FREE, whatever this comment used to say. It claimed the change was
+ * "silhouette-NEUTRAL" because the nacelles hold max |x| through every bin the fins
+ * occupy and both fins reach y 118 either way. The first half is true and beside the
+ * point and the second is simply wrong: the argument was made entirely in PLAN, and
+ * the metric scores the PROFILE too. Reverting it reds the audit. The measurement is
+ * on the `fin` builder below - read it before you touch either number.
  */
 const PG_FIN = [
   [0, -136, 104, 5.5],
@@ -967,6 +978,33 @@ function destroyerParts({ lod }) {
   const full = lod === 0;
   const B = new Buckets();
   const card = lod >= 2 ? SECTION_LOD.far : SECTION_LOD.full;
+  // LOAD-BEARING AND MEASURED. This roll and the `y 40` in the fin's mount below hold
+  // the tightest pair in the faction: `concord_frigate / concord_destroyer`, peak 49.6
+  // against a 40.0 m bar, 9.6 m of margin. Each was reverted ON ITS OWN with nothing
+  // else changed and `node src/art/geometry/ships/audit.mjs` re-run:
+  //
+  //   `HALF_PI - s * 0.42` -> `s * 0.42`   (the pre-fix cant: fins lie near-horizontal)
+  //     concord_destroyer  height 169.3 -> 158.3,  beam UNCHANGED at 202
+  //     frigate / destroyer  max 49.6 -> 38.3  TOO CLOSE
+  //     *** INTRA-FACTION SEPARATION FAILED ***   the audit exits 1
+  //
+  //   fin mount `[s * 13, 40, 0]` -> `[s * 13, 0, 0]`   (drop the 40 m lift)
+  //     concord_destroyer  height 169.3 -> 158.3,  beam UNCHANGED at 202
+  //     frigate / destroyer  max 49.6 -> 32.9  TOO CLOSE
+  //     *** INTRA-FACTION SEPARATION FAILED ***   the audit exits 1
+  //
+  // The unchanged beam is the whole lesson, and it is how the neutrality claim above
+  // came to be written: BOTH reverts leave beam at 202 and the nacelles still own max
+  // |x| in every bin, so a plan-view argument says either is free. It is not, because
+  // `silhouetteSignature` (common.js:1367) bins TOP and BOTTOM as well as half-width.
+  // What these two numbers hold is the aft PROFILE - fins near-vertical and lifted
+  // clear of the crest are 11 m of stern height the Meridian's single upright sail has
+  // nowhere to match. Flatten them or set them down and this class's tail collapses
+  // onto the frigate's.
+  //
+  // The `s * 13` stagger in that same mount is genuinely cosmetic and was measured to
+  // say so: `s * 0` leaves the peak at 49.6 (mean 11.6 -> 11.3, bar 10.0). Spend that
+  // one if you need it. Do not spend the other two.
   const fin = (s) => spanY(bladeGeo(PG_FIN, { deckFlat: 0.28, keep: card, root: false }),
     HALF_PI - s * 0.42);
   // Built ONCE and indexed, not rebuilt inside the side loop: `bladePair` mirrors a
@@ -985,7 +1023,8 @@ function destroyerParts({ lod }) {
         B.add('core', 'hull', pair[s > 0 ? 0 : 1], { pos: [0, PG_PYLON_Y, 0] });
       }
       // The twin fins carry the class from the beam, so they survive to the far LOD
-      // exactly as the Coalition destroyer's waist does.
+      // exactly as the Coalition destroyer's waist does. The 40 is measured and
+      // load-bearing - see the note on `fin` above before changing it here or at LOD0.
       B.add('core', 'hull', fin(s), { pos: [s * 13, 40, 0] });
     }
     return { buckets: B.list() };
@@ -1045,6 +1084,9 @@ function destroyerParts({ lod }) {
   // notch, from astern as a V, and in plan as two blades outboard of the crest. The
   // Meridian's single upright sail cannot be confused with it at any angle, and this
   // class is the only Concord hull that is TALL AT THE BACK AND TALL IN THE MIDDLE.
+  // "Tall at the back" is not a description here, it is the measurement: the cant in
+  // `fin` and the 40 in this mount are each worth more than the frigate/destroyer
+  // margin on their own. The note on `fin` has the numbers and the failing output.
   for (const s of [-1, 1]) B.add('core', 'plating', fin(s), { pos: [s * 13, 40, 0] });
   // Blisters set INTO the crest, flush. There is no plinth: a Concord turret does
   // not stand on a pad, it opens in a surface.
