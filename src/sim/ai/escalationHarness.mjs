@@ -433,7 +433,7 @@ const arrivals = [];
     check(launches.length > 0 && unwarned.length === 0,
       `and the player was WARNED first — every rung, with the full LEDGER.warnLead of lead`,
       launches.length === 0 ? 'nothing launched, so nothing was warned'
-        : `${launches.length}/${launches.length} rungs warned; leads `
+        : `${launches.length - unwarned.length}/${launches.length} rungs warned in time; leads `
           + `${launches.map((L) => `${L.tier} ${f(L.lead)} s`).join(', ')} against warnLead `
           + `${f(WARN_LEAD)} s read from factionWar.js`
           + (unwarned.length ? ` — SHORT: ${unwarned.map((L) => L.tier).join(', ')}` : ''));
