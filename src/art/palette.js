@@ -425,8 +425,62 @@ export const FACTION_PALETTES = {
     name: 'Derelict',
     blurb: 'Ancient. Nothing about the panel layout was decided by a person.',
 
-    base: 0x836b3c,
-    baseAlt: 0x6b5730,
+    /**
+     * =====================================================================
+     * THIS FACTION'S DARKNESS WAS IN A NOISE MASK AND IS NOW IN ITS PAINT
+     * =====================================================================
+     * `base` and `baseAlt` are scaled by 0.82 in sRGB, which is a scale by 0.82^2.2 in
+     * linear and therefore an EXACT hold of chromaticity — the R:G:B ratio, the hue and
+     * the saturation are unchanged to a byte, and only the value moves. The derelict is
+     * still the same bronze it always was.
+     *
+     *   base      0x836b3c -> 0x6b5831   Y 0.1567 -> 0.1033   R/G 1.224 -> 1.216
+     *   baseAlt   0x6b5730 -> 0x584727   Y 0.1016 -> 0.0673   R/G 1.230 -> 1.239
+     *
+     * WHY, AND IT IS AN ARITHMETIC CONSEQUENCE OF THE OTHER TWO CHANGES IN THIS PASS
+     * RATHER THAN A TASTE CALL. `textures/hullMaps.js` now bands the corrosion layer
+     * into the detail field and lifts the corrosion floor off `baseDark * 0.7` onto
+     * `pal.wear.oxide`. Both of those HAND VALUE BACK to this faction: they are the two
+     * ways the derelict was being made dark by a mask instead of by paint, and removing
+     * a mask that was doing 0.3 stops of work makes the hulk 0.3 stops brighter.
+     *
+     * Measured on the graveyard's own gate, `node tools/derelictcheck.mjs`, each change
+     * applied ALONE to a clean checkout of `a22dad3` and then in combination — hero
+     * shot, 1280x720, hardware raster, clean worktrees throughout:
+     *
+     *   tree                          maskLift  maskPct  darkPct   gate
+     *   a22dad3                          1.30    16.54     4.68    6/6
+     *   + corrosion banding              1.29    16.83     3.86    6/6
+     *   + pit floor -> oxide             1.31    16.82     4.10    6/6
+     *   + both, no palette change        1.34    17.51     2.76    5/6  FAILS darkPct
+     *   + both + this palette change     1.30    16.90     5.15    6/6
+     *
+     * The fourth row is the whole argument. `darkPct` is the fraction of the subject
+     * still in shadow — the shadow terminator the owner watched wash out — and its
+     * floor is 3.20. Two changes that each cost 0.6-0.8 of it cost 1.9 together, and
+     * this is what pays it back. Landing any one of the three without the other two is
+     * not a smaller version of this pass; it is a different and worse render.
+     *
+     * WHAT THE FACTION LOOKS LIKE AFTER IT. Measured with `node tools/matsurface.mjs
+     * --rows fleet`, `derelict mod` (what `modules/kit.js:90` asks for): linear meanY
+     * 0.0578 -> 0.0563, i.e. the tier lands 0.04 stops from where it started, while its
+     * surface goes from 1.2% calm to 90.4% and its frequency against the cruiser hull
+     * from 9.05x to 4.94x. The mechanism by which this faction is dark moved from noise
+     * into paint; the amount of dark did not move.
+     *
+     * NO KEY SOLVE DEPENDS ON THIS. The six POI intensities this file keeps warning
+     * about are solved against `player.base`'s linear Y and are named in the player
+     * block; no lighting number anywhere is solved against a derelict albedo.
+     *
+     * NOT AN INSTRUMENT FIX. `tools/surface.mjs`'s frequency operator is a gradient
+     * magnitude on non-normalised luma, so darkening ANY surface lowers its measured
+     * frequency for free. That is a real hazard and it is why this scale is chosen to
+     * hold the tier's rendered value and the gate's shadow fraction, not to move
+     * `meanTile`: on its own it buys only 0.0742 -> 0.0597 of the frequency, a fifth of
+     * what this pass delivers, and it is not carried here for that.
+     */
+    base: 0x6b5831,
+    baseAlt: 0x584727,
     // Near-black, same correction as the other three: 0x332c1e was Y = 0.0294 and
     // read as a mid brown against a 0.18 hull. 0x221c11 is Y = 0.0128.
     baseDark: 0x221c11,
