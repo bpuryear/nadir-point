@@ -105,10 +105,26 @@ function tractorArm(arm) {
   const k = arm.len / Math.hypot(ca * arm.tilt, 1, sa * arm.tilt);
   const root = [ca * TRACTOR_HUB_R, TRACTOR_HUB_Y, sa * TRACTOR_HUB_R];
   const head = [root[0] + ca * arm.tilt * k, TRACTOR_HUB_Y - k, root[2] + sa * arm.tilt * k];
-  return { dir, root, head, aperture: [head[0], head[1] - TRACTOR_HORN_DROP, head[2]] };
+  // The blade's flat is rolled to face across the arm's own bearing, so from under
+  // the keel the three arms present broad faces and the yoke reads open between them.
+  return { dir, root, head, roll: -a, aperture: [head[0], head[1] - TRACTOR_HORN_DROP, head[2]] };
 }
 
 const HALF_PI = Math.PI * 0.5;
+
+/**
+ * A SPAR IN THE HULL'S SECTION, from widths alone; identical construction and
+ * identical reasoning to `bow.js#spar` and `engine.js#spar`. Depth follows the beam at
+ * a fixed 1.72 : 1, so a spar built through here cannot violate M-F4 whatever length
+ * it is given - and M-F4 is an assertion inside `massLoft`, i.e. a red gate rather
+ * than a bad picture.
+ */
+const SPAR_DEPTH = 0.58;
+const spar = (len, w0, w1, mid = 0.46) => {
+  const wm = (w0 + w1) * 0.52;
+  const row = (z, w, k, df, fl) => [z, w, w * SPAR_DEPTH, -w * SPAR_DEPTH, k, df, fl];
+  return [row(0, w0, 0.44, 0.48, 0.92), row(len * mid, wm, 0.44, 0.48, 0.92), row(len, w1, 0.42, 0.46, 0.96)];
+};
 
 const oct = (hw, top, bot, cw, ct, cb) => G.octProfile(hw, top, bot, cw, ct, cb);
 
@@ -279,32 +295,61 @@ registerModule({
  * as a bulge. Nothing about it is symmetrical, because nothing the derelicts built
  * is.
  */
+/**
+ * THE YOKE'S STATIONS, `[z, half, top, bottom, knuckle, deckFlat, flare]`, running
+ * fore-and-aft under the cradle where a `pipeRun` drum 124 m across with two ends
+ * square to +-Y used to sit. Beam : depth 1.71-1.76 against M-F4's 1.6.
+ *
+ * The drum was the reason this module read as somebody else's part even though it is
+ * MEANT to: a derelict tractor is salvage, but salvage on this ship is still cut from
+ * plate by people with one torch, and the yoke is what says so.
+ */
+const TRACTOR_YOKE = [
+  [-96, 54, 6, -56, 0.42, 0.46, 0.94],
+  [-32, 72, 14, -68, 0.45, 0.49, 0.90],
+  [30, 70, 12, -66, 0.45, 0.49, 0.90],
+  [92, 50, 2, -54, 0.40, 0.44, 0.96],
+];
+
 function buildSalvageTractor(ctx) {
   const b = new ModuleBuilder(ctx, 'derelict');
   const D = b.detail, full = b.full;
 
-  b.add('hull', G.pipeRun({ length: 88, radius: 62, sides: 6, axis: 'y', flanges: 0, detail: D }),
-    { pos: [0, -88, 0] });
+  b.add('hull', massLoft(TRACTOR_YOKE, { detail: D, label: 'tractor yoke' }));
+  // M-F5: two frames, 92 m apart and neither at the centre of length.
+  b.add('plating', massFrames(TRACTOR_YOKE, [-58, 34], { detail: D }));
+  // M-F6: one plate a side, below the yoke's own knuckle, on `dark`.
+  b.add('dark', massStrake(TRACTOR_YOKE, {
+    z0: -80, z1: 60, side: -1, facet: [2, 1], t0: 0.12, t1: 0.66, drift: 0.16, out: 5, detail: D,
+  }));
   b.graft([0, 0, 0], [HALF_PI, 0, 0], 44);
 
   // Three arms, splayed down and out, none the same length and none at a third of
-  // a circle. Every tip clears the hull envelope by more than 100 m.
+  // a circle. Every tip clears the hull envelope by more than 100 m. They are SPARS
+  // now - flat blades with a knuckle down each edge, rolled so the flat faces the
+  // way the arm reaches - where they were six-sided tubes.
   for (const arm of TRACTOR_ARMS) {
-    const { dir, root, head, aperture } = tractorArm(arm);
-    b.add('hull', aimed(
-      G.hexStrut({ length: arm.len, radius: 16, radiusEnd: 11, axis: 'z', detail: D }),
-      dir, root,
-    ));
-    // Emitter horn: a short bell flaring downward off the end of the arm.
-    b.add('plating', aimed(
-      G.hexStrut({ length: 58, radius: 20, radiusEnd: 36, axis: 'z', detail: D }),
-      [0, -1, 0], head,
-    ));
-    b.glow(aperture, 32, [HALF_PI, 0, 0]);
+    const { dir, root, head, aperture, roll } = tractorArm(arm);
+    b.add('hull', aimed(G.place(
+      massLoft(spar(arm.len, 19, 13), { detail: D, label: 'tractor arm' }), { rot: [0, 0, roll] },
+    ), dir, root));
+    // Emitter horn: a lofted bell flaring downward off the end of the arm, with the
+    // aperture CUT INTO its mouth rather than a glow disc stuck on the front (M-F7).
+    b.add('plating', aimed(massLoft([
+      [0, 22, 13, -13, 0.44, 0.48, 0.92],
+      [34, 34, 20, -20, 0.46, 0.50, 0.88],
+      [58, 40, 23, -23, 0.44, 0.48, 0.92],
+    ], { detail: D, label: 'tractor horn', keep: full ? null : G.FACET_LOD.far }), [0, -1, 0], head));
+    b.add('dark', aimed(throat({ width: 62, height: 40, depth: 46, detail: D }), [0, -1, 0], aperture));
+    b.glow([aperture[0], aperture[1] + 14, aperture[2]], 28, [HALF_PI, 0, 0]);
   }
 
   if (full) {
-    // Cable spools on the drum, at unrelated angles.
+    // M-F7: the cable spools sit IN a cut in the yoke's flank, not on it. A 20 m
+    // recess self-shadows; two drums stuck on a proud face do not, under any key.
+    b.add('dark', massRecess(TRACTOR_YOKE, {
+      z: -20, side: 1, facet: [2, 3], t: 0.44, width: 68, height: 28, depth: 20, wall: 4, detail: D,
+    }));
     for (const a of [0.8, 3.5]) {
       b.add('greeble', G.pipeRun({ length: 44, radius: 18, sides: 6, axis: 'x', flanges: 1, detail: D }),
         { pos: [Math.cos(a) * 58 - 22, -56, Math.sin(a) * 58] });
@@ -583,30 +628,62 @@ registerModule({
  * fielding anything at all. It reads as a SEA MINE, which nothing else in the
  * library does.
  */
+/**
+ * THE FOUNDRY DRUM, authored along +Z and aimed straight down so its `half` column
+ * reads athwartships. It occupies exactly the y the `pipeRun` did - z = 0 here lands
+ * at world y -130 and z = 156 at -286 - so the tubes, the neck and the light run all
+ * still meet it.
+ *
+ * IT IS A LENS, NOT A CAN, and M-F4 is why. A `pipeRun` drum is 236 across by 236
+ * fore-aft: beam : depth 1.0, against a rule that wants 1.6, so `massLoft` refuses to
+ * build it. At 236 x 136 the module keeps its whole read - from underneath, which is
+ * the view a ventral fit is chosen in, it is still a 236 m disc slung under the keel
+ * with tubes coming out of its rim - and loses the two flat caps square to +-Y and
+ * the constant section between them. It is also flatter, which is the brief.
+ */
+const FOUNDRY_DRUM = [
+  [0, 90, 52, -52, 0.42, 0.46, 0.94],
+  [46, 118, 68, -68, 0.46, 0.50, 0.88],
+  [110, 118, 68, -68, 0.46, 0.50, 0.88],
+  [156, 84, 49, -49, 0.40, 0.44, 0.96],
+];
+
 function buildDroneBay(ctx) {
   const b = new ModuleBuilder(ctx, 'derelict');
   const D = b.detail, full = b.full;
 
   b.graft([0, 0, 0], [HALF_PI, 0, 0], 46);
-  // Neck through the cradle, then the drum a long way below it.
-  b.add('hull', G.hexStrut({ length: 128, radius: 56, radiusEnd: 86, axis: 'y', detail: D }),
-    { pos: [0, -128, 0], rot: [Math.PI, 0, 0] });
-  b.add('hull', G.pipeRun({ length: 156, radius: 118, sides: 8, axis: 'y', flanges: 0, detail: D }),
-    { pos: [0, -286, 0], rot: [0.05, 0, 0.04] });
+  // Neck through the cradle, then the drum a long way below it. The neck is a spar
+  // flaring downward, where it was a `hexStrut` - a six-sided tube.
+  b.add('hull', aimed(massLoft(spar(128, 58, 90), { detail: D, label: 'foundry neck' }),
+    [0, -1, 0], [0, -128, 0]));
+  b.add('hull', G.place(aimed(massLoft(FOUNDRY_DRUM, { detail: D, label: 'foundry drum' }),
+    [0, -1, 0], [0, -130, 0]), { rot: [0.05, 0, 0.04] }));
 
-  // Six tubes around the rim. Angles are uneven and two of them are longer.
+  // Six tubes around the rim. Angles are uneven and two of them are longer, and each
+  // is a flat spar rolled tangential to the rim rather than a round tube.
+  //
+  // THE ROOTS FOLLOW THE RIM, WHICH IS AN ELLIPSE. All six were struck from a circle
+  // of radius 104, which is inside a 118 m circular drum at every bearing and inside a
+  // 118 x 68 lens only near the beam: at a = 1.0 the root landed at z = 87 against a
+  // section 68 deep, so four of the six tubes started in vacuum and
+  // `tools/silhouette.mjs` found the pair of them as a 76 m detached fragment in the
+  // side view on the first run after the drum changed. Struck from the lens's own
+  // semi-axes instead, every root is buried whatever the drum's proportions become.
+  const rootAt = (ca, sa) => [ca * 108, -204, sa * 60];
   const tubes = full
     ? [[0.0, 120], [1.0, 164], [2.15, 120], [3.05, 120], [4.25, 170], [5.35, 120]]
     : [[0.0, 120], [2.15, 120], [4.25, 170]];
   for (const [a, len] of tubes) {
     const ca = Math.cos(a), sa = Math.sin(a);
     const dir = [ca, -0.16, sa];
-    const k = len / Math.hypot(ca, 0.42, sa);
-    b.add('plating', aimed(
-      G.hexStrut({ length: len, radius: 22, radiusEnd: 17, axis: 'z', caps: false, detail: D }),
-      dir, [ca * 104, -204, sa * 104],
-    ));
-    b.glowDir([ca * (104 + k * 1.02), -204 - 0.16 * k * 1.02, sa * (104 + k * 1.02)], 19, dir);
+    const root = rootAt(ca, sa);
+    const k = (len * 1.02) / Math.hypot(ca, 0.16, sa);
+    b.add('plating', aimed(G.place(
+      massLoft(spar(len, 24, 18), { detail: D, label: 'launch tube', keep: G.FACET_LOD.far }),
+      { rot: [0, 0, -a] },
+    ), dir, root));
+    b.glowDir([root[0] + ca * k, root[1] - 0.16 * k, root[2] + sa * k], 19, dir);
   }
 
   if (full) {
@@ -622,7 +699,12 @@ function buildDroneBay(ctx) {
       [62, -146, 22], [34, -4, 12]));
   }
 
-  b.lightRun([0, -352, 96], [0, -352, -96], [0, -0.6, 1], { max: 6 });
+  // Lights ON the drum's underside. They ran at y -352 z +-96, which is 66 m below
+  // the bottom of a drum that has always ended at -286 and, since the lens, outside
+  // it fore-and-aft as well: six emissive quads floating under the module in clear
+  // space. `outlineSignatures` counts them, so they were also six quads of this
+  // module's measured outline that no geometry was holding up.
+  b.lightRun([0, -292, 54], [0, -292, -54], [0, -1, 0.2], { max: 6 });
 
   return b.finish('ventral_drone_bay');
 }
