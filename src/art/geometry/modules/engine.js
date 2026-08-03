@@ -37,13 +37,36 @@
 
 import { registerModule } from '../../../core/contracts.js';
 import * as G from '../greeble.js';
-import { ModuleBuilder, MODULE_TRI_BUDGET, ringBand, aimed } from './kit.js';
+import {
+  ModuleBuilder, MODULE_TRI_BUDGET, ringBand, aimed,
+  massLoft, massFrames, massStrake,
+} from './kit.js';
 
 const HALF_PI = Math.PI * 0.5;
 /** Faces a +Z-authored disc or collar aft. */
 const AFT = [0, Math.PI, 0];
+/** Sends a +Z-authored mass across the ship, to starboard. */
+const ATHWART = [0, HALF_PI, 0];
 /** The well's clear section, minus a metre of rattle room. */
 const WELL = G.octProfile(51, 34, -34, 17, 10, 10);
+
+/**
+ * A SPAR IN THE HULL'S SECTION, authored from widths alone. Same construction and the
+ * same reasoning as `bow.js#spar`: the depth follows from the beam at a fixed 1.72 : 1,
+ * so a spar built through here cannot violate M-F4 whatever length it is given, and a
+ * module that would violate it fails `massLoft`'s assertion at BUILD time - i.e. as a
+ * red gate, in a stream with no browser open, rather than as a bad picture.
+ *
+ * Every pylon, spindle and beam in this file was a `hexStrut` or a `panelledSlab`: a
+ * six-sided tube or a rectangular prism, which are the two things `kit.js`'s census
+ * found forty-six and forty-one of and zero uses of the hull's own shape-makers beside.
+ */
+const SPAR_DEPTH = 0.58;
+const spar = (len, w0, w1, mid = 0.46) => {
+  const wm = (w0 + w1) * 0.52;
+  const row = (z, w, k, df, fl) => [z, w, w * SPAR_DEPTH, -w * SPAR_DEPTH, k, df, fl];
+  return [row(0, w0, 0.44, 0.48, 0.92), row(len * mid, wm, 0.44, 0.48, 0.92), row(len, w1, 0.42, 0.46, 0.96)];
+};
 
 // ---------------------------------------------------------------------------
 // T1 — Coalition Thruster Upgrade        THE BAR
@@ -59,6 +82,19 @@ const WELL = G.octProfile(51, 34, -34, 17, 10, 10);
  * centreline and starboard. That bar is 660 m across on a hull whose own stern is
  * 396 m across, so the module is the outline rather than a swelling on it.
  */
+/**
+ * THE BEAM'S STATIONS, `[z, half, top, bottom, knuckle, deckFlat, flare]`, authored
+ * along +Z and swung athwartships by `ATHWART`. Beam : depth 1.72-1.74 against M-F4's
+ * 1.6 - and it tapers to BOTH ends, which is what a transverse beam does and what
+ * `spar()` (one taper) cannot express.
+ */
+const DRIVE_BEAM = [
+  [-310, 40, 23, -23, 0.42, 0.46, 0.94],
+  [-96, 50, 29, -29, 0.45, 0.49, 0.90],
+  [120, 50, 29, -29, 0.45, 0.49, 0.90],
+  [310, 42, 24, -24, 0.40, 0.44, 0.96],
+];
+
 function buildThrusterUpgrade(ctx) {
   const b = new ModuleBuilder(ctx, 'coalition');
   const D = b.detail, full = b.full;
@@ -75,8 +111,21 @@ function buildThrusterUpgrade(ctx) {
 
   // THE BEAM. One transverse spar carrying everything outboard, dropped below the
   // axis so the cluster is a bar under the stern rather than a ring around it.
-  b.add('hull', G.panelledSlab({ width: 620, height: 54, depth: 96, chamfer: 14, detail: D }),
-    { pos: [0, -104, -132] });
+  //
+  // Authored along +Z and swung athwartships, exactly as `broadside.js` swings the
+  // beam array's fairing, so its `half` column reads fore-aft. It was a 620 x 54 x 96
+  // `panelledSlab` - and this one mass is about a third of what the astern view of
+  // this module IS, so it was also about a third of why the bar read as scaffolding
+  // beside a hull built from twelve-point plate.
+  b.add('hull', G.place(massLoft(DRIVE_BEAM, { detail: D, label: 'drive beam' }),
+    { pos: [0, -104, -132], rot: ATHWART }));
+  // M-F5: two frames, 216 m apart on a 620 m spar and neither at its centre.
+  b.add('plating', G.place(massFrames(DRIVE_BEAM, [-214, 2], { detail: D }),
+    { pos: [0, -104, -132], rot: ATHWART }));
+  // M-F6: one plate along the beam's forward face, below its own knuckle, on `dark`.
+  b.add('dark', G.place(massStrake(DRIVE_BEAM, {
+    z0: -280, z1: 240, side: -1, facet: [2, 1], t0: 0.12, t1: 0.64, drift: 0.14, out: 5, detail: D,
+  }), { pos: [0, -104, -132], rot: ATHWART }));
 
   // THREE outrigger bells, not four. Two to port and one to starboard, all
   // different sizes and all at different depths: a row of four matched circles is
@@ -97,8 +146,14 @@ function buildThrusterUpgrade(ctx) {
     // Derived from the spar's own underside so it cannot drift again.
     const top = -128;                                   // 3 m inside the spar
     const h = Math.max(p.r * 1.8, top - (p.y - p.r * 0.9));
-    b.add('hull', G.panelledSlab({ width: p.r * 2.1, height: h, depth: 66, detail: D }),
-      { pos: [p.x, top - h * 0.5, -150] });
+    // A drafted, canted `bevelBox` rather than a `panelledSlab`: for the same 32
+    // triangles all four of its long faces come off their axes, which is M-F1's beam
+    // clause and the same substitution `broadside.js` made on the casemate's outer
+    // face. Each bracket leans the way its pod hangs.
+    b.add('hull', G.bevelBox({
+      width: p.r * 2.1, height: h, depth: 66, chamfer: 8, draft: 7,
+      cant: p.x < 0 ? 0.12 : -0.10, rake: p.x < 0 ? -9 : 7, detail: D,
+    }), { pos: [p.x, top - h * 0.5, -150] });
     b.add('greeble', G.thrusterBell({
       throat: p.r * 0.62, mouth: p.r, length: p.len, sides: 6, collar: false, inner: false, detail: D,
     }), { pos: [p.x, p.y, -182] });
@@ -148,6 +203,18 @@ registerModule({
  * The four spans are also unequal - 246 / 218 / 246 / 196 - because a Concord hull
  * is clean, not machined.
  */
+/**
+ * THE CORE'S STATIONS, aft face first: `pipeRun` runs 0..length from its origin, so
+ * this mass occupies exactly the z the drum did, -244 (aft, where the glow is) to -76
+ * (the well mouth). Beam : depth 1.71-1.74.
+ */
+const FUSION_CORE = [
+  [-244, 52, 30, -30, 0.40, 0.44, 0.96],
+  [-196, 68, 39, -39, 0.44, 0.48, 0.92],
+  [-134, 70, 41, -41, 0.46, 0.50, 0.88],
+  [-76, 60, 35, -35, 0.42, 0.46, 0.94],
+];
+
 function buildReactorUprate(ctx) {
   const b = new ModuleBuilder(ctx, 'concord');
   const D = b.detail, full = b.full;
@@ -155,9 +222,21 @@ function buildReactorUprate(ctx) {
   b.add('hull', G.prism(WELL, -70, -2, { capFront: true, capBack: false }), null);
   b.graft([0, 0, -6], AFT, 44);
 
-  // The core: a big faceted drum protruding a long way aft, so the X has a hub.
-  b.add('hull', G.pipeRun({ length: 168, radius: 58, sides: 8, axis: 'z', flanges: 0, detail: D }),
-    { pos: [0, 0, -244] });
+  // The core, protruding a long way aft so the X has a hub.
+  //
+  // It was a `pipeRun` - an eight-sided TUBE 116 m in diameter with two flat ends
+  // square to +-Z. The hub of the X is the one part of this module a player looks at
+  // when the four radiators have told them what it is, and it was the roundest object
+  // on the stern. In the hull's section it is 140 x 82 rather than 116 round: M-F4
+  // wants beam : depth >= 1.6 and a drum is 1.0, so the core had to lie down to get
+  // here. It reads better lying down - the X's arms are what carry the height.
+  b.add('hull', massLoft(FUSION_CORE, { detail: D, label: 'fusion core' }));
+  // M-F5: two frames on the core, 94 m apart, neither at its centre of length.
+  b.add('plating', massFrames(FUSION_CORE, [-212, -118], { detail: D }));
+  // M-F6: Concord's one long plate, on the starboard flank below the core's knuckle.
+  b.add('dark', massStrake(FUSION_CORE, {
+    z0: -228, z1: -92, side: 1, facet: [2, 1], t0: 0.14, t1: 0.70, drift: -0.10, out: 5, detail: D,
+  }));
   b.add('plating', G.hexStrut({ length: 46, radius: 64, radiusEnd: 50, axis: 'z', detail: D }),
     { pos: [0, 0, -74], rot: AFT });
   b.glow([0, 0, -252], 52, AFT);
@@ -219,9 +298,9 @@ function buildJumpDrive(ctx) {
   b.add('hull', G.prism(WELL, -66, -2, { capFront: true, capBack: false }), null);
   b.graft([0, 0, -6], AFT, 44);
 
-  // Central spindle out to the ring plane.
-  b.add('hull', G.hexStrut({ length: 190, radius: 32, radiusEnd: 19, axis: 'z', detail: D }),
-    { pos: [0, 0, -70], rot: AFT });
+  // Central spindle out to the ring plane, as a spar rather than a six-sided tube.
+  b.add('hull', aimed(massLoft(spar(190, 34, 20), { detail: D, label: 'jump spindle' }),
+    [0, 0, -1], [0, 0, -70]));
 
   // The ring. A real band with a hole through it - you can see stars inside it.
   b.add('plating', ringBand({ outer: 320, inner: 262, z0: -26, z1: 26, sides: 8, detail: D }),
@@ -233,13 +312,18 @@ function buildJumpDrive(ctx) {
     const a = pylons[i];
     const ca = Math.cos(a), sa = Math.sin(a);
     const r = 288;
-    b.add('hull', aimed(
-      G.hexStrut({ length: 316 + i * 12, radius: 15, radiusEnd: 10, axis: 'z', detail: D }),
-      [ca * 0.94, sa * 0.94, -1], [ca * 26, sa * 26, -66],
-    ));
+    // The pylons are SPARS, rolled tangential so each presents a flat plate from the
+    // beam and stays edge-on-ish from astern - the astern read is a CIRCLE with
+    // nothing in it, and three broad blades across it would close the hole this
+    // module's whole silhouette tag set is built on.
+    b.add('hull', aimed(G.place(
+      massLoft(spar(316 + i * 12, 17, 11), { detail: D, label: 'jump pylon' }),
+      { rot: [0, 0, a + HALF_PI] },
+    ), [ca * 0.94, sa * 0.94, -1], [ca * 26, sa * 26, -66]));
     // Field emitter where the pylon meets the ring.
-    b.add('greeble', G.panelledSlab({ width: 40, height: 40, depth: 44, detail: D }),
-      { pos: [ca * r, sa * r, -276] });
+    b.add('greeble', G.bevelBox({
+      width: 40, height: 40, depth: 44, chamfer: 8, draft: 6, cant: a, detail: D,
+    }), { pos: [ca * r, sa * r, -276] });
     b.glowDir([ca * (r - 34), sa * (r - 34), -276], 38, [-ca, -sa, 0]);
   }
 
@@ -260,8 +344,8 @@ function buildJumpDrive(ctx) {
     for (let i = 0; i < steps; i++) {
       const a = a0 + (arc * i) / (steps - 1 || 1);
       const ca = Math.cos(a), sa = Math.sin(a);
-      b.add('hull', G.panelledSlab({
-        width: thick, height: 62 - i * 8, depth, detail: D,
+      b.add('hull', G.bevelBox({
+        width: thick, height: 62 - i * 8, depth, chamfer: 5, draft: 5, rake: 8 - i * 6, detail: D,
       }), { pos: [ca * (291 + thick * 0.4), sa * (291 + thick * 0.4), -276], rot: [0, 0, a] });
     }
   }
@@ -351,11 +435,23 @@ function buildArmourBelt(ctx) {
 
   // THE SKIRTS. Two armour runs sweeping forward along the flanks, standing proud
   // of the hull. This is the part the old module did not have.
+  //
+  // AND THEY ARE THE PART THAT GETS THE HULL'S EDGE TREATMENT, not the plate. The
+  // transom stays a `rectProfile` loft on purpose - see the header: it is the only
+  // orthogonal shape in the library and that is the whole separation from the other
+  // three engine fits, so lofting it into the twelve-point section would be spending
+  // this module's identity to satisfy a rule about masses. The skirts are a different
+  // argument: they run 300 m FORWARD along the ship's own flanks, so they are read
+  // beside the hull's plating rather than against sky, and a bare rectangular bar
+  // lying on a twelve-point flank is exactly the mismatch this wave is about. Eight
+  // chamfers a station, for the eight triangles `octProfile` costs over `rectProfile`.
   for (const s of [-1, 1]) {
+    const skirt = (hw, top, dx, dy) => G.octProfile(hw, top, -top, hw * 0.42, top * 0.13, top * 0.13)
+      .map(([x, y]) => [x + dx, y + dy]);
     b.add('plating', G.loft([
-      { z: -120, points: G.rectProfile(46, 300, s * 236, -20) },
-      { z: 40, points: G.rectProfile(38, 250, s * 214, -14) },
-      { z: 190, points: G.rectProfile(30, 170, s * 186, -6) },
+      { z: -120, points: skirt(23, 150, s * 236, -20) },
+      { z: 40, points: skirt(19, 125, s * 214, -14) },
+      { z: 190, points: skirt(15, 85, s * 186, -6) },
     ], { capFront: true, capBack: true }), null);
     if (full) {
       b.add('plating', G.armourBelt({
@@ -363,10 +459,14 @@ function buildArmourBelt(ctx) {
       }), { pos: [s * 248, -20, 30] });
     }
   }
-  // And a cap plate across the top and bottom of the block, squaring it off.
+  // And a cap plate across the top and bottom of the block, squaring it off. Drafted
+  // and raked rather than a bare prism: the plate's job is to square off the transom
+  // in the ASTERN view, and a draft on its fore-and-aft ends does not touch that
+  // outline while giving the two faces the side view sees a real angle to catch.
   for (const s of [-1, 1]) {
-    b.add('plating', G.panelledSlab({ width: 430, height: 30, depth: 210, chamfer: 0, detail: D }),
-      { pos: [0, s * 186, 10] });
+    b.add('plating', G.bevelBox({
+      width: 430, height: 30, depth: 210, chamfer: 7, draft: 6, rake: s * 8, detail: D,
+    }), { pos: [0, s * 186, 10] });
   }
 
   if (full) {
@@ -375,8 +475,9 @@ function buildArmourBelt(ctx) {
     // object as the derelict flak cluster at two different sizes.
     for (const sx of [-1, 1]) {
       for (const sy of [-1, 1]) {
-        b.add('hull', G.panelledSlab({ width: 62, height: 62, depth: 40, detail: D }),
-          { pos: [sx * 226, sy * 178, -140] });
+        b.add('hull', G.bevelBox({
+          width: 62, height: 62, depth: 40, chamfer: 10, draft: 7, detail: D,
+        }), { pos: [sx * 226, sy * 178, -140] });
       }
     }
   }
