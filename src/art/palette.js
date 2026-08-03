@@ -425,55 +425,8 @@ export const FACTION_PALETTES = {
     name: 'Derelict',
     blurb: 'Ancient. Nothing about the panel layout was decided by a person.',
 
-    /**
-     * =====================================================================
-     * THIS FACTION'S DARKNESS WAS IN A NOISE MASK AND IS NOW IN ITS PAINT
-     * =====================================================================
-     * `base` and `baseAlt` are scaled by 0.82 in sRGB, which is a scale by 0.82^2.2
-     * in linear and therefore an EXACT hold of chromaticity — the R:G:B ratio, the
-     * hue and the saturation are unchanged to a byte, and only the value moves.
-     * The derelict is still the same bronze it always was.
-     *
-     *   base      0x836b3c -> 0x6b5831   Y 0.1567 -> 0.1033   R/G 1.224 -> 1.216
-     *   baseAlt   0x6b5730 -> 0x584727   Y 0.1016 -> 0.0673   R/G 1.230 -> 1.239
-     *
-     * WHY, and it is not a taste call. Measured with `node tools/matsurface.mjs`
-     * on the tree BEFORE this pass, with the pitting layer alone switched off, this
-     * faction's armour tier read Y 0.1251 against the PLAYER hull's 0.1332 — a
-     * tenth of a stop apart. The paint on the ancient hulk was as bright as the
-     * paint on the ship you fly. Every bit of "ancient" was coming from the pitting
-     * layer, which `textures/wear.js` has now been shown to have been drawing at
-     * 4.45 m per pit: an alternation, not a colour. So the faction's identity lived
-     * entirely in a high-frequency mask, and a high-frequency mask is the one thing
-     * that does not survive a mip chain, an LOD, or a 40 m bolt-on at two
-     * kilometres.
-     *
-     * That is the same argument this file already makes for the player's own tiers
-     * — "a VALUE split that survives to LOD2, instead of a texture difference that
-     * dies with the first mip" — applied to the faction that needed it most.
-     *
-     * THE RENDERED VALUE IS HELD, WHICH IS THE POINT. 0.82 is not chosen for taste;
-     * it is solved so the tier's generated albedo mean lands back where it was
-     * before the pitting fix, on both of the two argument sets anything in the game
-     * asks for. Measured, same seed, same operator:
-     *
-     *   material                            before pit fix   after, base x0.82
-     *   derelictHull wear .85 tier 2         Y 0.0621          Y 0.0600
-     *     (what modules/kit.js asks for)
-     *   derelictHull wear 1.0 tier 1         Y 0.0562          Y 0.0577
-     *     (what ships/derelict.js:1386 asks for, the drifting debris)
-     *
-     * Both within 0.05 stops. Nothing in the frame gets brighter or darker; the
-     * mechanism by which this faction is dark moved from noise into paint. What DID
-     * change is the surface: the same tier went from 2.1% calm to 100% calm and its
-     * frequency from 0.0592 to 0.0218 on the operator in tools/surface.mjs.
-     *
-     * NO KEY SOLVE DEPENDS ON THIS. The six POI intensities this file keeps warning
-     * about are solved against `player.base`'s linear Y and are named in the player
-     * block; no lighting number anywhere is solved against a derelict albedo.
-     */
-    base: 0x6b5831,
-    baseAlt: 0x584727,
+    base: 0x836b3c,
+    baseAlt: 0x6b5730,
     // Near-black, same correction as the other three: 0x332c1e was Y = 0.0294 and
     // read as a mid brown against a 0.18 hull. 0x221c11 is Y = 0.0128.
     baseDark: 0x221c11,
