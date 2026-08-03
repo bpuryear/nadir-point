@@ -39,6 +39,14 @@ for (let v = 0; v < 256; v++) {
   SRGB_TO_LINEAR[v] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
 }
 
+/**
+ * Corrosion band multipliers — the range `busyField` maps the pit layer onto. See
+ * the note at the banding loop: this SPANS 1.0 rather than sitting under it, so
+ * banding redistributes corrosion instead of deleting it.
+ */
+const PIT_BAND_MIN = 0.68;
+const PIT_BAND_MAX = 3.40;
+
 export const HULL_MAP_DEFAULTS = {
   size: 512,
   variant: 'hull',
@@ -686,15 +694,62 @@ export function hullMaps(opts = {}) {
     streak: pal.wear.streak,
     grime: pal.wear.grime,
     pit: o.variant === 'derelictHull' ? pal.wear.pit : pal.wear.pit * 0.35,
+    /**
+     * THE TILE'S SIZE IN METRES, so `wear.js` can state a corrosion pit as a LENGTH
+     * rather than as a fraction of whatever tier is asking. Everything else in this
+     * generator already converts through `tileM`; the pit field was the one that did
+     * not, and on this variant's 115.6 m tile it was drawing 4.4 m pits. The whole
+     * measurement is in the block above `WEAR_DEFAULTS`.
+     */
+    tileM,
   });
-  // Streaks and grime are also part of the detail budget, so they live in the same
-  // bands as the greeble rather than covering the whole hull evenly. Edge wear is
-  // NOT gated: it is caused by the plate layout and it has to follow it everywhere,
-  // or plate edges stop reading as plate edges.
+  /**
+   * Streaks, grime AND CORROSION are part of the detail budget, so they live in the
+   * same bands as the greeble rather than covering the whole hull evenly. Edge wear
+   * is NOT gated: it is caused by the plate layout and it has to follow it
+   * everywhere, or plate edges stop reading as plate edges.
+   *
+   * PITTING WAS NOT BANDED AND IS NOW, and it is the one layer the field was most
+   * needed on. `busyField` exists to buy a calm reserve — §3's "it is the calm 60%
+   * that makes the dense 10% worth looking at" — and it was being applied to the two
+   * layers that were already low-contrast while the one layer that lerps most of the
+   * way to a near-black went over every square metre unbanded. `derelictHull` was
+   * therefore the only hull surface in the game measuring 0% calm. Corrosion is
+   * caused by where water sat and where the coating failed, which is exactly what
+   * this low-frequency field stands in for, so the banding is physical as well as
+   * compositional.
+   *
+   * IT REDISTRIBUTES CORROSION RATHER THAN REMOVING IT, and that distinction is
+   * what the two constants buy. `PIT_BAND` spans 0.68 to 3.40 rather than 0 to 1,
+   * so a band where the coating held gets LESS corrosion and a band where it failed
+   * gets far more, instead of the whole surface simply getting less.
+   *
+   * BE CLEAR ABOUT WHAT THIS DOES AND DOES NOT FIX. The calm reserve is bought by
+   * the metre-scale change in `wear.js`, not here — with that in place every option
+   * below is already 100% calm. What banding decides is how much VALUE the tier
+   * keeps and how busy it still is inside the calm band. Measured with
+   * `node tools/matsurface.mjs`, derelictHull at the arguments modules/kit.js asks
+   * for, everything else on this tree held, by editing the two constants:
+   *
+   *   PIT_BAND_MIN .. MAX     meanY    calm%   meanTile
+   *   1.00 .. 1.00           0.0512    100.0     0.0279    no banding at all
+   *   0.20 .. 1.00           0.0769    100.0     0.0132    removes corrosion
+   *   0.50 .. 5.00           0.0655    100.0     0.0187
+   *   0.68 .. 3.40           0.0600    100.0     0.0218    <- shipped
+   *
+   * A range that sits entirely UNDER 1 hands back 0.30 stops of the tier's value —
+   * on the one faction whose entire identity is that it is old — and buys 0.0086 of
+   * frequency for it. A range that spans 1 keeps the value within 0.05 stops of
+   * where the palette put it and still takes 22% off the frequency. This is the same
+   * trade `greebleMap`'s density already makes two blocks above: "the same number of
+   * features end up in the frame, concentrated into bands instead of spread evenly,
+   * which is the difference between a vent run and noise".
+   */
   for (let i = 0; i < n; i++) {
     const g = 0.28 + 0.72 * busy[i];
     wr.streak[i] *= g;
     wr.grime[i] *= g;
+    wr.pit[i] = saturate01(wr.pit[i] * (PIT_BAND_MIN + (PIT_BAND_MAX - PIT_BAND_MIN) * busy[i]));
   }
 
   // --- albedo ---------------------------------------------------------------
@@ -817,6 +872,12 @@ export function hullMaps(opts = {}) {
   const PLATE_JITTER_V = 0.055;
   /** ...capped the same way, so the step never eats a dark tier's whole value. */
   const PLATE_JITTER_MAX_FRAC = 0.42;
+  /**
+   * How far a corrosion pit's floor sits between `pal.wear.oxide` (0) and the
+   * faction's declared near-black `baseDark` (1). See the note at the pit term.
+   * Under half, so the pit reads as oxide with shadow in it rather than as a hole.
+   */
+  const PIT_FLOOR_MIX = 0.45;
 
   const seamDropV = SEAM_DROP_V * spec.contrastMul;
   const jitterV = PLATE_JITTER_V * spec.contrastMul;
@@ -865,9 +926,31 @@ export function hullMaps(opts = {}) {
     const st = wr.streak[i];
     if (st > 0.01) { r = lerp(r, or_ * 0.55, st * 0.7); g = lerp(g, og_ * 0.55, st * 0.7); b = lerp(b, ob_ * 0.55, st * 0.7); }
 
-    // Corrosion pits eat through to dark substrate.
+    /**
+     * CORROSION IS EXPOSED OXIDE, NOT A HOLE TO SPACE.
+     *
+     * This lerped to `baseDark * 0.7`, i.e. to 70% of the darkest value the palette
+     * declares — a colour that exists nowhere in palette.js and sits BELOW the bottom
+     * of the three-value ladder that file spends four hundred words authoring. On
+     * derelict that target is sRGB (24, 20, 12), linear Y 0.0069, against a plate at
+     * 0.12: a four-stop hole, at full strength, over most of the surface. It is most
+     * of why the fitted module rendered p05 0.008 — actual black — while the hull it
+     * was bolted to rendered p05 0.146.
+     *
+     * `pal.wear.oxide` is the colour this file already lerps grime and streaks
+     * towards and it is what corrosion product actually looks like. Mixing it with
+     * the near-black keeps a pit DARK — a pit has shadow in it, that is what makes it
+     * read as a pit rather than as a stain — without going under the palette's floor.
+     * On derelict the target moves from Y 0.0069 to 0.0179, and the layer keeps every
+     * one of its physical side effects below: roughness +0.34, metalness -0.16 and a
+     * 0.30 indent in the height field, which are what sell it as eaten metal.
+     */
     const pt = wr.pit[i];
-    if (pt > 0.01) { r = lerp(r, dr * 0.7, pt); g = lerp(g, dg * 0.7, pt); b = lerp(b, db * 0.7, pt); }
+    if (pt > 0.01) {
+      r = lerp(r, lerp(or_, dr, PIT_FLOOR_MIX), pt);
+      g = lerp(g, lerp(og_, dg, PIT_FLOOR_MIX), pt);
+      b = lerp(b, lerp(ob_, db, PIT_FLOOR_MIX), pt);
+    }
 
     /**
      * THE SEAM, AS AN ABSOLUTE DROP IN VALUE, APPLIED LAST.
