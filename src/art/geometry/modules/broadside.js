@@ -216,6 +216,8 @@ registerModule({
     + 'nothing expensive, and it will still open a corvette at five kilometres.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 420,
+  // Measured root at the mount face 156 x 188 m; shells come out of the magazine.
+  fit: { footprintM: [156, 188], service: 'magazine' },
   build: buildCannonBank,
   // Four muzzles for four shots, stepping 28 m further outboard and 44 m further
   // forward each time — so the ripple visibly walks up the staircase.
@@ -321,6 +323,8 @@ registerModule({
     + 'donor ship needed to survive firing them. Hitscan, and it eats power.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 560,
+  // Measured root at the mount face 406 x 208 m; three beam emitters firing together are a coolant run.
+  fit: { footprintM: [406, 208], service: 'coolant' },
   build: buildBeamArray,
   // ONE muzzle, because `shotsPerBurst` is 1. This module is the reason the muzzle
   // list is data on the def rather than a count of glow discs on the built mesh: it
@@ -483,6 +487,8 @@ registerModule({
     + 'and it has never once been reloaded.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 380,
+  // Measured root at the mount face 336 x 258 m; flak cans come out of the magazine.
+  fit: { footprintM: [336, 258], service: 'magazine' },
   build: buildFlakCluster,
   // Six barrels, six shots, and the fan is why: each shot leaves from a different
   // point on a 190 degree spray, so a flak burst is visibly a spray and not six
@@ -607,6 +613,8 @@ registerModule({
     + 'two hundred metres to your beam on the side you fit it, and none of it is tall.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 1560,
+  // Measured root at the mount face 256 x 340 m; shells come out of the magazine.
+  fit: { footprintM: [256, 340], service: 'magazine' },
   build: buildBroadsideBattery,
   // Four muzzles: two turrets, twin barrels each, forward turret first. The forward
   // pair sits 38 m higher and 198 m further forward than the aft pair, which is what
@@ -709,6 +717,8 @@ registerModule({
     + 'and a hard horizontal line in the sky that no other fit produces.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 1240,
+  // Measured root at the mount face 130 x 268 m; railslugs come out of the magazine.
+  fit: { footprintM: [130, 268], service: 'magazine' },
   build: buildGaussOutrigger,
   // One shot, one muzzle, 210 m above the sponson deck. This is the highest muzzle
   // on any flank fit, so the flash is the one that reads against sky.

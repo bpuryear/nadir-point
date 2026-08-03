@@ -24,7 +24,7 @@
  * an empty list is the contract working, not a gap; use `broadsideModules()`.
  */
 
-import { allModules, modulesForHardpoint, HARDPOINTS } from '../../../core/contracts.js';
+import { allModules, modulesForHardpoint, HARDPOINTS, FIT_SERVICES } from '../../../core/contracts.js';
 import { countTriangles, MODULE_TRI_BUDGET, MODULE_LIGHT_SPACING_M } from './kit.js';
 
 import './bow.js';
@@ -32,6 +32,39 @@ import './dorsal.js';
 import './ventral.js';
 import './broadside.js';
 import './engine.js';
+
+// ---------------------------------------------------------------------------
+// THE LIBRARY IS COMPLETE, OR IT DOES NOT LOAD.
+//
+// `core/contracts.js#validateFit` throws on a MALFORMED `fit` and only warns on a
+// MISSING one, because `registerModule` runs at import time and `sim/selftest.mjs:70`
+// registers three synthetic fixtures - built from an empty `THREE.Group`, never seated
+// on a hull, with no geometry to have a root extent of. A blanket throw in the registry
+// fails gate 1 of `tools/gates.mjs` (the whole sim stream) and the fix would have to be
+// made in a file this stream does not own.
+//
+// The completeness rule belongs HERE instead, and it is stronger here, not weaker. This
+// file IS the library: importing it registers all twenty-four modules, and the game, the
+// probes, the refit screen and both audits all reach them through it. So a module added
+// to `bow.js` without a `fit` does not boot, does not probe and does not audit - it fails
+// at import, which is exactly what a hull that silently does not adapt is worth.
+//
+// The two registries provably do not overlap: `node -e "import('./src/sim/ship.js')"` and
+// then `allModules().length` prints 0. The sim stream never loads this library, and this
+// sweep runs at this file's own load time, before anything else can register.
+for (const def of modulesInMountOrder()) {
+  if (def.fit) continue;
+  throw new Error(
+    `[modules] "${def.id}" (${def.hardpoint}) declares no "fit", so the hull cannot adapt to `
+    + 'it: it would get the same apron, coaming, plate runs, chocks and service bearing as an '
+    + 'empty mount, whatever is standing in it. Add\n'
+    + '    fit: { footprintM: [across, alongShip], service },\n'
+    + 'next to `mass`. `footprintM` is the ROOT plan extent at the mount face in metres, not '
+    + 'the bounding box; `node src/art/geometry/modules/audit.mjs` measures it for you and '
+    + 'prints the number to put there. `service` is one of '
+    + `${FIT_SERVICES.join(' / ')}. See FitDecl in core/contracts.js.`,
+  );
+}
 
 export { MODULE_TRI_BUDGET, MODULE_LIGHT_SPACING_M };
 

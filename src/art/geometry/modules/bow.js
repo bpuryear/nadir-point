@@ -176,6 +176,8 @@ registerModule({
     + 'that reaches 250 m past your own stem. It fires where the ship is pointed and nowhere else.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 1180,
+  // Measured root at the mount face 134 x 200 m; an energy lance, so the trunk is power.
+  fit: { footprintM: [134, 200], service: 'reactor' },
   build: buildSiegeLance,
   // One shot, one aperture, 545 m forward of the mount and therefore 250 m past the
   // ship's own stem. The CHARGE archetype anchors its pre-fire VFX and audio here.
@@ -332,6 +334,8 @@ registerModule({
     + 'somebody in a hurry.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 860,
+  // Measured root at the mount face 154 x 130 m; the harpoon tubes are missile-fed.
+  fit: { footprintM: [154, 130], service: 'magazine' },
   build: buildBreachingProw,
   // Two harpoons, two tubes, port tube first. Both sit 104 m BELOW the mount plane,
   // which is the whole point of this module against the torpedo battery's stack.
@@ -531,6 +535,8 @@ registerModule({
     + 'The arms are not evenly spaced and nobody has ever worked out why.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 310,
+  // Measured root at the mount face 182 x 176 m; a continuous cutting beam is a heat problem before it is a power one.
+  fit: { footprintM: [182, 176], service: 'coolant' },
   build: buildMiningArray,
   // THREE apertures are drawn; ONE fires, because `shotsPerBurst` is 1 and the
   // muzzle list must match it. The firing head is the longest arm (320 m, the one
@@ -658,6 +664,8 @@ registerModule({
     + 'flank because there was nowhere else for it to go.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 940,
+  // Measured root at the mount face 184 x 210 m; torpedoes come out of the magazine.
+  fit: { footprintM: [184, 210], service: 'magazine' },
   build: buildTorpedoTubes,
   // Four tubes, four torpedoes, lowest step first. The four muzzles climb 234 m in
   // y and 102 m in z, so a full salvo walks visibly UP the staircase — the only
@@ -750,6 +758,8 @@ registerModule({
     + 'at range and makes your bow read as a needle from four kilometres out.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 180,
+  // Measured root at the mount face 122 x 90 m; an interferometry boom answers to the sensor array.
+  fit: { footprintM: [122, 90], service: 'sensor' },
   build: buildProwSpike,
   grants: { sensorRange: RANGE.sensorBase * 0.55 },
   silhouetteTags: ['needle', 'cruciform', 'axial', 'thin'],

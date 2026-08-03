@@ -183,6 +183,8 @@ registerModule({
     + 'limping on auxiliaries since you inherited it; this is the day that stops.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 720,
+  // Measured root at the mount face 138 x 102 m; a drive uprate is a heat-rejection problem.
+  fit: { footprintM: [138, 102], service: 'coolant' },
   build: buildThrusterUpgrade,
   grants: { thrust: 0.55, turnRate: 0.15 },
   silhouetteTags: ['bells', 'wide-bar', 'slung-low', 'engine'],
@@ -271,6 +273,8 @@ registerModule({
     + 'it needs to survive. From astern your ship becomes an X six hundred metres across.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 1180,
+  // Measured root at the mount face 132 x 98 m; it is reactor, and it plugs into the one already there.
+  fit: { footprintM: [132, 98], service: 'reactor' },
   build: buildReactorUprate,
   grants: { powerOutput: 46, thrust: 0.18 },
   silhouetteTags: ['cross', 'radiators', 'core', 'diagonal'],
@@ -381,6 +385,8 @@ registerModule({
     + 'It is wider than your ship and it takes you to systems the Coalition has no charts for.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 1900,
+  // Measured root at the mount face 132 x 98 m; powerOutput -24: the drive charges off the reactor.
+  fit: { footprintM: [132, 98], service: 'reactor' },
   build: buildJumpDrive,
   grants: { powerOutput: -24, thrust: 0.10, jumpRange: 3 },
   silhouetteTags: ['ring', 'circle', 'alien', 'see-through'],
@@ -503,6 +509,8 @@ registerModule({
     + 'at your stern gets through, and from astern you are a rectangle.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 1400,
+  // Measured root at the mount face 516 x 124 m; plate stock and the repair alloy for it both live in the hold.
+  fit: { footprintM: [516, 124], service: 'hold' },
   build: buildArmourBelt,
   grants: { armour: 3600, thrust: -0.12 },
   silhouetteTags: ['transom', 'rectangle', 'skirted', 'orthogonal'],

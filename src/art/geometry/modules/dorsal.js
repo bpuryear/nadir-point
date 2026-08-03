@@ -150,6 +150,8 @@ registerModule({
     + 'Four struts carry the recoil into your deck frames. You will feel every shot.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 1420,
+  // Measured root at the mount face 192 x 170 m; railslugs come out of the magazine.
+  fit: { footprintM: [192, 170], service: 'magazine' },
   build: buildRailBattery,
   // Two rails, two shots. This module already drew its two apertures in the right
   // places; the declaration makes them the SIM's numbers instead of the renderer's.
@@ -240,6 +242,8 @@ registerModule({
     + 'bolt on, it is made of glass, and it doubles the range you see contacts at.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 240,
+  // Measured root at the mount face 92 x 92 m; it IS the sensor array, extended.
+  fit: { footprintM: [92, 92], service: 'sensor' },
   build: buildSensorMast,
   grants: { sensorRange: RANGE.sensorBase * 1.0 },
   silhouetteTags: ['mast', 'dish', 'tall', 'thin'],
@@ -351,6 +355,8 @@ registerModule({
     + 'bolted where the donor ship had its port walkway.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 780,
+  // Measured root at the mount face 302 x 178 m; cells are reloaded from the magazine.
+  fit: { footprintM: [302, 178], service: 'magazine' },
   build: buildMissileCells,
   // Six cells, six missiles, one muzzle per cell at the mouth of its tube.
   muzzles: VLS_CELLS.map(([x, z]) => [x, VLS_CELL_Y + VLS_CELL_LEN, z]),
@@ -504,6 +510,8 @@ registerModule({
     + 'coverage; it will not hurt a frigate but nothing small gets through it.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 290,
+  // Measured root at the mount face 216 x 160 m; pd slugs, 900 of them, come out of the magazine.
+  fit: { footprintM: [216, 160], service: 'magazine' },
   build: buildPDRing,
   // Eight muzzles: four twin mounts. PD is locked to AUTO and is excluded from the
   // ripple, but it still needs per-barrel origins so its tracers leave the barrel
@@ -621,6 +629,8 @@ registerModule({
     + 'holds a barrier around your hull. Nobody in the Coalition can tell you how.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 640,
+  // Measured root at the mount face 114 x 122 m; powerOutput -12: the pylons are a reactor load and nothing else.
+  fit: { footprintM: [114, 122], service: 'reactor' },
   build: buildShieldPylons,
   grants: { shieldCapacity: 5200, powerOutput: -12 },
   silhouetteTags: ['tripod', 'floating-node', 'tall', 'alien'],

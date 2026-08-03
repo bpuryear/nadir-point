@@ -42,6 +42,97 @@ export const SCALE_CUE = {
   runningLightSpacingM: 40,
 };
 
+/**
+ * HULL ADAPTATION — the numbers the hull reads off a fitted module.
+ *
+ * `docs/design/cruiser-adaptation.md` §B.3: the module declares a NEED, never a shape,
+ * and it declares as little as possible so that twenty-four modules cannot become
+ * twenty-four dialects. Three inputs reach the hull's seat builder:
+ *
+ *   massClass    DERIVED from `ModuleDef.mass`, never declared. A module cannot lie
+ *                about its class without lying about its handling penalty, which the
+ *                player feels.
+ *   footprintM   declared, two numbers, `ModuleDef.fit.footprintM`
+ *   service      declared, one enum, `ModuleDef.fit.service`
+ *
+ * The derivations live in `core/contracts.js` (`massClassOf`, `footprintNorm`,
+ * `fitProfile`); only the constants are here, because this is the file that owns
+ * every number carrying a unit.
+ */
+export const FIT = {
+  /**
+   * Mass-class thresholds, tonnes. `mass < 450` is class 1, `< 1000` class 2, else 3.
+   *
+   * MEASURED, not chosen by feel. The library spans 180 t (`bow_prow_spike`) to 2400 t
+   * (`ventral_hangar_deck`), and these two cuts are the pair that fills all three bands
+   * on all four PAN mounts:
+   *
+   *   bow      180 310 | 860 940  | 1180              1 / 2 / 3   all three
+   *   dorsal   240 290 | 640 780  | 1420              1 / 2 / 3   all three
+   *   ventral  320 410 | 900      | 1050 2400         1 / 2 / 3   all three
+   *   port     380 420 | 560      | 1240 1560         1 / 2 / 3   all three
+   *   engine       --  | 720      | 1180 1400 1900    NO CLASS 1  see below
+   *
+   * Thresholds at 700/1500 leave bow and dorsal with no class-3 module at all, which
+   * would make the heaviest seat unreachable on two of six mounts.
+   *
+   * THE ENGINE MOUNT HAS NO CLASS-1 MODULE AND NO THRESHOLD PAIR CAN GIVE IT ONE: its
+   * lightest fit is 720 t and its heaviest is 1900 t, so any cut that puts 720 in class
+   * 1 puts 1180, 1400 and 1900 in classes 1-2 and empties class 3 everywhere else.
+   * `cruiser-adaptation.md` §B.3 asserts in prose that "every one of the five mount
+   * families populates all three bands" and then prints a table with the engine's class-1
+   * column empty; the table is right. It costs nothing: the drive well is a socket, not a
+   * pan (`cruiser.js#SEAT.engine` is `well: true`), so the mass-class ladder the apron and
+   * coaming ride on does not run there. `modules/audit.mjs` prints the coverage per mount
+   * and fails only if a PAN mount loses a band.
+   */
+  massClassT: [450, 1000],
+
+  /**
+   * Footprint quantum, metres. Declared footprints are rounded to this before they
+   * reach the seat builder, which is what makes at most ~90 distinct seats cacheable
+   * (§B.4). 8 m is under a pixel at the LOD1 switch.
+   */
+  footprintQuantumM: 8,
+
+  /** Sanity bounds on a declared footprint, metres. See contracts.js#validateFit. */
+  minFootprintM: 8,
+  maxFootprintM: 900,
+
+  /**
+   * FROZEN REFERENCE SPANS for `footprintNorm`, per mount, metres: how big a root is
+   * "small" and how big is "large" ON THIS MOUNT. `[min, max]` for [across, alongShip].
+   *
+   * WHY THIS IS A FROZEN CONSTANT AND NOT DERIVED FROM THE LIBRARY. The obvious
+   * implementation normalises each module against the min and max of the modules
+   * actually registered. That makes every seat on the ship a function of which OTHER
+   * modules exist: adding a twenty-fifth module would silently re-shape the seat under
+   * the other twenty-four, and the determinism test in §B.7 would start depending on
+   * import order. A frozen span is a pure function of (mount, footprint) and adding a
+   * module moves nothing. A module outside the span clamps to 0 or 1 and the audit says
+   * so rather than re-scaling everybody.
+   *
+   * The numbers bracket the measured library with a metre or two of air at each end:
+   *
+   *   bow      across 122-185   along  90-210
+   *   dorsal   across  92-302   along  92-178
+   *   ventral  across 132-264   along 102-820
+   *   port     across 131-406   along 188-340      starboard shares the port list
+   *   engine   across 132-516   along  98-124
+   *
+   * (`node src/art/geometry/modules/audit.mjs`, FIT DECLARATIONS section, prints the
+   * live spread against these bounds.)
+   */
+  footprintRefM: {
+    bow:       { across: [120, 190], along: [90, 210] },
+    dorsal:    { across: [90, 305], along: [90, 180] },
+    ventral:   { across: [130, 265], along: [100, 820] },
+    port:      { across: [130, 410], along: [185, 345] },
+    starboard: { across: [130, 410], along: [185, 345] },
+    engine:    { across: [130, 520], along: [95, 125] },
+  },
+};
+
 /** Engagement distances, metres. */
 export const RANGE = {
   pointDefence: 900,
@@ -115,6 +206,19 @@ export const BUDGET = {
   programs: 90,
   /** Player cruiser LOD0 core hull, running lights included. Measured: 5,241. */
   cruiserCoreTris: 9000,
+  /**
+   * Player cruiser LOD0 core hull WITH its adaptation geometry, over the worst-case
+   * fit — the six heaviest modules, not a sampled one. The modules' own triangles are
+   * not in this figure; `moduleTris` below is their ceiling.
+   *
+   * `cruiser-adaptation.md` §B.2's arithmetic: bare hull 7309 with lights, Part A's
+   * rake +0, its portal rings -20, its rail re-expression +400 authored at three
+   * stations, and adaptation's worst case +720 (six mounts x <=120: plates 56, chocks
+   * 32, fairing 32, apron/coaming/service 0) = ~8410 of 9000. This ceiling sits between
+   * the two so that the fitted hull has a budget of its own and cannot quietly eat the
+   * bare hull's 1691 triangles of headroom.
+   */
+  cruiserFittedTris: 8600,
   /** One fitted module at LOD0. */
   moduleTris: 1200,
   /** A strike craft, 18 m. Still the one class where triangles are worth counting. */

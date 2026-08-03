@@ -279,6 +279,8 @@ registerModule({
     + 'The ship grows a second body. You stop being one ship the day you fit this.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 2400,
+  // Measured root at the mount face 264 x 626 m; the deck opens into the bay it extends.
+  fit: { footprintM: [264, 626], service: 'hangar' },
   build: buildHangarDeck,
   grants: { hangarBays: 2, powerOutput: -18, thrust: -0.10, turnRate: -0.12 },
   silhouetteTags: ['deck', 'deep-belly', 'stacked', 'launch-throats', 'closed'],
@@ -372,6 +374,8 @@ registerModule({
     + 'different lengths and the field is stable anyway.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 320,
+  // Measured root at the mount face 132 x 150 m; what the beam pulls in goes to the hold.
+  fit: { footprintM: [132, 150], service: 'hold' },
   build: buildSalvageTractor,
   // THREE horns are drawn; ONE emits, because `shotsPerBurst` is 1. The firing horn
   // is the longest arm (336 m, the one that reaches forward), which is also the one
@@ -495,6 +499,8 @@ registerModule({
     + 'most of the keel, and you will notice all of it when you dock.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 410,
+  // Measured root at the mount face 204 x 820 m; it is hold, bolted outboard.
+  fit: { footprintM: [204, 820], service: 'hold' },
   build: buildCargoExpansion,
   grants: { cargo: 600, thrust: -0.05 },
   silhouetteTags: ['pods', 'slung', 'wide-yoke', 'mismatched', 'shallow'],
@@ -613,6 +619,8 @@ registerModule({
     + 'broadside-on, and you can watch it work through the gaps.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 900,
+  // Measured root at the mount face 166 x 796 m; a fabricator at powerOutput -8 is fed by the reactor.
+  fit: { footprintM: [166, 796], service: 'reactor' },
   build: buildRepairBay,
   grants: { repairRate: 26, powerOutput: -8 },
   silhouetteTags: ['open-cage', 'portal-frames', 'widest', 'see-through', 'longest'],
@@ -719,6 +727,8 @@ registerModule({
     + 'do not divide evenly into a circle. It builds its own drones out of whatever you feed it.',
   triBudget: MODULE_TRI_BUDGET,
   mass: 1050,
+  // Measured root at the mount face 138 x 102 m; drones launch and recover through the hangar.
+  fit: { footprintM: [138, 102], service: 'hangar' },
   build: buildDroneBay,
   grants: { hangarBays: 1, salvageRate: 0.15, powerOutput: -10 },
   silhouetteTags: ['drum', 'radial-tubes', 'mine', 'alien'],
