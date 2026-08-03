@@ -1254,7 +1254,17 @@ export class HUD {
 
     // The word has to be on the block. `COALITION 79/110` with no heading is a pair of
     // numbers, and a player who has never been told what they are cannot act on them.
-    P.label('ATTENTION', x, py + 14, { color: C.inkFaint });
+    const headW = P.label('ATTENTION', x, py + 14, { color: C.inkFaint }) - x;
+    // HOW MANY OF THEM ARE ALREADY OUT, on the heading's own empty right half so it
+    // costs no height. Once a response has launched this is the most urgent fact on the
+    // block and it is not per-faction urgent — two hulls bearing on you are two hulls
+    // whoever sent them. The SORTIE window attributes them.
+    let live = 0;
+    for (let n = 0; n < rows.length; n++) live += rows[n].inField;
+    if (live > 0) {
+      P.label(`${live} HOSTILE`, x + iw, py + 14,
+        { color: C.hostile, align: 'right', maxW: Math.max(24, iw - headW - 8) });
+    }
     P.hline(x, py + 19, iw, C.ruleDim);
 
     for (let n = 0; n < rows.length; n++) {
@@ -1264,9 +1274,11 @@ export class HUD {
       const fi = factionInk(r.faction);
       const hot = r.inField > 0;
       const warned = this.ui.warnedOf(r.faction);
-      // Three states, three colours, ordered by what the player has to do about them:
-      // something is already hunting you, you have been told it is coming, or the claim
-      // is merely accumulating.
+      // `C.warn` is rgb(255,74,42) and `C.hostile` rgb(255,68,51) — in THIS palette they
+      // are the same red and nothing on this block should pretend otherwise. The
+      // distinction the player can actually see is red against the salvage teal, which is
+      // "they have noticed" against "you are just cutting"; WHICH of the two reds it is
+      // is carried by the `n HOSTILE` count in the heading, not by the hue.
       const key = hot ? C.hostile : warned ? C.warn : C.ink;
 
       // Faction identity as a stripe, the way every other list in this interface carries

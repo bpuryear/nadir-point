@@ -93,9 +93,14 @@ const GATES = [
    * labelled `guard` because they did not separate and saying so is the point.
    *
    * `browser: true` because it launches Chromium, which is a fact about it and not a
-   * statement about its cost. Measured by this runner on a clean checkout, hardware
-   * raster: derelict 4.1 s, smoke 5.7 s, widediag 7.6 s, bench 10.3 s, uicheck 17.3 s.
-   * It is the CHEAPEST of the five, so it is placed first among them, and it is the one
+   * statement about its cost. Two consecutive runs of this runner on a clean checkout,
+   * hardware raster, on a machine several other agents were also using — which is why
+   * these are ranges and not points:
+   *
+   *   derelict 3.4-3.9 s   smoke 4.8-5.3 s   bench 9.6-10.0 s
+   *   widediag 9.7-12.0 s  uicheck 15.4-23.8 s
+   *
+   * It is the cheapest of the five, so it is placed first among them, and it is the one
    * worth running on its own after touching a material, a texture or a POI light —
    * `node tools/gates.mjs --only derelict`.
    */

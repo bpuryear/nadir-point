@@ -1,10 +1,14 @@
 /**
  * THE GRAVEYARD HAS AN APPEARANCE GATE NOW.
  *
- *   node tools/derelictcheck.mjs             # gate. exit 1 on any failure
- *   node tools/derelictcheck.mjs --explain   # every bin and every column, printed
- *   node tools/derelictcheck.mjs --json out.json
- *   node tools/derelictcheck.mjs --repeat 2  # run the whole measurement twice, print the spread
+ *   node tools/derelictcheck.mjs                  # gate. exit 1 on any failure
+ *   node tools/derelictcheck.mjs --repeat 3       # re-measure 3x, print the run-to-run spread
+ *   node tools/derelictcheck.mjs --json out.json  # every column of every run, as JSON
+ *   node tools/derelictcheck.mjs --width 1600 --height 900   # NOT CALIBRATED, see below
+ *
+ * There is no quiet mode. Every column it computes is printed on every run, gated or
+ * not, because the columns it declines to gate are as much of the finding as the ones
+ * it does.
  *
  * WHY IT EXISTS. `4e646df` blew out every drifting debris fragment on the graveyard --
  * soft bloom halos, the facet read and the shadow terminator washed to flat white --
@@ -52,14 +56,26 @@
  * chosen bound are written next to each limit. Nothing here is a taste judgement and
  * nothing here was moved to make a run comfortable.
  *
- * THIS GATE HAS BEEN SHOWN TO FAIL. See `docs/review/` and the commit message: the
- * regressed tree exits 1 on it. A gate that has never been shown red is not a gate, and
- * this project has shipped that exact mistake four times (a UI audit measuring zero
- * panels, a regex matching its own doc comment, a harness certifying a system that had
- * never run, and a loadout probe printing PASS into a PNG with no exit code).
+ * THIS GATE HAS BEEN SHOWN TO FAIL. On that worktree it exits 1, with four of its six
+ * assertions red; on a clean checkout it exits 0 with six of six. A gate that has never
+ * been shown red is not a gate, and this project has shipped that exact mistake four
+ * times (a UI audit measuring zero panels, a regex matching its own doc comment, a
+ * harness certifying a system that had never run, and a loadout probe printing PASS into
+ * a PNG with no exit code). Reproducing it takes two commands:
  *
- * WHAT IT CANNOT CATCH -- read `LIMITATIONS` at the bottom of this file before assuming
- * the graveyard is covered.
+ *     git worktree add /tmp/bad HEAD --detach && ln -s "$PWD/node_modules" /tmp/bad/
+ *     for f in src/art/palette.js src/art/textures/hullMaps.js src/art/textures/wear.js; \
+ *       do git show 4e646df:$f > /tmp/bad/$f; done
+ *     cd /tmp/bad && node tools/derelictcheck.mjs; echo $?
+ *
+ * THE BOUNDS ARE CALIBRATED AT 1280x720 ON HARDWARE RASTER. `--width`/`--height` exist
+ * for looking, not for gating: `maskPct` in particular is a fraction of the frame and
+ * moves with framing (measured: hero mask 16.56 % at 1280x720, 15.69 % at 1600x900 on
+ * the same tree). The runner never passes them.
+ *
+ * WHAT IT CANNOT CATCH -- the tool prints a NOT GATED block every run, and there is a
+ * longer list at the very bottom of this file. Read one of them before assuming the
+ * graveyard is covered.
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -186,13 +202,13 @@ const LIMITS = {
      * commented out. The 80-160 bin carries the assertion; the full decay curve is
      * printed for the human, because MONOTONIC DECAY is the diagnosis, not any one bin.
      */
-    spill80: { max: 2.05, head: 1.69, bad: 2.61, noise: 0.00, kind: 'discriminator' },
+    spill80: { max: 2.05, head: 1.70, bad: 2.61, noise: 0.03, kind: 'discriminator' },
     /**
      * The critic's own number, reproduced inside the gate: `surface.mjs --frame scene`
      * mask on the shipped frame. Absolute rather than differential, so it also catches a
      * blowout that arrives some way other than bloom.
      */
-    maskPct: { max: 24.0, head: 16.58, bad: 37.29, noise: 0.15, kind: 'discriminator' },
+    maskPct: { max: 24.0, head: 16.59, bad: 37.19, noise: 0.05, kind: 'discriminator' },
     /**
      * THE SHADOW TERMINATOR, as a floor. "The facet read and the shadow terminator,
      * crisp and countable before, washed to flat white" is a statement about the DARK
@@ -200,7 +216,7 @@ const LIMITS = {
      * became 1.77 %. This is the only two-sided-ish bound here and the only one that
      * fails when the frame gets brighter without getting bigger.
      */
-    darkPct: { min: 3.20, head: 4.68, bad: 1.82, noise: 0.06, kind: 'discriminator' },
+    darkPct: { min: 3.20, head: 4.62, bad: 1.84, noise: 0.14, kind: 'discriminator' },
   },
   breach: {
     /**
@@ -211,7 +227,7 @@ const LIMITS = {
      */
     maskLift: { max: 1.35, head: 1.14, bad: 1.16, noise: 0.00, kind: 'guard' },
     /** GUARD: 2.40 -> 1.97. Real movement, but only 1.2x, and too close to gate on. */
-    darkPct: { min: 1.60, head: 2.40, bad: 1.97, noise: 0.02, kind: 'guard' },
+    darkPct: { min: 1.60, head: 2.37, bad: 2.00, noise: 0.06, kind: 'guard' },
   },
 };
 

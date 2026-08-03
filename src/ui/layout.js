@@ -113,8 +113,15 @@ export const ATTN = {
   row: [36, 33],
   line3: [21, 19],
   tail: [28, 26],
-  barDy: 4,
-  barH: 5,
+  /**
+   * The bar is 3 px and not the 5 the hold strip above it uses. Photographed at 168 px
+   * of plate with both factions warned, two 5 px full-width bars in the warn and hostile
+   * hues read as a slab of colour with type on it — which is the exact complaint the
+   * chrome gate exists to defend against, in the one register the gate cannot measure.
+   * At 3 px the proportion is still legible and the loud ink is spent on the figures.
+   */
+  barDy: 5,
+  barH: 3,
 };
 
 /**
