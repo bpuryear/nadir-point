@@ -274,6 +274,27 @@ so they can be re-run from scratch without loss.
 
 Each of these cost real time. They are fixed; this is so they are not re-introduced.
 
+- **Parallel agents share ONE git repository, and git is not lane-aware.** File ownership
+  keeps their *edits* apart; it does nothing about their *commits*. Both of these have now
+  happened:
+  - `git add -A` swept eight source files of another agent's in-flight work into a commit
+    whose message described only research documents.
+  - `git commit --amend`, run by an agent intending to amend its own commit, **amended a
+    different agent's commit instead** and overwrote its message. `fb1acf5` is `f1cdd61`
+    amended: the gate agent's content survived, its message — "Correct four figures in the
+    derelict gate that no run of it produces" — did not. Nothing was lost (`f1cdd61` is
+    still reachable by hash) but `git log` misattributes that work.
+
+  **So: `git add <paths>` by name, never `-A`; and never `--amend` while other agents are
+  running.** An agent cannot assume `HEAD` is its own.
+
+- **Measurements taken in the shared working tree are not measurements of your commit.**
+  Three benchmark figures in this history match no clean checkout of the repository,
+  because several agents write to the tree while the bench reads it. One frame-time
+  regression was reported to the owner that was half another agent's load. Take
+  performance numbers from `git worktree add` on your own commit with `node_modules`
+  symlinked, and say that you did.
+
 - **Never `spawn('npx', ['vite', ...])`.** It makes vite a grandchild, so `kill()` hits
   npx and leaves vite holding the port. Orphaned servers then answer the harness's
   health poll, and the harness happily drives a **zombie serving a stale bundle** — so
