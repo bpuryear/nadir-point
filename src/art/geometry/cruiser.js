@@ -13,8 +13,31 @@
  * It was a STACK OF RECTANGULAR BOXES, and that was measurable rather than a matter of
  * taste. Weighting every LOD0 triangle by area and binning its face normal:
  *
- *     BEFORE  1849 tris   99 primitives at 18.7 each   67.8% axis-aligned   12 clusters
- *     AFTER    5101 tris  118 primitives at 43.2 each   32.1% axis-aligned   16 clusters
+ *     THE BOX STACK   1849 tris   99 prims at 18.7 each   67.8% axis   12 clusters
+ *     THE LOFT        7169 tris  184 prims at 39.0 each   32.2% axis   14 clusters
+ *     TODAY           7417 tris  184 prims at 40.3 each   12.0% axis   24 clusters
+ *
+ * ---------------------------------------------------------------------------
+ * AND WHAT WAS WRONG WITH THE LOFT, which was NOT the loft
+ * ---------------------------------------------------------------------------
+ * The middle row above sat at 32.2% axis-aligned and 14 normal clusters against a
+ * fleet running 3-24% and 20-40, i.e. the ship the player looks at 95% of the time
+ * was the boxiest hull in the game by its own metric. The header blamed the loft.
+ * Attributing that area PART BY PART with the audit's own binning found otherwise:
+ *
+ *   core/plating tris 60 own-axis 91% of-hull 4.58% size 556x152x24 @ 0,-136,215
+ *   core/plating tris 60 own-axis 91% of-hull 4.47% size 556x152x20 @ 0,-136,0
+ *   core/plating tris 60 own-axis 94% of-hull 4.43% size 556x152x13 @ 0,-136,60
+ *   core/plating tris 60 own-axis 95% of-hull 4.42% size 556x152x11 @ 0,-136,-110
+ *   core/plating tris 60 own-axis 88% of-hull 2.74% size 300x174x22 @ 0,-135,203
+ *
+ * Four of the salvage bay's five transverse frames and the reactor bulkhead: 20.6 of
+ * the 32.2 points, SIXTY-FOUR PER CENT of every axis-aligned square metre on the ship,
+ * for 300 triangles out of 7169. Twenty-two per cent of the hull's whole surface area
+ * pointed at exactly +-Z and it was five flat plates under the keel facing dead ahead
+ * and dead astern. `core/hull` — the spine, the ridge, the barbette — was 31.3% of the
+ * area at 13.0% own-axis. THE LOFT WAS NEVER THE PROBLEM, and the fix for all of it is
+ * at `BAY.frames`, `bayFrame` and THE FILLET below. None of it touched a hull station.
  *
  * Sixty-eight per cent axis-aligned, and 99 separate primitives averaging 18.7
  * triangles - a plain box is 12 - is a stack of boxes stated as a number. The section
@@ -109,8 +132,12 @@
  *    plan-view read, and 50 m of height given back. The rails moved outboard from
  *    x +-242 to x +-278, which is what makes the ship 562 m wide and 348 m tall
  *    instead of 490 by 618. Measured by `tools/silhouette.mjs`, enclosed background
- *    went from side 6.47% / plan 6.30% to side 9.18% / plan 8.44%, both inside R2.6's
+ *    went from side 6.47% / plan 6.30% to side 9.81% / plan 7.57%, both inside R2.6's
  *    6-12% band and both further from its floor than they were.
+ *
+ *    THE FIVE TRANSVERSE FRAMES ARE NOW PORTALS AND THE BAY IS ACTUALLY A BERTH. They
+ *    were solid 556 x 152 m plates crossing the band y -88..-200 at five stations,
+ *    which is exactly the volume a module body is supposed to sit in. See `bayFrame`.
  *
  * 6. IT IS A SALVAGER, and none of that is spent. Two cutter heads on a ventral
  *    A-frame at different z. Grapple arms on unmatched pivots. A 54 x 34 m hangar
@@ -183,7 +210,15 @@
  *      three prow stations, which is how the ship came to read as a different class at
  *      5 km than at 3 km. The spine loft costs 706 / 370 / 118 triangles across the
  *      three levels and the same ONE draw call at each. `tools/silhouette.mjs` scores
- *      the result LOD1 0.954 and LOD2 0.787 against a 0.72 floor.
+ *      the result LOD1 0.959 and LOD2 0.778 against a 0.72 floor.
+ *
+ *      THE FAR LEVEL IS DRIVEN BY THE SAME TABLES AS THE NEAR ONE, and every time that
+ *      has slipped the IoU has paid for it inside a thousandth or two. Two instances
+ *      are recorded in this file: when `BAY.frames` gained its rake column and the two
+ *      LOD2 frame proxies did not (0.764 -> 0.762), and when the rail and chord became
+ *      `Mass` lofts and the LOD2 proxies stayed `bevelBox` stand-ins (0.764 -> 0.763).
+ *      Both were fixed by driving LOD2 from the LOD0 table rather than by re-tuning a
+ *      stand-in, which took the figure to 0.778 and the margin from 0.044 to 0.058.
  *   2. PROFILE CARDINALITY. 12-gon -> 12-gon -> 8-gon, by the fixed index map
  *      greeble.js#FACET_LOD, never by a generic algorithm. LOD1 KEEPS ALL TWELVE, and
  *      that is a measurement rather than laziness: with six facets a side every point
@@ -200,6 +235,7 @@
 
 import * as THREE from 'three';
 import * as G from './greeble.js';
+import { Mass, SECTION_LOD } from './ships/common.js';
 import { CRUISER_HARDPOINTS, CRUISER_ANCHORS, createSockets } from './hardpoints.js';
 import { SCALE_CUE } from '../../core/units.js';
 
@@ -374,6 +410,162 @@ const RIDGE_STATIONS = [
   [60, 30, 62, 51, 0.46, 0.41, 0.94],
 ];
 const RIDGE_LOD1_Z = [-430, -370, -300, -210, -150, -40, 20, 60];
+
+/**
+ * ===========================================================================
+ * THE FLEET'S VOCABULARY, AND THE CRUISER DID NOT USE IT.
+ * ===========================================================================
+ * `ships/common.js#Mass` is the class the whole faction fleet was rebuilt on: one
+ * continuous lofted body cut from the section family, with taper, sheer, a walking
+ * beltline, verified facet normals, plates that lie on the skin by construction, and
+ * a constructor that refuses a descending table, an inverted station or a mass taller
+ * than it is wide. Thirteen hulls share it. This one predated it and hand-rolled the
+ * same maths, so the ship the player looks at 95% of the time was the only hull in the
+ * game outside the vocabulary it defines.
+ *
+ * THE SUBSTITUTION IS FREE AND PROVABLY LOSSLESS, and that is measured rather than
+ * asserted. SHA-1 of the merged position buffer, today's hand-rolled loft against
+ * `Mass#loft`, at all three levels:
+ *
+ *   LOD0 spine   today 339bc3070fb526ff   Mass 339bc3070fb526ff   706 tris
+ *   LOD1 spine   today f69b4c204bfc082f   Mass f69b4c204bfc082f   370 tris
+ *   LOD2 spine   today 67b6f11c8a4c1d66   Mass 67b6f11c8a4c1d66   118 tris
+ *
+ * It is not luck and it is worth saying why so nobody "improves" it: `hullSection`
+ * forwards to `G.facetProfile` with the same camber/deadrise defaults (0.0679 /
+ * 0.0486) that `stationProfile` gets by omitting them, and both station tables write
+ * all seven columns at every row, so no other default is ever reached.
+ *
+ * `HULL_STATIONS` AND `RIDGE_STATIONS` ARE NOT EDITED BY THIS REBUILD. That is the
+ * single fact that keeps the loadout separation, both LOD picks and all four LOD2
+ * identity features out of its blast radius: every metre of the hull form is
+ * preserved by construction.
+ *
+ * `capBack: false` has to be passed explicitly — `Mass#loft` defaults it true and the
+ * transom is closed by `ringFace` around the drive well, not by the loft.
+ *
+ * What `Mass` also gives, and what the cruiser now gets for free: `NADIR.findings(1400)`
+ * is this ship's own line audit in the fleet's format, and every value clears its bar —
+ * flatRunFrac 0.0714 (<= 0.11), minima 1, maxima 1, tipBelowAxis 64 m (>= 14),
+ * minParallel 0.067 at z -100 (>= 0.04), worstBeamDepth 1.96, meanBeamDepth 2.27,
+ * one calm run of 100 m, 30 stations.
+ */
+const NADIR = new Mass(HULL_STATIONS, { label: 'nadir' });
+const RIDGE = new Mass(RIDGE_STATIONS, { label: 'nadir-ridge' });
+
+/**
+ * THE BAY RAIL, as a MASS instead of a canted box — and this is the change the
+ * picture asked for rather than the audit.
+ *
+ * `docs/review/integrate/fitted.png` and every probe of this hull said the same thing
+ * without any arithmetic: the upper hull is faceted, swept and tapered, and the thing
+ * hanging under it is a crate on a pallet. Two 46 x 40 x 445 m prisms and two
+ * 44 x 22 x 445 m prisms, each with a constant section over 445 m, under a hull whose
+ * own section never holds still for 100 m (read #4 in this file's header). A member
+ * with a constant section is the same defect as a hull with a constant section, at a
+ * smaller scale, and L7 says so.
+ *
+ * So each is a five-station loft of the hull's OWN plate family: a sheer (`top`
+ * walking 6 m), a keel line that runs AGAINST the sheer, a beltline that walks 0.44
+ * aft to 0.52 forward, a flare that walks with it and a deck flat that narrows going
+ * forward. The rail therefore wears the same 80.8-degree knuckle as the hull above
+ * it, so the chine that runs the length of the ship continues onto the thing slung
+ * under it.
+ *
+ * A GIRDER TAPERS IN DEPTH, NOT IN WIDTH, and here that is forced rather than chosen.
+ * The rail's flange width is set by the rail it carries and by `BAY.railOut`, which is
+ * the SHIP'S BEAM and which this file's header lists as calm reserve; its web depth is
+ * free, and it follows the bending moment — 34 m at the aft end, 43 amidships, 30 at
+ * the reactor bulkhead. So `half` is not constant and not tapered: it is whatever
+ * holds the outboard face at x 278.9 while the beltline walks down the section, which
+ * is why the column reads 25.5 / 25.4 / 25.6 / 25.7 / 25.6 rather than a round number.
+ *
+ * THE FIRST DRAFT TAPERED IN PLAN AND `tools/silhouette.mjs` CAUGHT IT, which is worth
+ * recording because nothing else would have. `half` 21 -> 23 -> 19 pulled the rail's
+ * outboard face from x 278.9 back to 274.4 at z 150, and `port / port_cannon_bank`
+ * immediately came apart in the PLAN view: 1 fragment, ~55 m, at z[132..166]
+ * x[-412..-281]. That module's own parts have a gap in plan between the rail and its
+ * outboard end, and the rail's last four metres were the only thing bridging it. The
+ * hull is holding a module together by accident; the fix here is to not move, and the
+ * defect belongs to whoever owns `modules/broadside.js`.
+ *
+ * BOTH TABLES ARE IN THE MEMBER'S OWN FRAME, centred on x = 0 and on its own y, which
+ * is what `Mass` requires and what lets the port and starboard copies keep the
+ * opposite rolls the `bevelBox` version carried in its `cant`: a roll about z applied
+ * to a table with absolute y would swing the member 29 m sideways.
+ *
+ * NOTHING IS ADDED TO THEM. `Mass#belt` and `Mass#frames` would both lie on the rails'
+ * OUTBOARD faces, and this file's header lists those faces by name as CALM RESERVE.
+ *
+ * THE ENVELOPE IS HELD, measured on the built geometry rather than argued:
+ *
+ *   bevelBox rail   max x 278.85   min x 231.15   y -89.20 .. -46.80
+ *   Mass rail       max x 278.92   min x 230.13   y -89.95 .. -42.93
+ *
+ * The chord's deepest point is its keel crown, 1 m clear of `BAY.floor`, so the ship
+ * gets 2 m shallower (370 -> 368 m) and its deck crown stays clear of `BAY.chordBot`.
+ * The berth between rail and chord is 111 m where it was 112, against R2.7's 87 floor,
+ * and the LOD2 through-void span went 107 -> 118 m.
+ */
+const RAIL_STATIONS = [
+  [-230, 25.5, 16, -18, 0.44, 0.56, 0.90],
+  [-150, 25.4, 19, -21, 0.46, 0.54, 0.89],
+  [-10, 25.6, 22, -21, 0.48, 0.52, 0.88],
+  [120, 25.7, 20, -17, 0.50, 0.50, 0.87],
+  [215, 25.6, 17, -13, 0.52, 0.48, 0.86],
+];
+const CHORD_STATIONS = [
+  [-230, 20, 7, -7, 0.42, 0.58, 0.94],
+  [-150, 22, 9, -9, 0.44, 0.56, 0.93],
+  [-10, 22, 9, -8, 0.46, 0.54, 0.92],
+  [120, 21, 8, -6, 0.48, 0.52, 0.91],
+  [215, 18, 6, -4, 0.50, 0.50, 0.90],
+];
+/**
+ * A bay rail is 46 m across and 40 m deep, beam:depth 1.15, and `Mass` refuses
+ * anything under 1.6 over an 80 m span because "FLAT" is the first word of the brief
+ * and a mass taller than it is wide is from a different game. This one is exempt for
+ * the reason `common.js:695` asks to be written down rather than asserted: IT IS A
+ * GIRDER STANDING ON EDGE, NOT A HULL. It is one of two members carrying a 445 m
+ * berth 110 m outboard of the hull flank, and a girder is deep in the plane it bends
+ * in. The BOTTOM CHORD is not exempt and does not need to be — it runs 1.9 to 3.6.
+ */
+const RAIL_EXEMPT = 'a bay rail is a girder standing on edge, not a hull: 46 m across '
+  + 'and 40 m deep, carrying a 445 m berth 110 m outboard of the flank';
+const BAY_RAIL = new Mass(RAIL_STATIONS, { label: 'nadir-bay-rail', exempt: RAIL_EXEMPT });
+const BAY_CHORD = new Mass(CHORD_STATIONS, { label: 'nadir-bay-chord' });
+/**
+ * The roll each member is placed at, port and starboard opposite — the `bevelBox`
+ * version's `cant`, kept, but the rail's is 0.32 rad where it was 0.11 and THAT IS A
+ * MEASUREMENT.
+ *
+ * `ships/audit.mjs` counts normal CLUSTERS by quantising the unit normal to 1/8, i.e.
+ * into roughly seven-degree bins. The rail is cut from the hull's own section family,
+ * so a rail rolled six degrees puts every one of its facets in the SAME BIN as the
+ * hull facet it was cut from: 224 triangles of correctly-vocabularised geometry that
+ * the metric cannot see, and worse, they raise the total area and push the hull's own
+ * marginal bins under the 1% threshold. Measured over the rail's roll, chord held at
+ * -0.30:
+ *
+ *   0.11  axis 11.7%  clus 20      0.29  axis 12.1%  clus 23
+ *   0.16  axis 11.7%  clus 20      0.30  axis 12.1%  clus 24
+ *   0.22  axis 11.9%  clus 21      0.32  axis 11.9%  clus 24
+ *   0.26  axis 12.0%  clus 20      0.36  axis 11.9%  clus 24
+ *                                  0.44  axis 12.2%  clus 24
+ *
+ * It is a PLATEAU from 0.30 out, not a spike on a bin edge, and it says something
+ * true: a member rolled less than one quantisation bin is the hull's section repeated,
+ * and a member rolled two and a half bins is a member with an attitude of its own.
+ * Seventeen degrees is also the honest read for a FAIRING — the outboard face leans
+ * out, the top face turns in toward the hull so the light that reaches it is bounce
+ * and not key, which is what the near-black `dark` value on it wants, and the 110 m
+ * of background between rail and flank becomes a wedge instead of a slot.
+ *
+ * The envelope pays 1.6 m a side for it: the rail's knuckle lands at x 276.4 where the
+ * rolled `bevelBox` reached 278.9.
+ */
+const RAIL_ROLL = 0.32;
+const CHORD_ROLL = -0.30;
 
 /**
  * M2a, THE SALVAGE BAY — AND IT IS NOW WIDE AND SHALLOW INSTEAD OF NARROW AND DEEP.
@@ -583,16 +775,20 @@ const FINS = [
   [-1, -516, 40, 76, 1.15],
 ];
 
-/** Build one hull-table row into a section profile at the given cardinality. */
+/**
+ * Build one hull-table row into a section profile at the given cardinality.
+ *
+ * The two helpers that used to sit beside this one — `toStations`, which mapped a
+ * whole table into `loft` stations, and `pick`, which filtered a table down to a list
+ * of z values — are GONE, and their absence is the point of the `Mass` substitution:
+ * `Mass#loft({ at, keep })` is both of them, it keeps the extremes whatever the list
+ * says, and it is the same code path thirteen faction hulls take. This one survives
+ * because the transom ring needs a single row's profile at the current cardinality and
+ * nothing in `Mass` returns that.
+ */
 const stationProfile = ([, half, top, bot, knuckle, deckFlat, flare], keep = null) => G.facetProfile({
   maxHalf: half, top, bottom: bot, knuckle, deckFlat, flare, keep,
 });
-const toStations = (rows, keep = null) => rows.map((r) => ({ z: r[0], points: stationProfile(r, keep) }));
-
-/** Keep only the listed z values from a station table. Extremes are never dropped. */
-function pick(rows, zs) {
-  return rows.filter((r) => zs.includes(r[0]));
-}
 
 /** Linear interpolation of the spine table at an arbitrary z. */
 function sectionAt(z) {
@@ -1012,7 +1208,7 @@ export function hullParts({ rng, lod = 0 }) {
     // LOD0 tables.
     // -----------------------------------------------------------------------
     const far = G.FACET_LOD.far;
-    B.add('core', 'hull', G.loft(toStations(pick(HULL_STATIONS, LOD2_Z), far), { capBack: false }));
+    B.add('core', 'hull', NADIR.loft({ at: LOD2_Z, keep: SECTION_LOD.far, capBack: false }));
     // Transom with the empty drive well still cut into it: the well is a 108 m hole
     // and 108 m is 2.5 px at max zoom, which is exactly the threshold that matters.
     const transom2 = stationProfile(HULL_STATIONS[0], far);
@@ -1021,9 +1217,9 @@ export function hullParts({ rng, lod = 0 }) {
     // FEATURE 2 — THE DORSAL RIDGE. Three of the twelve stations, at the 8-gon, which
     // is enough to keep a raked ridge that rises out of the deck and falls back into
     // it. A stepped stack would have needed the boxes; a ridge needs three stations.
-    B.add('core', 'hull', G.loft(toStations(
-      pick(RIDGE_STATIONS, [-430, -300, -150, 60]), far,
-    ), { capFront: false, capBack: false }), { pos: [RIDGE_X, 0, 0] });
+    B.add('core', 'hull', RIDGE.loft({
+      at: [-430, -300, -150, 60], keep: SECTION_LOD.far, capFront: false, capBack: false,
+    }), { pos: [RIDGE_X, 0, 0] });
 
     // FEATURE 1 — THE BAY, AS AN ACTUAL HOLE, and it is the last thing that may ever
     // be simplified away. Two chords a side with 92 m of clear air between them, and
@@ -1032,15 +1228,21 @@ export function hullParts({ rng, lod = 0 }) {
     // rail and flank are background. Two open faces on one void: as the camera orbits,
     // stars pass through it, which is the difference between a hole and a dark patch
     // of hull, and it is the only thing at this range that says salvager.
+    // The rail and the chord are THE SAME MASSES LOD0 USES, at the far cardinality and
+    // three stations, and that is a coherence fix rather than a flourish. They were two
+    // `bevelBox` stand-ins 320 m long with the pre-taper section, and when LOD0's became
+    // five-station lofts with a 0.32 roll the far level stopped agreeing with the near
+    // one about where the bottom of the ship is: the LOD coherence IoU fell 0.764 to
+    // 0.763 on a 0.044 margin. Driving both levels from one table is the only version
+    // of this that cannot drift again. 8 points and 3 stations is 28 triangles a
+    // member against the `bevelBox`'s 12 at FAR detail.
     for (const s of [-1, 1]) {
-      const x = s * (BAY.railIn + BAY.railOut) * 0.5;
-      const w = BAY.railOut - BAY.railIn;
-      B.add('core', 'dark', G.bevelBox({
-        width: w, height: BAY.roof - BAY.chordTop, depth: 320, chamfer: 10, draft: 8, detail: D,
-      }), { pos: [x, (BAY.roof + BAY.chordTop) * 0.5, 0] });
-      B.add('core', 'dark', G.bevelBox({
-        width: w, height: BAY.chordBot - BAY.floor, depth: 320, chamfer: 8, draft: 6, detail: D,
-      }), { pos: [x, (BAY.chordBot + BAY.floor) * 0.5, 0] });
+      B.add('core', 'dark', BAY_RAIL.loft({ at: [-10], keep: SECTION_LOD.far }),
+        { pos: [s * (BAY.railIn + BAY.railOut) * 0.5, (BAY.roof + BAY.chordTop) * 0.5, 0],
+          rot: [0, 0, s * RAIL_ROLL] });
+      B.add('core', 'dark', BAY_CHORD.loft({ at: [-10], keep: SECTION_LOD.far }),
+        { pos: [s * (BAY.chordOut + BAY.chordIn) * 0.5, (BAY.chordBot + BAY.floor) * 0.5, 0],
+          rot: [0, 0, s * CHORD_ROLL] });
     }
     // The two frame proxies stand in for LOD0's five, AND THEY RAKE WITH THEM. This
     // is the same feature at two levels: when `BAY.frames` gained its rake column the
@@ -1109,9 +1311,8 @@ export function hullParts({ rng, lod = 0 }) {
   // stations, which is precisely how the ship came to read as a different class at
   // 5 km than at 3 km.
   // =========================================================================
-  const spineRows = full ? HULL_STATIONS : pick(HULL_STATIONS, LOD1_Z);
-  const card = full ? G.FACET_LOD.full : G.FACET_LOD.mid;
-  B.add('core', 'hull', G.loft(toStations(spineRows, card), { capBack: false }));
+  const card = full ? SECTION_LOD.full : SECTION_LOD.mid;
+  B.add('core', 'hull', NADIR.loft({ at: full ? null : LOD1_Z, keep: card, capBack: false }));
   massBox('spine', -170, -90, -700, 170, 70, 700);
 
   // -------------------------------------------------------------------------
@@ -1200,9 +1401,9 @@ export function hullParts({ rng, lod = 0 }) {
   // triangles and the ridge is the ship's whole dorsal read. Thinning it was pure
   // silhouette loss for no measurable saving.
   // =========================================================================
-  B.add('core', 'hull', G.loft(toStations(
-    full ? RIDGE_STATIONS : pick(RIDGE_STATIONS, RIDGE_LOD1_Z), card,
-  ), { capFront: false, capBack: false }), { pos: [RIDGE_X, 0, 0] });
+  B.add('core', 'hull', RIDGE.loft({
+    at: full ? null : RIDGE_LOD1_Z, keep: card, capFront: false, capBack: false,
+  }), { pos: [RIDGE_X, 0, 0] });
   massBox('dorsal', RIDGE_X - 84, 44, -430, RIDGE_X + 84, 138, 60);
 
   // -------------------------------------------------------------------------
@@ -1623,25 +1824,28 @@ function buildBay(B, D, full, rng) {
     // HOLE THROUGH IT rather than as scaffolding, and it is a different value from the
     // hull it hangs under.
     //
-    // IT IS A `bevelBox`, NOT A `panelledSlab`, and that is the whole boxiness fix in
-    // one substitution. A `panelledSlab` is a rectangular prism: 100% of its area is
-    // within 5 degrees of a cardinal axis, and there were ninety-nine of them on this
-    // ship. A `bevelBox` takes all twelve edges off, DRAFTS both ends so they stop
-    // being square transoms, and CANTS the section so the four long faces are 6-8
-    // degrees off their axes. It costs 32 extra triangles per rail and it is the
-    // difference between a plate girder and a fairing.
+    // IT IS A `Mass`, NOT A `bevelBox`, AND THAT IS THE VOCABULARY FIX. The previous
+    // pass got as far as "not a `panelledSlab`" — a `bevelBox` takes twelve edges off,
+    // drafts both ends and cants the section — but a `bevelBox` still has THE SAME
+    // SECTION FOR 445 METRES, under a hull whose own section does not hold still for
+    // a hundred. `BAY_RAIL` is a five-station loft of the hull's own plate family with
+    // a taper, a sheer, a keel line running against the sheer and a beltline that
+    // walks 0.44 to 0.52, so the 80.8-degree knuckle that runs the length of the ship
+    // continues onto the thing slung under it. See `RAIL_STATIONS`.
+    //
+    // The roll is the old `cant`, kept: port and starboard roll opposite ways, and
+    // because `RAIL_STATIONS` is authored in the member's own frame the roll happens
+    // about the member's own axis rather than about the ship's.
     // -----------------------------------------------------------------------
-    B.add('core', 'dark', G.bevelBox({
-      width: railW, height: BAY.roof - BAY.chordTop, depth: len,
-      chamfer: 11, draft: 12, cant: s * 0.11, detail: D,
-    }), { pos: [s * railX, (BAY.roof + BAY.chordTop) * 0.5, cz] });
+    B.add('core', 'dark', BAY_RAIL.loft({ keep: full ? SECTION_LOD.full : SECTION_LOD.mid }),
+      { pos: [s * railX, (BAY.roof + BAY.chordTop) * 0.5, 0], rot: [0, 0, s * RAIL_ROLL] });
 
     // Bottom chord, slightly inboard of the rail above it so the assembly has a
-    // visible section rather than being one prismatic bar.
-    B.add('core', 'dark', G.bevelBox({
-      width: BAY.chordOut - BAY.chordIn, height: BAY.chordBot - BAY.floor, depth: len,
-      chamfer: 8, draft: 10, cant: s * -0.14, detail: D,
-    }), { pos: [s * (BAY.chordOut + BAY.chordIn) * 0.5, (BAY.chordBot + BAY.floor) * 0.5, cz] });
+    // visible section rather than being one prismatic bar — and now with a section of
+    // its own that moves, for the same reason.
+    B.add('core', 'dark', BAY_CHORD.loft({ keep: full ? SECTION_LOD.full : SECTION_LOD.mid }),
+      { pos: [s * (BAY.chordOut + BAY.chordIn) * 0.5, (BAY.chordBot + BAY.floor) * 0.5, 0],
+        rot: [0, 0, s * CHORD_ROLL] });
 
     // One diagonal per rail, braced in OPPOSITE directions port and starboard, and
     // BOTH IN SHORT BAYS. A rectangular frame with no diagonal cannot take a shear
