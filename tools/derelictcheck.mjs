@@ -166,8 +166,11 @@ const BINS = [
  * dropped over it -- `src/art/palette.js`, `src/art/textures/hullMaps.js`,
  * `src/art/textures/wear.js` -- so geometry, lighting and camera are identical by
  * construction, exactly as the critic held them. Both trees measured with
- * `--repeat 3`, hardware raster, 1280x720; `head` and `bad` below are the WORST of the
- * three runs in the direction of the bound, and `noise` is that run-to-run spread.
+ * `--repeat 3`, hardware raster, 1280x720; `head` and `bad` below are the WORST value
+ * seen in the direction of the bound ACROSS EVERY RUN, including separate processes on
+ * separate worktrees, and `noise` is the full observed spread. Cross-process matters:
+ * `hero/darkPct` never moved more than 0.05 within one process and moved 0.14 between
+ * them, so a within-process spread would have understated it by three times.
  *
  * Independently confirmed outside this tool: `node tools/probe.mjs derelict` in the two
  * worktrees, measured with `node tools/surface.mjs --frame scene`, gives mask 16.2 % vs
@@ -216,7 +219,7 @@ const LIMITS = {
      * became 1.77 %. This is the only two-sided-ish bound here and the only one that
      * fails when the frame gets brighter without getting bigger.
      */
-    darkPct: { min: 3.20, head: 4.62, bad: 1.84, noise: 0.14, kind: 'discriminator' },
+    darkPct: { min: 3.20, head: 4.58, bad: 1.84, noise: 0.14, kind: 'discriminator' },
   },
   breach: {
     /**
@@ -569,6 +572,45 @@ console.log('                  high-frequency detail and the terminator, and the
 console.log('                  hero/darkPct gates.');
 console.log(`  hotPct          hero 7.48 -> 7.90. Bright pixels in the tone-mapped plate: +5.6 % for a`);
 console.log('                  regression that doubled the lit area. This is the gate not to build.');
+
+/**
+ * SAMPLE SIZE FIRST, AND AN EMPTY SAMPLE IS A FAILURE.
+ *
+ * Every ratio above is a mean over a population that this file itself selected, and each
+ * one degenerates quietly if its population empties out. Work through what a black frame
+ * does to them: `hotN` is 0, so the distance transform gets no seed, every spill bin gets
+ * `n = 0` and `ratio = 1`, and `spill80 <= 2.05` passes. `maskOnN` is 0, so `maskPct`
+ * passes its ceiling and `maskLift` is 0 and passes its ceiling. Four of six assertions
+ * go green on a frame with nothing in it. (`darkPct` is the one that would still fail,
+ * which is luck, not design.)
+ *
+ * That is precisely the shape of this project's four previous vacuous checks. So the
+ * populations are asserted before the ratios computed from them are, with floors two
+ * orders of magnitude under what a working frame produces:
+ *
+ *   hero    subject 12.7 % of frame, spill80 bin n = 70,860     floors 2 % and 2,000
+ *   breach  subject 77.2 % of frame, spill80 bin n = 22,663     floors 2 % and 2,000
+ */
+console.log('\nSAMPLE');
+let sampleBad = 0;
+for (const shot of SHOTS) {
+  const r = m[shot.id];
+  const px = (r.maskOffPct / 100) * r.w * r.h;
+  const okSubject = r.maskOffPct >= 2.0;
+  const okBin = r.bins[3].n >= 2000;
+  if (!okSubject) sampleBad++;
+  if (!okBin) sampleBad++;
+  check(okSubject, `${shot.id}: the bloom-free plate has a subject to measure`,
+    `${r.maskOffPct}% of ${r.w}x${r.h} = ${Math.round(px)} px, floor 2%`);
+  check(okBin, `${shot.id}: the 80-160 px spill bin has a population`,
+    `n=${r.bins[3].n} deep-void pixels at that distance from a source, floor 2000`);
+}
+if (sampleBad) {
+  console.error('\nFAIL: this run measured nothing. Every ratio below is computed over a population');
+  console.error('that is empty or near-empty, and a ratio over an empty set passes any ceiling.');
+  console.error('Fix the frame, not the tool — start with whether the probe rendered at all.');
+  process.exit(1);
+}
 
 console.log('\nGATE');
 let asserted = 0;
