@@ -652,8 +652,13 @@ const MN_RAIL_X = 40;
  * THE GUN HOUSE, and the reason it is 92 m of its own station table rather than a
  * `panelledSlab`.
  *
- * Measured with both hulls normalised to 200 m, monitor against destroyer is the
- * closest pair in the game at 10.2 m of mean outline divergence against a 10.0 m bar.
+ * Measured with both hulls normalised to 200 m, monitor against destroyer is 12.5 m
+ * of mean outline divergence against the 10.0 m intra-faction bar. THIS LINE READ
+ * "the closest pair in the game at 10.2 m" until the wave after the rebuild, and
+ * neither half of that is true on HEAD: the pair measures 12.5, and the tightest
+ * Coalition pair is now corvette/monitor at 11.8. Both figures come from
+ * `ships/audit.mjs` INTRA-FACTION DIVERGENCE; re-read them there before quoting
+ * them again. The hull to watch is still this one — it is in both pairs.
  * The class idea is right and the geometry has to commit to it: 50 m of house with
  * its roof at y +92 on a hull whose deck is at +15 makes the gun five times the
  * freeboard, and the gallery rails at x +-48.5 put the after third of the ship WIDER
@@ -708,16 +713,103 @@ function monitorParts({ lod }) {
   const full = lod === 0;
   const B = new Buckets();
 
+  /**
+   * ------------------------------------------------------------------------
+   * LOD2 — ONE DRAW CALL, AND NOTHING IN IT IS OPTIONAL
+   * ------------------------------------------------------------------------
+   * MEASURED, and every figure below is `node tools/silhouette.mjs` LOD COHERENCE
+   * on this hull, i.e. IoU of the LOD2 side mask against LOD0's in LOD0's own
+   * raster window. The floor is 0.72 and the tool exits 1 under it.
+   *
+   * This branch shipped at 0.723 — three thousandths of margin, the tightest
+   * figure in the game, tighter than the player cruiser's 0.764 — and nobody
+   * wrote down why. It is at 0.875 now. What follows is each line's measured
+   * worth, taken by deleting that line alone from the block as it stands, so
+   * that the next person to trim this trims it with a number in hand.
+   *
+   *   delete the barbette          0.875 -> 0.835   AND THE SHIP COMES APART
+   *   delete the radiator fins     0.875 -> 0.818
+   *   delete the two rail lofts    0.875 -> 0.827   AND THE FINS COME OFF
+   *   delete the after deckhouse   0.875 -> 0.837
+   *   delete the mast              0.875 -> 0.870
+   *   delete the muzzle brakes     0.875 -> 0.869
+   *   delete the bells             0.875 -> 0.872
+   *
+   * At the 0.723 this replaced, deleting the two rail lofts alone — a line that
+   * reads like "a far LOD does not need stern rails" — took it to 0.669 and
+   * exited the tool 1. That is how little was left.
+   *
+   * THE BARBETTE IS LOAD-BEARING IN THE LITERAL SENSE, and the IoU is the least of
+   * it. It is the only thing joining the gun house to the raft: the house's lowest
+   * station sits at y +39 and the deck under it is at y +15, so with the drum gone
+   * the LOD2 side mask is TWO 4-connected components — 8699 px of hull and 5194 px
+   * of gun house and barrels floating 24 m above it. The version this block
+   * replaced was in exactly that state, at 7006 + 4961 px, and had been since the
+   * Coalition rebuild: A CAPITAL HULL THAT CAME APART IN THE AIR AT ITS FAR LOD.
+   * `tools/silhouette.mjs` cannot see it — its DETACHED FRAGMENTS pass runs over
+   * the cruiser plus modules and never over a ship class, so the only number that
+   * looks at these hulls at all is the IoU on the same line as this comment. If
+   * you take one thing out of this block, do not let it be this line.
+   *
+   * THE RAILS HOLD THE FINS UP, which is why deleting them costs more than their
+   * own pixels: the fins hang off the gallery at x +-46 and the rails are what
+   * connects that to the hull, so a rail-less LOD2 sheds a 1051 px fin pair as a
+   * second component as well.
+   *
+   * THE FINS ARE THE CLASS. See the note at the LOD0 fin loop: hung DOWNWARD off
+   * an open frame is what stops the Sledge collapsing into the Bulwark. This hull
+   * sits in both of the Coalition's two tightest intra-faction pairs — measured
+   * today, corvette/monitor 11.8 and monitor/destroyer 12.5 mean, against a 10.0 m
+   * bar — so it is the hull with the least separation to spend. A far LOD that
+   * drops the fins is a far LOD that spends it.
+   *
+   * IT IS STILL ONE DRAW CALL. `buildShip` runs `mergeBuckets` on everything past
+   * LOD0, so past the first switch only the SURFACE count is paid — which is why
+   * every part here is on 'hull' even where LOD0 puts it on 'dark', 'plating' or
+   * 'greeble'. `ships/audit.mjs` `real` for this class is 11/6/1 before and after,
+   * and its LOD0 triangle count is untouched at 2296; the LOD2 column goes
+   * 248 -> 414 against a 5000 budget, which is between the Bulwark's 386 and the
+   * Anvil's 416. Triangles are cheap and draw calls are not.
+   */
   if (lod >= 2) {
     B.add('core', 'hull', MN_HULL.loft({ lod, at: [-118, 46, 128] }));
     // The gun house and the barrels ARE the class, so they are what the far LOD
     // spends its triangles on.
     B.add('core', 'hull', MN_GUN_HOUSE.loft({ lod, at: [-14, 20] }), { pos: [0, MN_GUN_Y, MN_GUN_Z] });
+    // THE BARBETTE. Read the block comment before deleting this. It is the whole
+    // structural connection between the gun house and the hull; without it this
+    // level is two objects, not one ship.
+    B.add('core', 'hull', G.pipeRun({ length: 26, radius: 30, sides: 8, axis: 'y', caps: false, detail: D }),
+      { pos: [0, 12, MN_GUN_Z] });
     for (const s of [-1, 1]) {
       B.add('core', 'hull', G.pipeRun({ length: 190, radius: 6.5, sides: 4, axis: 'z', detail: D }),
         { pos: [s * 15, MN_GUN_Y + 4, 70] });
+      // The muzzle brake. At LOD0 this is the thing in frame when nothing else is;
+      // at 17.6 km — which is where this level switches in, length * 42 — it is
+      // the far end of the only feature anybody can still resolve.
+      B.add('core', 'hull', G.pipeRun({ length: 16, radius: 12.5, sides: 6, axis: 'z', caps: false, detail: D }),
+        { pos: [s * 15, MN_GUN_Y + 4, 244], rot: [0, 0, s * 0.16] });
       // The open stern frame: two rails with the bells between them.
       B.add('core', 'hull', MN_RAIL.loft({ lod, at: [-120] }), { pos: [s * MN_RAIL_X, -6, 0] });
+    }
+    // The after deckhouse, and the mast over the gun — the two things that give the
+    // after half and the crown of the profile any height at all at this range.
+    B.add('core', 'hull', MN_HOUSE.loft(), { pos: [5, 0, 0] });
+    B.add('core', 'hull', G.antennaMast({
+      height: 30, radius: 2.0, tipRadius: 1.0, spars: 1, sparSpan: 10, detail: D,
+    }), { pos: [4, MN_GUN_Y + 26, MN_GUN_Z - 30] });
+    // The bells the rails carry, and the fins hung under them. Same two-fin,
+    // two-bell reduction LOD1 uses, so LOD1 and LOD2 are the same authoring
+    // decision read twice rather than two independent guesses.
+    for (const x of [-13, 13]) {
+      B.add('core', 'hull', G.thrusterBell({
+        throat: 6.5, mouth: 10, length: 20, sides: 6, collar: false, inner: false, detail: D,
+      }), { pos: [x, 4, -136] });
+    }
+    for (const [s, z, chord, span] of [[-1, -130, 32, 42], [1, -110, 24, 30]]) {
+      B.add('core', 'hull', G.radiatorFin({
+        chord, span, thickness: 2.2, sweep: -chord * 0.38, tipChord: chord * 0.62, rim: 2.4, detail: D,
+      }), { pos: [s * 46, -20, z], rot: [0, 0, PI - s * 0.34] });
     }
     return { buckets: B.list() };
   }
