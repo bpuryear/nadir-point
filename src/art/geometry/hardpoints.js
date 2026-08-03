@@ -537,7 +537,10 @@ export function attachModule(hullResult, hardpointId, moduleDef, ctx) {
   if (!moduleDef?.build) throw new Error(`[hardpoints] module "${moduleDef?.id}" has no build(ctx)`);
 
   // Swapping is legal and common; the refit screen relies on it.
-  if (entry.object) detachModule(hullResult, hardpointId);
+  // A SWAP IS ONE RESKIN, NOT TWO. The refit screen's commonest action is replacing a
+  // module with another on the same mount; re-cutting the seats for the empty mount in
+  // between is a whole re-merge nobody ever sees.
+  if (entry.object) detachModule(hullResult, hardpointId, { reskin: false });
 
   const authored = moduleDef.hardpoint;
   const mirrored = !moduleDef.noMirror
@@ -573,6 +576,7 @@ export function attachModule(hullResult, hardpointId, moduleDef, ctx) {
   entry.module = moduleDef;
   entry.mirrored = mirrored;
   hullResult.silhouetteDirty = true;
+  reskinHull(hullResult);
 
   return {
     object,
@@ -589,7 +593,7 @@ export function attachModule(hullResult, hardpointId, moduleDef, ctx) {
  *
  * @returns {boolean} true if something was removed
  */
-export function detachModule(hullResult, hardpointId) {
+export function detachModule(hullResult, hardpointId, { reskin = true } = {}) {
   const entry = hullResult?.hardpoints?.get(hardpointId);
   if (!entry?.object) return false;
   const obj = entry.object;
@@ -601,7 +605,50 @@ export function detachModule(hullResult, hardpointId) {
   entry.module = null;
   entry.mirrored = false;
   hullResult.silhouetteDirty = true;
+  if (reskin) reskinHull(hullResult);
   return true;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * THE LOADOUT, AS THE HULL SEES IT — and why it is recomputed rather than tracked
+ * ---------------------------------------------------------------------------
+ * The hull adapts to what is fitted (`cruiser.js#seatFor`), so something has to tell
+ * it. That something is this map: mount id -> the module definition sitting on it,
+ * read straight off the sockets that already hold it.
+ *
+ * IT IS DERIVED, NEVER ACCUMULATED. The obvious implementation keeps a `fit` object on
+ * `hullResult` and mutates it in attach and detach. That is a second copy of state the
+ * sockets already hold, and the first swap that throws between the two mutations
+ * leaves the hull wearing a seat for a module that is not there. Rebuilding it from
+ * the sockets is six map lookups and cannot drift.
+ *
+ * NOTE THE KEY: `id`, the mount being fitted, not `module.hardpoint`. A port-authored
+ * module installed on the starboard sponson is a DIFFERENT SEAT — the two sponsons are
+ * 170 m apart in z (F13) — and `contracts.js#fitProfile` takes the mount for exactly
+ * this reason.
+ */
+export function currentFit(hullResult) {
+  const fit = Object.create(null);
+  for (const id of HARDPOINTS) {
+    const e = hullResult?.hardpoints?.get(id);
+    if (e?.module) fit[id] = e.module;
+  }
+  return fit;
+}
+
+/**
+ * Ask the hull to re-cut its six seats for what is now bolted to it.
+ *
+ * A hull that cannot (an older `buildCruiser` result, a test double, another ship
+ * class) is left alone rather than special-cased: adaptation is a property a hull may
+ * have, and every other hull in the fleet legitimately has not got it.
+ *
+ * @returns {number} milliseconds, or -1 if this hull does not adapt
+ */
+export function reskinHull(hullResult) {
+  if (typeof hullResult?.reskin !== 'function') return -1;
+  return hullResult.reskin(currentFit(hullResult));
 }
 
 /** Everything currently bolted on, in HARDPOINTS order. For the refit UI. */

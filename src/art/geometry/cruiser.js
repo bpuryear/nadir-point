@@ -238,6 +238,7 @@ import * as G from './greeble.js';
 import { Mass, SECTION_LOD } from './ships/common.js';
 import { CRUISER_HARDPOINTS, CRUISER_ANCHORS, createSockets } from './hardpoints.js';
 import { SCALE_CUE } from '../../core/units.js';
+import { fitProfile, footprintNorm } from '../../core/contracts.js';
 
 export const CRUISER_LENGTH = 1400;
 
@@ -1147,7 +1148,96 @@ class Buckets {
     b.parts.push(xf ? { geo, ...xf } : { geo });
   }
 
+  /**
+   * ------------------------------------------------------------------------
+   * THE SEAT SLICE — what makes a refit a re-merge instead of a rebuild
+   * ------------------------------------------------------------------------
+   * Adaptation makes the six seats a function of the loadout, so a refit has to
+   * regenerate them. It must NOT regenerate the ship: `core/hull` holds the spine, the
+   * ridge and the fillet, and if hull form ever became a function of the loadout the
+   * LOD2 coherence margin would become fifteen thousand untested cases instead of one.
+   *
+   * The six seats are built in one uninterrupted loop (`hullParts` step 6), so within
+   * any one bucket every seat part is CONTIGUOUS. Recording where that run starts and
+   * how long it is turns a refit into `parts.splice(start, count, ...newSeatParts)`,
+   * which preserves the merge order EXACTLY — so a hull built with a fit is
+   * byte-identical to a bare hull re-seated with that fit, and `buildCruiser` can
+   * prove it rather than assert it.
+   */
+  markSeats() {
+    this._mark = new Map();
+    for (const [k, b] of this.map) this._mark.set(k, b.parts.length);
+  }
+
+  sealSeats() {
+    for (const [k, b] of this.map) {
+      const start = this._mark?.get(k) ?? 0;
+      b.seatStart = start;
+      b.seatCount = b.parts.length - start;
+    }
+    this._mark = null;
+  }
+
   list() { return Array.from(this.map.values()); }
+}
+
+/** The six mounts, in the one order this file ever walks them. */
+const MOUNTS = ['bow', 'dorsal', 'ventral', 'port', 'starboard', 'engine'];
+
+/**
+ * What the hull may know about a loadout: mount id -> `contracts.js#fitProfile`.
+ *
+ * Callers hand this in as module DEFINITIONS (the refit path, `hardpoints.js`) or as
+ * already-resolved profiles (probes and audits that want to drive the seat directly).
+ * Both are accepted and normalised here, once, so no caller has to remember which.
+ * A mount that is absent, null, or whose module has no `fit` declaration falls back to
+ * the unfitted seat rather than throwing — `sim/selftest.mjs` registers synthetic
+ * fixtures built from an empty Group and they legitimately have no footprint.
+ */
+function resolveFit(fit) {
+  if (!fit) return null;
+  const out = Object.create(null);
+  let any = false;
+  for (const id of MOUNTS) {
+    const v = fit instanceof Map ? fit.get(id) : fit[id];
+    if (!v) continue;
+    const p = typeof v.massClass === 'number' ? v : fitProfile(v, id);
+    if (!p) continue;
+    out[id] = p;
+    any = true;
+  }
+  return any ? out : null;
+}
+
+/**
+ * The six seats, alone, into a fresh set of buckets. `hullParts` calls this inline;
+ * `buildCruiser#reskin` calls it on its own to re-cut the seats without touching a
+ * single triangle of ship.
+ *
+ * Everything it needs is derived from `(rng, lod)`, which is what makes the two paths
+ * agree: `RNG#fork` hashes the seed with the label and does NOT consume the parent
+ * (`core/rng.js:24`), so `rng.fork('cruiser:hull').fork('mount:bow')` is the same
+ * stream whether it is taken before or after the rest of the hull was generated.
+ */
+function buildSeats(B, { rng, lod, fit }) {
+  const D = G.detailForLod(lod);
+  const full = lod === 0;
+  const card = full ? SECTION_LOD.full : SECTION_LOD.mid;
+  const r = rng.fork('cruiser:hull');
+  const f = resolveFit(fit);
+  for (const id of MOUNTS) {
+    mountSeat(B, id, CRUISER_ANCHORS[id], {
+      detail: D, full, rng: r, card, fit: f ? f[id] ?? null : null,
+    });
+  }
+}
+
+/** Seat geometry on its own, for the refit path. Never called at LOD2 — see below. */
+export function seatParts({ rng, lod = 0, fit = null }) {
+  const B = new Buckets();
+  if (lod >= 2) return B.list();
+  buildSeats(B, { rng, lod, fit });
+  return B.list();
 }
 
 // ---------------------------------------------------------------------------
@@ -1158,10 +1248,16 @@ class Buckets {
  * Pure geometry. No materials, no THREE.Mesh, nothing that needs a GPU or a DOM -
  * which is what lets `tools/` count triangles for this hull without a browser.
  *
- * @param {{rng: import('../../core/rng.js').RNG, lod?: number}} p
+ * `fit` is the loadout: mount id -> module definition (or a resolved
+ * `contracts.js#fitProfile`). Omit it and the hull is the bare hull, to the byte —
+ * `seatFor(id, null)` returns the seat table's own entry and nothing downstream of it
+ * can tell that adaptation exists. THAT is the property to keep: the ship with nothing
+ * fitted is what it was, and every triangle below is paid for by something bolted on.
+ *
+ * @param {{rng: import('../../core/rng.js').RNG, lod?: number, fit?: Object}} p
  * @returns {{buckets: Array, lights: Array, masses: Array, detail: number}}
  */
-export function hullParts({ rng, lod = 0 }) {
+export function hullParts({ rng, lod = 0, fit = null }) {
   const D = G.detailForLod(lod);
   const B = new Buckets();
   const r = rng.fork('cruiser:hull');
@@ -1643,10 +1739,16 @@ export function hullParts({ rng, lod = 0 }) {
   // mount assembly is under two pixels" - true of a bolt ring, false of a 130 m
   // apron with three plate runs off it, and the benchmark's camera sits at 7.2 km,
   // i.e. LOD1, so LOD1 is where this ship is actually seen.
+  //
+  // AND THEY ARE THE ONLY THING ON THIS SHIP THAT KNOWS WHAT IS FITTED. The loop is
+  // bracketed by `markSeats`/`sealSeats` so every bucket records where its seat parts
+  // start and how many there are, which is what lets a refit re-cut six seats and
+  // re-merge three geometries instead of rebuilding the hull. Nothing outside these
+  // five lines may read `fit`.
   // =========================================================================
-  for (const id of ['bow', 'dorsal', 'ventral', 'port', 'starboard', 'engine']) {
-    mountSeat(B, id, CRUISER_ANCHORS[id], { detail: D, full, rng: r, card });
-  }
+  B.markSeats();
+  buildSeats(B, { rng, lod, fit });
+  B.sealSeats();
 
   // =========================================================================
   // 7. THE THINGS THE CREW BOLTED ON. 8-14% of hull volume that does not match.
@@ -2277,6 +2379,27 @@ const SEAT = {
     ],
     chocks: [[-40, -34, 52, 30, 22, -1.24], [38, 28, 44, 24, 17, 0.62], [-26, 44, 36, 20, 14, 1.86]],
     service: { from: [24, -30], len: 96, bearing: -1.36, pitch: 0.09 },
+    adapt: {
+      // `rx` MAY NOT EXCEED TODAY'S 38. At z 420 the station is `[420, 84, ...
+      // deckFlat 0.46]`, so the foredeck's FLAT is 84 x 0.46 = 38.6 m of half-beam.
+      // The pan already fills it; one metre more puts the rim on the deck chamfer,
+      // where a pan authored in the mount's own tangent plane stops lying on the
+      // surface. A light fit therefore gets a SMALLER pan, not a heavy fit a bigger
+      // one, and that is the correct direction on the one mount that is already at
+      // its feature's edge.
+      // `ry` is capped for the reason the `plates` comment above gives: anchor z 420
+      // plus 40 lands the forward rim at 460, ON the prow knuckle break, and the
+      // forward 200 m is calm reserve.
+      rx: [27, 38], ry: [30, 40],
+      zWindow: [150, 452],
+      aimSpan: 0.55,
+      load: [{ z0: 214, z1: 342, side: 1, facet: [3, 2], t0: 0.22, t1: 0.60, drift: -0.18, out: 3, surface: 'plating' }],
+      chock: [30, -52, 40, 22, 16, -0.42],
+      // The foredeck runs AFT for four hundred metres and stops FORWARD at 460, and
+      // outboard of x 38.6 it is the deck chamfer, falling 48 m in 45. So the two faces
+      // with a strong aft component and nothing else.
+      fair: { faces: [0, 1] },
+    },
   },
   dorsal: {
     // The one mount that already had a seat - a 30 m barbette - and not a coincidence
@@ -2293,6 +2416,22 @@ const SEAT = {
     ],
     chocks: [[-34, -52, 46, 28, 19, -1.42], [32, 46, 40, 24, 24, 0.48], [8, -58, 34, 18, 13, -1.96]],
     service: { from: [-28, -46], len: 78, bearing: -1.72, pitch: 0.12 },
+    adapt: {
+      // The barbette is a 92 x 116 m box with 8 m of DRAFT (`hullParts`, THE DORSAL
+      // BARBETTE), so its TOP face — the one the pan is cut into — is 76 x 100, half
+      // 38 x 50. The bare pan is already 42 x 50 and its coaming stands at 47.5, i.e.
+      // the seat overhangs the thing it is cut into by 9.5 m before adaptation touches
+      // it. So this is the one mount where the apron may only SHRINK, and the one
+      // mount with no fairing: there is nowhere outboard of that coaming for a haunch
+      // to land except fifty metres of air above the ridge crown.
+      rx: [33, 42], ry: [40, 50],
+      // The ridge table runs z -430..+60 and the plate runs ride the ridge FLANKS, so
+      // the window stops short of both ends of it.
+      zWindow: [-300, 58],
+      aimSpan: 0.55,
+      load: [{ z0: -226, z1: -140, side: -1, ridge: true, facet: [4, 3], t0: 0.18, t1: 0.52, drift: 0.14, out: 3, surface: 'plating' }],
+      chock: [-30, 56, 38, 20, 15, 1.28],
+    },
   },
   ventral: {
     face: 'down', padRadius: 44, rx: 58, ry: 76, tilt: [0, 0, 0],
@@ -2304,6 +2443,25 @@ const SEAT = {
     ],
     chocks: [[-56, -58, 54, 30, 23, -1.18], [52, 66, 46, 26, 18, 0.56], [-36, 84, 36, 20, 15, 1.92]],
     service: { from: [32, 62], len: 104, bearing: 0.74, pitch: 0.10 },
+    adapt: {
+      // `BAY.throat` is 150 m of clear half-width and the pan is cut into the throat's
+      // ROOF, so 72 leaves half the throat either side of it. Along-ship the berth is
+      // 445 m (`BAY.z0..z1`) and nothing constrains `ry` but the roof's own frames.
+      rx: [44, 72], ry: [58, 95],
+      // The bay's own z extent, inside both end frames.
+      zWindow: [-226, 210],
+      aimSpan: 0.60,
+      load: [{ z0: -220, z1: -84, side: 1, facet: [1, 2], t0: 0.16, t1: 0.52, drift: -0.16, out: 3, surface: 'dark' }],
+      chock: [44, -92, 40, 22, 17, -0.64],
+      // The only mount with room in every direction: 150 m of clear throat half-width
+      // and 222 m of berth either side of the anchor, against a coaming that reaches
+      // 85 x 112. All six faces, and this is the mount where the fairing reads.
+      fair: { faces: [0, 1, 2, 3, 4, 5] },
+      // THE PAN DOES NOT SINK HERE. Everywhere else a heavy fit cuts deeper; the
+      // ventral pan's floor IS the salvage bay's roof and four more metres of it is a
+      // hole into the berth. Nine metres, at every class.
+      sink: 0,
+    },
   },
   port: {
     face: 'up', padRadius: 32, rx: 26, ry: 40, tilt: [0, 0, -0.13],
@@ -2315,6 +2473,31 @@ const SEAT = {
     ],
     chocks: [[-24, -44, 44, 26, 21, -1.30], [-22, 40, 34, 20, 15, 1.74], [20, 14, 30, 16, 12, 0.22]],
     service: { from: [10, -34], len: 84, bearing: -1.44, pitch: 0.11 },
+    adapt: {
+      // The sponson shelf is 84 x 88 m at x -180 and the anchor is at x -158, i.e.
+      // TWENTY-TWO METRES INBOARD OF THE SHELF'S CENTRE. So the pan has 64 m of shelf
+      // outboard and only 20 inboard, and `rx` 31 already runs 11 m off the inboard
+      // edge onto the upper flank the shelf stands on. That is the binding limit here,
+      // not the shelf's width. Along-ship the shelf is z 16..104 and the anchor is at
+      // 60, so `ry` 44 is the exact half-depth.
+      rx: [20, 31], ry: [30, 44],
+      zWindow: [-70, 210],
+      aimSpan: 0.50,
+      // Port authors TWO plate runs where the others author three, so it needs two
+      // load runs to reach `1 + massClass` at class 3. They are not the starboard
+      // sponson's runs mirrored: F13 is that the two sponsons are 170 m apart in z
+      // and a mirrored seat undoes it.
+      load: [
+        { z0: 96, z1: 202, side: -1, facet: [1, 2], t0: 0.26, t1: 0.66, drift: -0.14, out: 3, surface: 'dark' },
+        { z0: -56, z1: 58, side: -1, facet: [4, 5], t0: 0.18, t1: 0.50, drift: 0.16, out: 3, surface: 'plating' },
+      ],
+      chock: [-18, 62, 32, 18, 13, 1.20],
+      // OUTBOARD, where the shelf has 64 m of it. Inboard, forward and aft of the shelf
+      // the surface underneath is the hull's own upper deck at y ~54 against an anchor
+      // at 46, so a haunch there would be BURIED rather than floating — safe, but not
+      // visible, and a fairing nobody can see is triangles.
+      fair: { faces: [2, 3] },
+    },
   },
   starboard: {
     face: 'up', padRadius: 32, rx: 26, ry: 40, tilt: [0, 0, 0.13],
@@ -2325,6 +2508,18 @@ const SEAT = {
     ],
     chocks: [[22, 44, 48, 28, 19, 1.66], [26, -38, 36, 22, 16, -1.22], [-18, -10, 28, 15, 11, 2.96]],
     service: { from: [-12, 36], len: 92, bearing: 1.52, pitch: 0.09 },
+    adapt: {
+      // Same shelf, mirrored in x and 170 m aft, so the same bounds — and every other
+      // number on this mount is different, which is the point.
+      rx: [20, 31], ry: [30, 44],
+      zWindow: [-330, 40],
+      aimSpan: 0.50,
+      load: [{ z0: -318, z1: -232, side: 1, facet: [4, 5], t0: 0.20, t1: 0.58, drift: 0.12, out: 3, surface: 'plating' }],
+      chock: [18, -66, 34, 19, 14, -1.02],
+      // Outboard is +x here, so the mirror-image pair of port's faces — the one place
+      // in this table where starboard IS port reflected, because the shelf is.
+      fair: { faces: [5, 0] },
+    },
   },
   // The drive well IS the apron - a 108 m socket cut in the transom, deeper than any
   // pan this file could add. Its seat is what a socket needs and a pan does not:
@@ -2335,12 +2530,444 @@ const SEAT = {
 };
 
 /**
+ * ============================================================================
+ * ADAPTATION — the seat table becomes a function of what is fitted
+ * ============================================================================
+ *
+ * `SEAT` above is a constant: every mount grows the same pan, the same coaming, the
+ * same plate runs and the same three chocks whether it is empty, carrying a 240 t
+ * sensor mast or carrying a 2400 t hangar deck. THAT is what makes a fitted ship read
+ * as a good hull wearing good modules. Adaptation is that table becoming
+ *
+ *     seatFor(mountId, fitProfile)  ->  a resolved SEAT entry
+ *
+ * and the whole feature is the six numbers below moving in metres. Nothing here is a
+ * new kind of object except the FAIRING; the other five are things the seat already
+ * builds, sized by the load they are carrying.
+ *
+ * THREE RULES, EACH OF WHICH IS A THING THAT WOULD OTHERWISE GO WRONG SILENTLY.
+ *
+ * 1. NO PER-MODULE BRANCH. `seatFor` reads exactly what `contracts.js#fitKey` hashes
+ *    — mount, mass class, QUANTISED footprint, service — and nothing else. There is no
+ *    module id in this file and no `switch`. Two different modules with the same key
+ *    must produce byte-identical seat geometry, and `fitKey` is the promise that they
+ *    do.
+ *
+ *    The quantisation is load-bearing and it is easy to get wrong: `fitProfile`
+ *    publishes BOTH `norm` (from the raw declared metres) and `footprintQ` (snapped to
+ *    `FIT.footprintQuantumM`). A seat built off `p.norm` would be a function of the raw
+ *    footprint, two modules with equal keys would differ by a metre of apron, and the
+ *    determinism test would fail on a difference nobody can see. So this file
+ *    re-normalises from `footprintQ` and never touches `p.norm`.
+ *
+ * 2. THE BARE HULL IS UNTOUCHED, BY CONSTRUCTION. `seatFor(id, null)` returns `SEAT[id]`
+ *    itself — the same object, not a copy of it. With nothing fitted the hull is
+ *    byte-identical to what it was before this block existed, which is a property that
+ *    can be asserted rather than reviewed.
+ *
+ * 3. NO NEW SURFACE, THEREFORE NO NEW DRAW CALL. Everything below lands in
+ *    `core/plating`, `core/dark` or `core/greeble`, three buckets the bare hull already
+ *    owns and `buildCruiser` already collapses to one mesh each. A mesh per mount would
+ *    cost six draws and TWELVE with GTAO against a measured 228 of 320. An adaptation
+ *    that wants a new surface is not an adaptation.
+ *
+ * WHAT DOES NOT ADAPT, stated so it does not creep in: the mount pad's radius, the
+ * docking collar, the two jittered conduits, the hardpoint anchor, and the whole drive
+ * well. The pad and the collar are the INTERFACE — the module's own cut plate lands on
+ * the collar's top face at `hardpoints.js#SEAT_STANDOFF` — and an interface that
+ * changes shape with the thing plugged into it is not an interface. The well is a
+ * socket rather than a pan (`SEAT.engine.well`) and its register features are cut from
+ * the transom's own section; there is no apron there to grow.
+ */
+const ADAPT = {
+  /**
+   * Indexed by mass class 1..3 throughout. `massClassOf` is DERIVED from `def.mass`
+   * (`contracts.js:700`), so a module cannot buy a heavier-looking seat without buying
+   * the handling penalty the player feels.
+   */
+
+  /** Coaming overhang, as a multiple of the apron rim. Today's constant is 1.13. */
+  over: [1.10, 1.13, 1.18],
+
+  /**
+   * Extra metres the pan sinks below its 9 m floor. THE COAMING DOES NOT GROW TALLER,
+   * and that is a correction to `cruiser-adaptation.md` §B.2 item 2, which asks for 3 /
+   * 5 / 8 m proud. `SEAT_STANDOFF` is 3 and the module's own graft plate occupies
+   * +3..+3+plateH over a root that is wider than the coaming on every mount in the
+   * library (roots are 90-820 m across; coamings are 44-90). An 8 m coaming therefore
+   * stands FIVE METRES INSIDE the module it is supposed to seat — which is exactly the
+   * interpenetration `hardpoints.js` §SEATING records fixing, re-introduced as a
+   * feature. Depth is the same read for free: 9 + 4 = 13 m is past the 8 m
+   * self-shadowing threshold this whole hull is built on, and it can only ever cut
+   * into solid hull.
+   */
+  sink: [0, 2, 4],
+
+  /** Plate-run length, as a multiple of the authored span. Class 2 is the neutral fit. */
+  plateLen: [0.85, 1.00, 1.15],
+
+  /**
+   * How far a plate run stands proud of the skin, metres. Today's constant is 3.
+   *
+   * This is the one adaptation that is a real THICKNESS rather than a size, and it is
+   * here because it is the only one that reaches the ship's OUTLINE: the ventral runs
+   * lie under the keel and the broadside runs on the flank, so `silhouetteSignature`'s
+   * `bottom` and `halfWidth` channels see it directly. Two metres of plate under a
+   * 240 t sensor and five under a 1420 t battery is a load path you can measure from
+   * outside the ship, which is what stops adaptation being a thing only the author can
+   * see.
+   */
+  plateOut: [2, 3, 5],
+
+  /** Chock scale. A heavier module's buttresses are bigger buttresses. */
+  chock: [0.88, 1.00, 1.14],
+
+  /** Service-trunk radius, metres. Today's constant is 6. */
+  trunk: [5, 6, 8],
+
+  /**
+   * Fairing: how many metres OUTBOARD OF THE COAMING the haunch dies into the skin.
+   *
+   * Absolute metres and not a multiple of the apron, which is the version that had to
+   * be measured out of this file. As a multiple it ran 86% past the coaming and put a
+   * 53 m flange over the dorsal ridge fifty metres in the air — because the apron's
+   * size says how big the module is, and it says nothing about how much SHIP there is
+   * to land on outboard of it. That is per-mount data (`adapt.fair.faces`) and it is
+   * authored per mount.
+   */
+  fairReach: [10, 14, 20],
+
+  /**
+   * Cantilever threshold: half the along-ship footprint, over the pad radius. Above
+   * this the module's mass hangs off the pad rather than standing on it and the seat
+   * grows a fourth chock. Measured over the library this splits bow (1.4-3.3), dorsal
+   * (1.0-2.0) and ventral (1.2-9.3); both broadside mounts are above it at every fit,
+   * which is correct — a 188-340 m broadside root is a cantilever by definition.
+   */
+  cantilever: 2.0,
+};
+
+/**
+ * WHERE A SERVICE TRUNK POINTS. `service` names a NEED; this file decides where that
+ * need physically is, from `CRUISER_SUBSYSTEMS` — the same positions the damage model
+ * and the salvage economy use, so the trunk aims at a thing that exists rather than at
+ * a number in the seat table.
+ *
+ * Three of the six enums land on the salvage bay and that is not a shortcut: on a
+ * salvager the magazine, the hold and the boat bay ARE the bay. `coolant` goes aft to
+ * the outriggers because that is where the radiators are, which is the one enum whose
+ * bearing is unmistakable in a render.
+ */
+const SERVICE_TARGET = {
+  reactor: 'reactor',
+  magazine: 'salvage_bay',
+  hold: 'salvage_bay',
+  hangar: 'salvage_bay',
+  sensor: 'sensor_array',
+  coolant: 'engine_port',
+};
+
+/**
+ * A world point in the seat's own (across, along-ship) plane. The mapping is the one
+ * the `SEAT` header states and `mountSeat#lay` relies on: for an `up` mount local X is
+ * world +X and local Y is world -Z; for `down` local Y is world +Z, so `along` flips.
+ */
+function seatPlane(face, anchor, target) {
+  const across = target[0] - anchor[0];
+  const along = (face === 'down' ? -1 : 1) * (target[2] - anchor[2]);
+  return [across, along];
+}
+
+/**
+ * Where a trunk points, in the two angles the run has: a BEARING in the mount plane and
+ * a PITCH out of it. Both are clamped, and both clamps are the safety argument.
+ *
+ * The trunk is a 78-104 m pipe lying in the mount's TANGENT PLANE. The authored
+ * bearings were chosen so that run stays on the surface it is lying on and dies under
+ * one of the plate runs; a freely-aimed trunk on a hull whose section moves 60 m over
+ * that distance leaves the skin and hangs in the air at its far end. So it LEANS toward
+ * its service by up to `aimSpan` and never swings away from the neighbourhood the
+ * authored value was validated in. Half a radian is 29 degrees, unmistakable side by
+ * side and unable to leave the deck.
+ *
+ * THE PITCH IS WHAT ACTUALLY SEPARATES THE SIX SERVICES, and finding that out was the
+ * measurement that changed this function. Aimed by bearing alone, ALL SIX SERVICES
+ * PRODUCE ONE SEAT AT THE BOW: every subsystem on the ship is aft of z 420, four of
+ * them are within eleven degrees of dead astern, and the clamp then saturates the same
+ * way for all of them. In elevation they are nowhere near each other — the sensor array
+ * is 92 m ABOVE the bow mount and the salvage bay 160 m below it — so pitch is the axis
+ * that carries the information. A trunk serving the bay dives into the deck; one
+ * serving the array runs almost flat over it.
+ *
+ * The pitch clamp is DELIBERATELY ASYMMETRIC: 0.45 rad of DIVE against 0.04 of RISE.
+ * Diving takes the pipe into a solid hull, which is free; rising takes it off the skin,
+ * which is the floating-part defect this file has already fixed twice.
+ *
+ * AND `pitch` IS NOT A DIVE ANGLE — it is a rotation about the seat's local X applied
+ * to the whole run, so WHICH WAY IT TIPS THE FAR END DEPENDS ON WHICH WAY THE RUN
+ * POINTS. `mountSeat#lay` puts the far end at local y = -cos(bearing) * len, and
+ * `place({rot:[p,0,0]})` moves that end's z by `y * sin(p)`. So the sign that makes a
+ * run dive is `sign(cos(bearing))`, and applying a naive positive "dive" instead RAISED
+ * the bow trunk — measured, it became the highest thing in two of the twenty-eight
+ * silhouette bins. This is the same class of error as the two angle conventions above
+ * and it is written down for the same reason.
+ *
+ * @returns {{bearing:number, pitch:number}}
+ */
+function serviceAim(S, anchor, service) {
+  const sv = S.service;
+  const targetId = SERVICE_TARGET[service];
+  const sub = targetId && CRUISER_SUBSYSTEMS.find((s) => s.id === targetId);
+  if (!sub) return { bearing: sv.bearing, pitch: sv.pitch };
+  const t = sub.position;
+  const [dx, dz] = seatPlane(S.face, anchor, t);
+  const len = Math.hypot(t[0] - anchor[0], t[1] - anchor[1], t[2] - anchor[2]) || 1;
+
+  let bearing = sv.bearing;
+  if (Math.abs(dx) + Math.abs(dz) > 1e-6) {
+    // `mountSeat#lay` sweeps the pipe's length to local (sin b, -cos b), i.e. to
+    // (across, along) = (sin b, cos b). So the bearing that points at (dx, dz) is
+    // atan2(dx, dz) and not the other order, which would be 90 degrees wrong on
+    // every mount and look deliberate.
+    const span = S.adapt.aimSpan;
+    let d = Math.atan2(dx, dz) - sv.bearing;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    bearing += Math.max(-span, Math.min(span, d));
+  }
+
+  // Along the mount's OUTWARD normal: negative means the service is inside the hull,
+  // which is the direction the trunk is allowed to lean hard.
+  const dn = (S.face === 'down' ? -1 : 1) * (t[1] - anchor[1]);
+  const dive = Math.max(-0.04, Math.min(0.45, (-dn / len) * 0.9));
+  return { bearing, pitch: sv.pitch + dive * (Math.cos(bearing) >= 0 ? 1 : -1) };
+}
+
+/**
+ * Which of a mount's ALLOWED apron faces lies nearest a bearing.
+ *
+ * The two angle conventions in this file are not the same one and mixing them is a
+ * ninety-degree error that looks deliberate. `apronOutline` puts vertex i at
+ * `theta = i/6 * 2pi + 0.26` in local (x, y), where local y is MINUS along-ship; a
+ * bearing `b` sweeps to (across, along) = (sin b, cos b). Equating the two gives
+ * `theta = pi/2 - b`, which is the one line below and the reason it is written down.
+ */
+function pickFace(faces, bearing) {
+  const step = (Math.PI * 2) / 6;
+  const theta = Math.PI * 0.5 - bearing;
+  let best = faces[0];
+  let bd = Infinity;
+  for (const f of faces) {
+    const c = (f + 0.5) * step + 0.26;
+    const d = Math.abs(((theta - c + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+    if (d < bd) { bd = d; best = f; }
+  }
+  return best;
+}
+
+/**
+ * A closed solid swept between two cross-sections with the SAME point count, with the
+ * winding decided by measurement rather than by hand.
+ *
+ * Four facets times two sides times two normal directions is how `skinPlate`'s header
+ * describes sixteen chances to get a winding wrong and see it only as a hollow plate
+ * in one view. This has the same exposure and takes the same way out: build the shell,
+ * take its signed volume, and reverse every triangle if it came out negative. A solid
+ * with a positive signed volume has outward normals, whatever order its author wrote
+ * the cross-section in.
+ */
+function sweptSolid(A, B) {
+  const n = A.length;
+  const tris = [];
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    tris.push([A[i], A[j], B[j]], [A[i], B[j], B[i]]);
+  }
+  for (let i = 1; i < n - 1; i++) tris.push([B[0], B[i], B[i + 1]]);
+  for (let i = 1; i < n - 1; i++) tris.push([A[0], A[i + 1], A[i]]);
+  let vol = 0;
+  for (const [p, q, s] of tris) {
+    vol += p[0] * (q[1] * s[2] - q[2] * s[1])
+      + p[1] * (q[2] * s[0] - q[0] * s[2])
+      + p[2] * (q[0] * s[1] - q[1] * s[0]);
+  }
+  const verts = [];
+  for (const [p, q, s] of tris) {
+    if (vol >= 0) verts.push(...p, ...q, ...s); else verts.push(...p, ...s, ...q);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+  g.computeVertexNormals();
+  return G.normalizeAttrs(g);
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * THE FAIRING — the owner's note, in eight triangles
+ * ---------------------------------------------------------------------------
+ * "make the modules additive to the hull but look seamless, like they were somewhat
+ * meant to be there."
+ *
+ * A module stands `SEAT_STANDOFF` = 3 m proud of its anchor on a fixed standoff with a
+ * 3-7 degree seeded tilt, and the gap between the hull and the module's own root is
+ * open air ALL THE WAY ROUND. `ship-language.md` is right that the gap should be
+ * visible — a dark line separating the module's value from the hull's is what makes it
+ * read as a separate object at three kilometres. It is wrong that it should be
+ * unbridged on every side.
+ *
+ * So: a HAUNCH. Its cross-section is a right triangle — a face standing against the
+ * coaming's outer wall, a slope running down and outboard, and an underside that is
+ * BELOW THE SKIN PLANE and therefore buried in the hull. It occupies ONE hexagon face,
+ * one or two of the six, never the ring: a skirt that closes the ring is a fillet and
+ * the module stops reading as bolted on. The open faces keep the dark line; the closed
+ * ones say the hull was built for this.
+ *
+ * Its three rules are geometric rather than aesthetic:
+ *   - it BITES INTO the coaming (`kIn` is 0.97 of the coaming's own overhang) instead
+ *     of meeting it flush. Two coplanar faces are a z-fight, and §1.3 of the design
+ *     doc forbids a face coplanar with the loft skin for the same reason;
+ *   - its foot sits 2.5 m BELOW the mount plane, so where the real hull curves away
+ *     from that plane the haunch emerges from the skin rather than floating over it.
+ *     Sinking into a solid is free; hovering above one is the defect this file has
+ *     already had to fix twice;
+ *   - IT ONLY GOES WHERE THERE IS SHIP TO LAND ON. `adapt.fair.faces` lists, per mount,
+ *     which of the six hexagon faces point at something. THE DORSAL HAS NO LIST AND
+ *     GROWS NO FAIRING: the barbette's top face is 38 m of half-width after its 8 m of
+ *     draft, and the bare seat's coaming already stands at 47.5 — the pan overhangs
+ *     the thing it is cut into, so every direction off it is a fifty-metre drop to the
+ *     ridge crown. Four mounts of five grow one, and that is the honest answer rather
+ *     than six identical skirts.
+ *
+ * EIGHT TRIANGLES a panel, sixteen a mount, at most eighty for a fully fitted ship, in
+ * `plating`, which is the coaming's own surface.
+ */
+function seatFairing(rx, ry, kIn, reach, zTop, zBot, face) {
+  const at = (i) => {
+    const m = ((i % 6) + 6) % 6;
+    const a = (m / 6) * Math.PI * 2 + 0.26;
+    return [Math.cos(a) * rx * APRON_R[m] * kIn, Math.sin(a) * ry * APRON_R[m] * kIn];
+  };
+  const section = (i) => {
+    const p = at(i);
+    // Outward by `reach` METRES along the vertex's own radial, so the haunch keeps the
+    // apron family's proportions instead of inheriting its scale.
+    const l = Math.hypot(p[0], p[1]) || 1;
+    const q = [p[0] * (1 + reach / l), p[1] * (1 + reach / l)];
+    return [[p[0], p[1], zTop], [p[0], p[1], zBot], [q[0], q[1], zBot]];
+  };
+  return sweptSolid(section(face), section(face + 1));
+}
+
+/**
+ * THE RESOLVED SEAT. Pure, total, and with no knowledge of any individual module.
+ *
+ * @param {string} id                     the mount BEING FITTED, which for a
+ *                                        port-authored module on the starboard sponson
+ *                                        is 'starboard' (F13: the two are 170 m apart
+ *                                        in z, so they are different seats)
+ * @param {Object|null} p                 `contracts.js#fitProfile`, or null for empty
+ * @returns {Object} a SEAT entry, plus `fairings` and `sink`
+ */
+function seatFor(id, p) {
+  const S = SEAT[id];
+  // The bare hull, to the byte: the unfitted seat is the same object it always was.
+  if (!p || !S.adapt) return S;
+  const A = S.adapt;
+  const i = p.massClass - 1;
+
+  // RULE 1: normalised from the QUANTISED footprint, never from `p.norm`.
+  const norm = footprintNorm(id, p.footprintQ);
+  const lerp = ([lo, hi], t) => lo + (hi - lo) * t;
+  const rx = lerp(A.rx, norm[0]);
+  const ry = lerp(A.ry, norm[1]);
+  const kx = rx / S.rx;
+  const ky = ry / S.ry;
+
+  // 1. THE PLATE RUNS — the strongest "this hull was built for this" cue there is.
+  // `1 + massClass` of them, taken in order from the mount's own list, each scaled
+  // about its own midpoint and clamped into the window the mount's z reserve allows.
+  const list = A.load ? S.plates.concat(A.load) : S.plates;
+  const k = ADAPT.plateLen[i];
+  const plates = list.slice(0, Math.min(1 + p.massClass, list.length)).map((q) => {
+    const mid = (q.z0 + q.z1) * 0.5;
+    const half = (q.z1 - q.z0) * 0.5 * k;
+    return {
+      ...q,
+      z0: Math.max(A.zWindow[0], mid - half),
+      z1: Math.min(A.zWindow[1], mid + half),
+      out: ADAPT.plateOut[i],
+    };
+  });
+
+  // 2. THE CHOCKS — two, plus one for a cantilever, plus one for a class-3 mass, and
+  // the first in the list is the one under the heaviest overhang so it is the one that
+  // grows. They ride the apron rim: scaling their positions by the apron's own growth
+  // is what keeps them standing just off it instead of drifting into open skin.
+  const cant = (p.footprintQ[1] * 0.5) / S.padRadius > ADAPT.cantilever;
+  const cList = A.chock ? S.chocks.concat([A.chock]) : S.chocks;
+  const nChocks = Math.min(cList.length, 2 + (cant ? 1 : 0) + (p.massClass === 3 ? 1 : 0));
+  const cs = ADAPT.chock[i];
+  // A CHOCK MAY FOLLOW THE APRON INWARD AND MAY THICKEN. IT MAY NOT REACH FURTHER FROM
+  // THE ANCHOR THAN THE BARE SEAT'S DOES, and that asymmetry is a measurement rather
+  // than caution. The bare hull's second dorsal chock already spans z 0..44 at y
+  // 122..146 while the barbette it stands on ends at z +18 — twenty-six metres of it
+  // is over a ridge crown 50 m below it. Scaling positions and lengths up pushed that
+  // tip another 7 m, far enough to become the tallest thing in a whole silhouette bin
+  // and to cost 0.5 m of loadout separation. The chocks were authored to land on named
+  // structure — the barbette's top face, the sponson shelf, the foredeck flat — and
+  // outward is the one direction in which there is no more of it.
+  //
+  // Height never scales at all: a chock's height is set by the thing it holds up, the
+  // module's own root at `SEAT_STANDOFF`, so a taller chock is a chock inside a module.
+  const chocks = cList.slice(0, nChocks).map(([ax2, al, len, w0, h0, br], n) => {
+    const g = cs * (n === 0 && cant ? 1.18 : 1);
+    return [ax2 * Math.min(1, kx), al * Math.min(1, ky), len * Math.min(1, g), w0 * g, h0, br];
+  });
+
+  // 3. THE SERVICE RUN — twelve triangles that say the module is plumbed in.
+  const { bearing, pitch } = serviceAim(S, CRUISER_ANCHORS[id], p.service);
+  const service = {
+    ...S.service,
+    from: [S.service.from[0] * kx, S.service.from[1] * ky],
+    bearing,
+    pitch,
+    radius: ADAPT.trunk[i],
+  };
+
+  // 4. THE FAIRING — one panel on the allowed face nearest the heaviest chock, and
+  // from class 2 a second on the allowed face nearest the trunk, so the trunk emerges
+  // from under a haunch rather than from under nothing. Never more than two, and never
+  // enough of them to close the ring.
+  const fairings = [];
+  if (A.fair) {
+    fairings.push(pickFace(A.fair.faces, chocks[0][5]));
+    if (p.massClass >= 2) {
+      const f = pickFace(A.fair.faces, bearing);
+      if (f !== fairings[0]) fairings.push(f);
+    }
+  }
+
+  return {
+    ...S,
+    rx,
+    ry,
+    over: ADAPT.over[i],
+    sink: A.sink ?? ADAPT.sink[i],
+    fairReach: ADAPT.fairReach[i],
+    plates,
+    chocks,
+    service,
+    fairings,
+  };
+}
+
+/**
  * A mount, occupied or not. This function existing once is why all six read as the
  * same kind of thing, which is why filling one reads as progress rather than as a
  * random new lump.
  */
-function mountSeat(B, id, anchor, { detail, full, rng, card }) {
-  const S = SEAT[id];
+function mountSeat(B, id, anchor, { detail, full, rng, card, fit = null }) {
+  const S = seatFor(id, fit);
   const [ax, ay, az] = anchor;
   const { face, padRadius } = S;
   const faceRot = face === 'up' ? [-Math.PI * 0.5, 0, 0]
@@ -2356,13 +2983,18 @@ function mountSeat(B, id, anchor, { detail, full, rng, card }) {
   if (S.well) return wellSeat(B, anchor, { detail, full, card });
 
   // ---- APRON: the pan, and the coaming that stands proud around it ---------
+  // `over` and `sink` are 1.13 and 0 on the bare hull and the fit moves them: a heavy
+  // module gets a wider overhang and a deeper pan, a light one a lip. The coaming's
+  // 4 m proud NEVER moves — see `ADAPT.sink`.
+  const over = S.over ?? 1.13;
+  const floorZ = -9 - (S.sink ?? 0);
   const rim = apronOutline(S.rx, S.ry);
   const floorPts = apronOutline(S.rx, S.ry, 0.80);
-  const outer = apronOutline(S.rx, S.ry, 1.13);
+  const outer = apronOutline(S.rx, S.ry, over);
   // Floor `dark`, coaming `plating`: a dark hole behind a bright rim is the read, and
   // it is the same one every recess on this hull uses (§4, recess colour).
   B.add('core', 'dark', seated(G.loft(
-    [{ z: -9, points: floorPts }, { z: 4, points: rim }],
+    [{ z: floorZ, points: floorPts }, { z: 4, points: rim }],
     { capFront: false, capBack: true, flip: true },
   )));
   B.add('core', 'plating', seated(G.mergeParts([
@@ -2373,8 +3005,11 @@ function mountSeat(B, id, anchor, { detail, full, rng, card }) {
   // ---- PAD, on the apron floor, and COLLAR, spanning the skin --------------
   // The pad is `plating`, not `hull`. On `hull` the five pads came back in the khaki
   // tier-2 variant and read as five bright tan patches evenly spread down a grey ship.
-  B.add('core', 'plating', G.mountPad({ radius: padRadius, height: 6, sides: 5, detail }),
-    { pos: outv(-9), rot: face === 'down' ? [Math.PI, 0, 0] : [0, 0, 0] });
+  // Its RADIUS never adapts and its TOP never moves: the pad grows downward with the
+  // floor so the collar still spans -3..+3 and the module's cut plate still lands on
+  // the ring at exactly `SEAT_STANDOFF`.
+  B.add('core', 'plating', G.mountPad({ radius: padRadius, height: 6 + (S.sink ?? 0), sides: 5, detail }),
+    { pos: outv(floorZ), rot: face === 'down' ? [Math.PI, 0, 0] : [0, 0, 0] });
 
   // ---- PLATE RUN: the load path, lying on the skin -------------------------
   for (const p of S.plates) {
@@ -2409,6 +3044,19 @@ function mountSeat(B, id, anchor, { detail, full, rng, card }) {
     }), bearing, across, along, h0 * 0.5 - 2)));
   }
 
+  // ---- FAIRING: the one thing here that is not already on the bare hull ----
+  // Empty mounts have none — an empty berth has nothing to fair INTO, and a haunch
+  // running up to open air is the "surface detail to make it look better" that
+  // ARCHITECTURE.md forbids. It appears when something is fitted and it is the
+  // difference between a module parked on a pan and a module the hull was cut for.
+  // Above the chocks in the file because it is above them on the ship: it starts where
+  // the coaming stops. LOD1 keeps it — it is 8 triangles and it is the joint.
+  for (const f of S.fairings ?? []) {
+    B.add('core', 'plating', seated(seatFairing(
+      S.rx, S.ry, over * 0.97, S.fairReach, 3.4, -2.5, f,
+    )));
+  }
+
   if (!full) return;
 
   B.add('core', 'greeble', G.dockingCollar({
@@ -2421,7 +3069,7 @@ function mountSeat(B, id, anchor, { detail, full, rng, card }) {
   // one that says the module is PLUMBED IN rather than parked.
   const sv = S.service;
   B.add('core', 'greeble', seated(G.place(
-    lay(G.pipeRun({ length: sv.len, radius: 6, sides: 6, axis: 'z', flanges: 1, detail }),
+    lay(G.pipeRun({ length: sv.len, radius: sv.radius ?? 6, sides: 6, axis: 'z', flanges: 1, detail }),
       sv.bearing, sv.from[0], sv.from[1], 5),
     { rot: [sv.pitch, 0, 0] },
   )));
@@ -2585,8 +3233,11 @@ export const CRUISER_SUBSYSTEMS = [
  * }}
  */
 export function buildCruiser(ctx) {
-  const { materials, rng } = ctx;
+  const { materials, rng, fit = null } = ctx;
   if (!materials?.get) throw new Error('[cruiser] ctx.materials must be the shared material registry');
+
+  /** Per LOD, the merged entries that carry seat geometry. See `result.reskin`. */
+  const reskinPlan = [];
 
   const root = new THREE.Group();
   root.name = 'cruiser';
@@ -2608,7 +3259,7 @@ export function buildCruiser(ctx) {
     const level = new THREE.Group();
     level.name = `cruiser:lod${lod}`;
 
-    const { buckets, lights, masses: m } = hullParts({ rng, lod });
+    const { buckets, lights, masses: m } = hullParts({ rng, lod, fit });
     if (lod === 0) masses = m;
 
     let tris = 0;
@@ -2640,8 +3291,19 @@ export function buildCruiser(ctx) {
       const surface = lod === 0 || b.surface !== 'greeble' ? b.surface : 'plating';
       const key = `${group}/${surface}${b.uv ? '' : '#raw'}`;
       let e = merged.get(key);
-      if (!e) { e = { group, surface, uv: b.uv, parts: [] }; merged.set(key, e); }
+      if (!e) { e = { group, surface, uv: b.uv, parts: [], src: [] }; merged.set(key, e); }
       for (const p of b.parts) e.parts.push(p);
+      // What a refit has to be able to put back: this bucket's parts either side of
+      // its seat slice, in order, so a re-merge reproduces the merge order exactly.
+      if (b.seatCount > 0) {
+        e.src.push({
+          bucket: b.key,
+          head: b.parts.slice(0, b.seatStart),
+          tail: b.parts.slice(b.seatStart + b.seatCount),
+        });
+      } else {
+        e.src.push({ bucket: null, head: b.parts, tail: [] });
+      }
     }
 
     for (const [key, b] of merged) {
@@ -2664,6 +3326,7 @@ export function buildCruiser(ctx) {
         geo.computeBoundingBox();
         bounds.union(geo.boundingBox);
       }
+      if (b.src.some((s) => s.bucket)) reskinPlan.push({ lod, key, mesh, uv: b.uv, src: b.src });
     }
 
     // Running lights: one InstancedMesh, one draw call, the whole scale cue.
@@ -2716,6 +3379,76 @@ export function buildCruiser(ctx) {
     stats: { triangles, drawCalls },
     silhouetteDirty: false,
   };
+
+  /**
+   * ------------------------------------------------------------------------
+   * RESKIN — the hull answering a refit, and the reason it is not a rebuild
+   * ------------------------------------------------------------------------
+   * `docs/review/acceptance.md:74` still carries "the refit screen updates the 3D
+   * model live with no visible hitch" as UNVERIFIED, and adaptation is what puts real
+   * weight on that row: before this, `attachModule` touched no hull geometry at all.
+   *
+   * Four things this deliberately does NOT do, each of which is where the frame would
+   * go:
+   *   - it creates no mesh and destroys none, so the draw count cannot move;
+   *   - it fetches no material, so no shader is compiled;
+   *   - it bakes no texture — `hullMaps.js`'s procedural canvases cost tens of
+   *     milliseconds and one triggered here would blow the row on its own;
+   *   - it never touches LOD2. `hullParts` returns before the seats at `lod >= 2`, so
+   *     `reskinPlan` has no LOD2 entry to hold and the far silhouette is PROVABLY
+   *     independent of the loadout. That is a categorical guarantee, not a margin, and
+   *     it is why the LOD2 coherence figure is one number rather than fifteen thousand.
+   *
+   * What it does touch is asserted rather than described: `core/hull` — the spine, the
+   * ridge and the fillet — carries no seat part, therefore appears in no plan entry,
+   * therefore is never re-merged. If a future adaptation ever puts geometry there, the
+   * hull FORM has become a function of the loadout and this throws instead of quietly
+   * eating the loadout-separation margin.
+   *
+   * @param {Object|null} nextFit  mount id -> module def (or resolved fit profile)
+   * @returns {number} milliseconds spent, for the probe that has to prove the row
+   */
+  result.reskin = (nextFit) => {
+    const t0 = (globalThis.performance ?? Date).now();
+    const byLod = new Map();
+    for (const plan of reskinPlan) {
+      let seats = byLod.get(plan.lod);
+      if (!seats) {
+        seats = new Map();
+        for (const b of seatParts({ rng, lod: plan.lod, fit: nextFit })) seats.set(b.key, b.parts);
+        byLod.set(plan.lod, seats);
+      }
+      const parts = [];
+      for (const s of plan.src) {
+        parts.push(...s.head);
+        if (s.bucket) parts.push(...(seats.get(s.bucket) ?? []));
+        parts.push(...s.tail);
+      }
+      const geo = G.mergeParts(parts, { uv: plan.uv });
+      if (!geo) continue;
+      geo.name = `cruiser:${plan.key}`;
+      plan.mesh.geometry.dispose();
+      plan.mesh.geometry = geo;
+    }
+    // THE RULE, ENFORCED: an adaptation may only add to a surface the bare hull already
+    // has. A seat bucket with no home in the plan would need a new mesh and therefore a
+    // new draw call, and it would be silently dropped rather than loudly refused.
+    for (const [lodIdx, seats] of byLod) {
+      for (const key of seats.keys()) {
+        if (!reskinPlan.some((p) => p.lod === lodIdx && p.src.some((s) => s.bucket === key))) {
+          throw new Error(`[cruiser] adaptation wants a surface the bare hull has not got: "${key}" at LOD${lodIdx}`);
+        }
+      }
+    }
+    result.stats.triangles = [0, 1, 2].map((l) => {
+      let n = 0;
+      lodNode.levels[l]?.object.traverse((o) => { if (o.isMesh) n += G.triCount(o.geometry) * (o.isInstancedMesh ? o.count : 1); });
+      return n;
+    });
+    result.silhouetteDirty = true;
+    return (globalThis.performance ?? Date).now() - t0;
+  };
+
   root.userData.hull = result;
   return result;
 }
