@@ -2,7 +2,7 @@
  * THE GATE LIST, AS A PROGRAM.
  *
  *   node tools/gates.mjs              # everything, in order, stops nothing early
- *   node tools/gates.mjs --fast       # skip the three browser gates (smoke, uicheck, widediag, bench)
+ *   node tools/gates.mjs --fast       # skip the browser gates (derelict, smoke, uicheck, widediag, bench)
  *   node tools/gates.mjs --only bench
  *
  * WHY THIS FILE EXISTS.
@@ -75,6 +75,31 @@ const GATES = [
    * showed detached fragments up to 69 m against a 26 m precedent.
    */
   { id: 'silhouette',  cmd: ['node', 'tools/silhouette.mjs'],                   what: 'one piece per ship in all three views, every LOD the same ship' },
+  /**
+   * ADDED, AND IT IS THE THIRD TIME THIS FILE'S OWN THESIS HAS BEEN PROVED — this time
+   * by the owner rather than by a tool.
+   *
+   * `4e646df` blew out every drifting debris fragment on the graveyard and ALL FOURTEEN
+   * GATES BELOW PASSED WITH IT IN PLACE. It was reverted as `bca5d10`. The graveyard is
+   * where the entire salvage loop happens and it was the one place in the game with no
+   * appearance gate at all, so the fourteen were not wrong — they were pointed
+   * elsewhere. Nothing in the list looks at a POI's rendered surface; `poicheck` looks
+   * at its lights, `widediag --assert` only asserts the close shot is not black.
+   *
+   * `derelictcheck` renders the derelict probe twice one frame apart, once with
+   * `post.bloom.enabled = false`, and gates on the difference. Its bounds were measured
+   * on two worktrees differing only in `4e646df`'s three material files, and IT HAS BEEN
+   * SHOWN TO EXIT 1 ON THAT TREE — four of its six assertions red, the other two
+   * labelled `guard` because they did not separate and saying so is the point.
+   *
+   * `browser: true` because it launches Chromium, which is a fact about it and not a
+   * statement about its cost. Measured by this runner on a clean checkout, hardware
+   * raster: derelict 4.1 s, smoke 5.7 s, widediag 7.6 s, bench 10.3 s, uicheck 17.3 s.
+   * It is the CHEAPEST of the five, so it is placed first among them, and it is the one
+   * worth running on its own after touching a material, a texture or a POI light —
+   * `node tools/gates.mjs --only derelict`.
+   */
+  { id: 'derelict',    cmd: ['node', 'tools/derelictcheck.mjs'],               what: 'the graveyard is not blooming into its own void', browser: true },
   { id: 'smoke',       cmd: ['node', 'tools/smoke.mjs'],                       what: 'boots with no console error',            browser: true },
   { id: 'uicheck',     cmd: ['node', 'tools/uicheck.mjs'],                     what: 'contrast and panel layout',              browser: true },
   { id: 'widediag',    cmd: ['node', 'tools/widediag.mjs', 'close', '--assert'], what: 'the close shot is not black',          browser: true },
