@@ -1368,51 +1368,125 @@ function hulkParts({ lod }) {
  *
  * @returns {THREE.InstancedMesh|null}
  */
+/**
+ * SIZE BUCKETS, AND WHY THE DEBRIS IS NOT ONE INSTANCED MESH ANY MORE.
+ *
+ * This used to build ONE chunk at unit scale and blow each of the thirty instances up by
+ * `k = 9 + pow(rng, 2.4) * 78` metres in the instance matrix. That breaks the project's
+ * central texturing rule by up to a factor of 87, and it breaks it invisibly:
+ *
+ *   `G.mergeParts` runs `greeble.js#metreUV`, which sets each vertex's UV to its LOCAL
+ *   POSITION IN METRES. An instance matrix scales the geometry and does NOT touch UVs.
+ *
+ * So an 87 m chunk wore about 2 UV units — two metres — of texture. `materials/index.js`
+ * states the convention it violates: "ONE UV UNIT IS ONE METRE ... if you author 0..1 UVs,
+ * every hull will look like a different scale and the game's entire sense of size goes
+ * with it." Against `derelictHull`'s 115.6 m tile, each chunk showed roughly 1.7% of one
+ * tile in each axis, magnified — no plate seams, no wear structure, no scale cue at all.
+ *
+ * It also explains a symptom that was fixed by accident. Before the corrosion-scale work,
+ * the fine pit field's cells were 2.22 m — LARGER THAN THE ENTIRE SAMPLED UV WINDOW — so
+ * one corrosion pit painted a whole chunk, and the fragments measured mean luma 0.191 with
+ * p50 0.044: flat near-black lumps. Shrinking the pits fixed the colour and left the
+ * magnification untouched.
+ *
+ * THE FIX IS TO BUILD THE GEOMETRY AT ITS REAL METRE SIZE. Then `metreUV` is correct by
+ * construction and the instance matrix carries rotation and position ONLY. Four buckets
+ * rather than thirty geometries keeps this cheap; each bucket is a genuinely different
+ * shard rather than a scaled copy of one, which is a bonus the old single-shape version
+ * could not have.
+ *
+ * A small per-instance UNIFORM jitter is still allowed, and stays small on purpose: it is
+ * the one thing here that does re-introduce UV error, bounded at ±10% against the 8,700%
+ * it replaces.
+ *
+ * `surfaceM` is passed per bucket as well. `hullMaps.js#resolveTile` clamps the tier's
+ * tile to between 1.6 and 10 repeats across the surface it is going on, so a 13 m shard
+ * gets an 8 m tile instead of a 115.6 m one. Correct UVs alone would still have put a
+ * 115.6 m plate on a 13 m rock.
+ */
+/*
+ * sizeM is the chunk's LONG AXIS in metres, and getting that wrong once is worth a note:
+ * the old `k = 9 + pow(rng, 2.4) * 78` was a RADIUS scale on a section of unit radius
+ * spanning z -1..1.1, so the chunks it produced were about 2.1k long and 2k wide -- 19 m
+ * to 438 m, not 9 m to 87 m -- the z scale was itself `k * range(0.8, 2.4)`. Buckets sized to k rather than to the span made the whole
+ * field a quarter of its shipped size, which the first render caught immediately.
+ */
+const DEBRIS_BUCKETS = [
+  { sizeM: 26, r0: 0.62, r1: 1.00, r2: 0.30, twist: 0.2, elong: 1.0, share: 0.46 },
+  { sizeM: 72, r0: 0.54, r1: 0.92, r2: 0.36, twist: 0.5, elong: 1.5, share: 0.28 },
+  { sizeM: 165, r0: 0.70, r1: 1.00, r2: 0.22, twist: 0.9, elong: 0.9, share: 0.17 },
+  { sizeM: 340, r0: 0.46, r1: 0.86, r2: 0.44, twist: 1.4, elong: 2.1, share: 0.09 },
+];
+
 export function buildHulkDebris(ctx, count = 30) {
   const registry = ctx?.materials;
   if (!registry?.get) return null;
   const rng = (ctx.rng ?? { next: () => 0.5, range: (a, b) => (a + b) * 0.5, signed: () => 0 }).fork
     ? ctx.rng.fork('hulk:debris') : ctx.rng;
 
-  // One chunk shape, instanced. A shard of the SKIN, cut from the same fifteen-point
-  // section the hull is: this came off the object rather than being scattered near it.
-  const chunk = G.mergeParts([
-    { geo: G.loft([
-      { z: -1, points: hulkSection({ r: 0.62, twist: 0.2, chamfer: 0.30, ridge: 0.16 }) },
-      { z: 0.35, points: hulkSection({ r: 1.0, twist: 0.5, chamfer: 0.26, ridge: 0.18 }) },
-      { z: 1.1, points: hulkSection({ r: 0.30, twist: 0.9, chamfer: 0.22, ridge: 0.20 }) },
-    ]) },
-  ]);
-  const mat = registry.get('derelictHull', { faction: 'derelict', wear: 1.0, tier: 1, instanced: true });
-  const mesh = new THREE.InstancedMesh(chunk, mat, count);
-  mesh.name = 'ancient_hulk:debris';
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  mesh.frustumCulled = false;
+  const group = new THREE.Group();
+  group.name = 'ancient_hulk:debris';
+
+  // Deal the thirty chunks out by share, smallest bucket heaviest — the old
+  // `pow(rng, 2.4)` curve put most of the mass at the small end and that read well.
+  const counts = DEBRIS_BUCKETS.map((b) => Math.max(1, Math.round(count * b.share)));
+  let over = counts.reduce((a, b) => a + b, 0) - count;
+  for (let i = counts.length - 1; over > 0 && i >= 0; i--) {
+    const take = Math.min(over, counts[i] - 1);
+    counts[i] -= take; over -= take;
+  }
 
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const e = new THREE.Euler();
   const p = new THREE.Vector3();
   const s = new THREE.Vector3();
-  for (let i = 0; i < count; i++) {
-    // Clustered around the breach and thinning out along the axis - it came from
-    // one event, not from everywhere.
-    const a = rng.next() * TAU;
-    const rad = 700 + Math.pow(rng.next(), 0.55) * 2200;
-    const z = 240 + rng.signed() * 1500 * (0.35 + rng.next());
-    p.set(Math.cos(a) * rad, Math.sin(a) * rad, z);
-    e.set(rng.next() * TAU, rng.next() * TAU, rng.next() * TAU);
-    q.setFromEuler(e);
-    // Small. A chunk that reads at the same apparent size as a vane stops being
-    // debris and starts being clutter in front of the thing it came out of.
-    const k = 9 + Math.pow(rng.next(), 2.4) * 78;
-    s.set(k, k, k * rng.range(0.8, 2.4));
-    m.compose(p, q, s);
-    mesh.setMatrixAt(i, m);
-  }
-  mesh.instanceMatrix.needsUpdate = true;
-  return mesh;
+
+  DEBRIS_BUCKETS.forEach((b, bi) => {
+    const n = counts[bi];
+    if (n <= 0) return;
+    // The loft spans 2.1 * half * elong in z, so solve `half` for the stated long axis.
+    const half = b.sizeM / (2.1 * b.elong);
+    // Built in METRES. A shard of the SKIN, cut from the same fifteen-point section the
+    // hull is: this came off the object rather than being scattered near it.
+    const chunk = G.mergeParts([
+      { geo: G.loft([
+        { z: -half * b.elong, points: hulkSection({ r: half * b.r0, twist: b.twist * 0.2, chamfer: 0.30, ridge: 0.16 }) },
+        { z: half * 0.35 * b.elong, points: hulkSection({ r: half * b.r1, twist: b.twist * 0.5, chamfer: 0.26, ridge: 0.18 }) },
+        { z: half * 1.1 * b.elong, points: hulkSection({ r: half * b.r2, twist: b.twist * 0.9, chamfer: 0.22, ridge: 0.20 }) },
+      ]) },
+    ]);
+    const mat = registry.get('derelictHull', {
+      faction: 'derelict', wear: 1.0, tier: 1, instanced: true, surfaceM: b.sizeM,
+    });
+    const mesh = new THREE.InstancedMesh(chunk, mat, n);
+    mesh.name = `ancient_hulk:debris:${b.sizeM}m`;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
+
+    for (let i = 0; i < n; i++) {
+      // Clustered around the breach and thinning out along the axis - it came from
+      // one event, not from everywhere.
+      const a = rng.next() * TAU;
+      const rad = 700 + Math.pow(rng.next(), 0.55) * 2200;
+      const z = 240 + rng.signed() * 1500 * (0.35 + rng.next());
+      p.set(Math.cos(a) * rad, Math.sin(a) * rad, z);
+      e.set(rng.next() * TAU, rng.next() * TAU, rng.next() * TAU);
+      q.setFromEuler(e);
+      // UNIFORM only, and small. Non-uniform scale would shear the UVs off the metre
+      // grid on one axis, which is the defect this whole function was rewritten for.
+      const jitter = rng.range(0.90, 1.10);
+      s.set(jitter, jitter, jitter);
+      m.compose(p, q, s);
+      mesh.setMatrixAt(i, m);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    group.add(mesh);
+  });
+
+  return group;
 }
 
 // ---------------------------------------------------------------------------

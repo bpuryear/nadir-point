@@ -190,7 +190,16 @@ export default {
       });
     }
     console.table(rows);
-    const debrisCount = hulk.userData.debris?.count ?? 0;
+    // The debris is a GROUP of size-bucketed InstancedMeshes now, not one InstancedMesh,
+    // because chunk geometry is built at real metre size so `metreUV` stays in metres.
+    // Sum the buckets; `count` on a Group is undefined and printed 0.
+    const debrisNode = hulk.userData.debris;
+    let debrisCount = debrisNode?.count ?? 0;
+    let debrisDraws = debrisNode ? 1 : 0;
+    if (debrisNode?.isGroup) {
+      debrisCount = 0; debrisDraws = 0;
+      debrisNode.traverse((o) => { if (o.isInstancedMesh) { debrisCount += o.count; debrisDraws++; } });
+    }
     const el = document.getElementById('label');
     if (el) {
       el.style.whiteSpace = 'pre';
@@ -198,7 +207,7 @@ export default {
         `ANCIENT HULK — ${rows[0].length} m long, ${rows[0].span} m across`,
         `LOD0 ${rows[0].tris}/${ANCIENT_HULK.triBudget} tris / ${rows[0].draws} draws   LOD1 ${rows[1].tris}   LOD2 ${rows[2].tris}`,
         `spine nodes every ${HULK_NODE_SPACING_M} m   vane seam lamps every ${SCALE.runningLightSpacingM} m`,
-        `debris ${debrisCount} instances (1 draw, not counted against the hull budget)`,
+        `debris ${debrisCount} instances in ${debrisDraws} buckets (not counted against the hull budget)`,
         `view=${viewName} lod=${lodWant}${silhouette ? '  SILHOUETTE' : ''}   reference: 1400 m cruiser`,
       ].join('\n');
     }
