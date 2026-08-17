@@ -71,7 +71,22 @@ export function hasGlyph(ch: string): boolean {
   return ch.toUpperCase() in GLYPHS;
 }
 
+/**
+ * Scales must be whole pixels.
+ *
+ * A fractional scale does not merely look wrong — `col * scale` produces
+ * fractional coordinates, typed-array indexing silently no-ops on them, and the
+ * glyph comes out with pieces missing. Failing here is far better than shipping
+ * a contact sheet nobody can explain.
+ */
+function assertIntegerScale(scale: number): void {
+  if (!Number.isInteger(scale) || scale < 1) {
+    throw new RangeError(`font scale must be a positive integer, got ${scale}`);
+  }
+}
+
 export function textWidth(text: string, scale = 1): number {
+  assertIntegerScale(scale);
   if (text.length === 0) return 0;
   return (text.length * GLYPH_ADVANCE - 1) * scale;
 }
@@ -84,6 +99,7 @@ export function drawText(
   color: Rgba,
   scale = 1,
 ): void {
+  assertIntegerScale(scale);
   for (let i = 0; i < text.length; i++) {
     const columns = glyphOf(text[i]!);
     const originX = x + i * GLYPH_ADVANCE * scale;
@@ -104,6 +120,7 @@ export function drawText(
 }
 
 export function renderText(text: string, color: Rgba, scale = 1): PixBuf {
+  assertIntegerScale(scale);
   const buf = createBuf(Math.max(1, textWidth(text, scale)), GLYPH_H * scale);
   drawText(buf, text, 0, 0, color, scale);
   return buf;

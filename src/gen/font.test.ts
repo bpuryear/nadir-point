@@ -136,3 +136,26 @@ describe('renderText', () => {
     expect(countOpaque(buf)).toBe(0);
   });
 });
+
+describe('scale must be a whole number', () => {
+  it('rejects a fractional scale in drawText', () => {
+    const b = createBuf(40, 20);
+    expect(() => drawText(b, 'A', 0, 0, WHITE, 1.5)).toThrow(RangeError);
+  });
+
+  it('rejects a fractional scale in textWidth and renderText', () => {
+    expect(() => textWidth('AB', 2.5)).toThrow(RangeError);
+    expect(() => renderText('AB', WHITE, 0.5)).toThrow(RangeError);
+  });
+
+  it('rejects zero and negative scales', () => {
+    expect(() => textWidth('A', 0)).toThrow(RangeError);
+    expect(() => textWidth('A', -1)).toThrow(RangeError);
+  });
+
+  it('still accepts every whole scale', () => {
+    for (const s of [1, 2, 3, 4]) {
+      expect(() => textWidth('AB', s)).not.toThrow();
+    }
+  });
+});
