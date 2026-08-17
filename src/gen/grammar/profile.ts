@@ -108,7 +108,7 @@ export function buildProfile(spec: ProfileSpec): Profile {
         shape = concordCurve(t);
         break;
       case 'player':
-        shape = slabbed(playerCurve, Math.max(4, Math.round(length / 20)), t);
+        shape = slabbed(playerCurve, Math.max(5, Math.round(length / 20)), t);
         break;
     }
 

@@ -112,10 +112,19 @@ describe('profile shape', () => {
     // silhouette. Slab sides are the Coalition and player languages; a single
     // slab is a brick, and at LOD tier 4 a brick is indistinguishable from any
     // other brick. Fighters are exempt — at 8-12px there is no shape to hold.
+    //
+    // The seed sweep is wide on purpose. Three seeds passed this assertion
+    // while a broader sample sat exactly on the threshold, so a narrow sample
+    // proves nothing here.
     const sizes: SizeClass[] = ['corvette', 'destroyer', 'cruiser', 'capital'];
+    const seeds = Array.from({ length: 40 }, (_, i) => `sweep-${i}`);
+
+    let worst = 0;
+    let worstAt = '';
+
     for (const faction of ALL_FACTIONS) {
       for (const sizeClass of sizes) {
-        for (const seed of ['a', 'b', 'c']) {
+        for (const seed of seeds) {
           const p = build(faction, sizeClass, seed);
           let longest = 0;
           let run = 1;
@@ -123,10 +132,16 @@ describe('profile shape', () => {
             run = p.halfWidth[i] === p.halfWidth[i - 1] ? run + 1 : 1;
             if (run > longest) longest = run;
           }
-          expect(longest, `${faction}/${sizeClass}/${seed}`).toBeLessThan(p.length * 0.5);
+          const ratio = longest / p.length;
+          if (ratio > worst) {
+            worst = ratio;
+            worstAt = `${faction}/${sizeClass}/${seed} run=${longest} len=${p.length}`;
+          }
         }
       }
     }
+
+    expect(worst, `worst case: ${worstAt}`).toBeLessThan(0.5);
   });
 });
 
