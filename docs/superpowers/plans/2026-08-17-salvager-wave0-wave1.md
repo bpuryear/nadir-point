@@ -2456,6 +2456,16 @@ Expected: PASS, 24 tests.
 
 If the "emissives are the brightest things" assertion fails, do not weaken the assertion — darken the offending hull ramp's top step. The threshold relationship is the requirement; the specific values are negotiable.
 
+> **Amended during execution (commit `f1870de`).** Every exported palette
+> structure must be wrapped in `Object.freeze` — the seven ramp arrays,
+> `MASTER_PALETTE`, `EMISSIVE`, `FACTION_PALETTE` and `POI_PALETTE` **including
+> their inner arrays**, and the internal `HULL_RAMP`. `readonly` is compile-time
+> only; without freezing, `NEUTRAL.push(0)` and `MASTER_PALETTE[0] = 0` both
+> succeed silently, and `rampOf()` hands consumers the live array. Fourteen later
+> tasks import this module, so one mutation would collapse the closed vocabulary
+> the whole art direction rests on. Leave `PALETTE_SET` and `EMISSIVE_SET`
+> unfrozen — freezing a `Set` does not block `.add()`, so it would be theatre.
+
 - [ ] **Step 5: Commit**
 
 ```bash
