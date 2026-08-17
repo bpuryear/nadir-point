@@ -3826,16 +3826,35 @@ describe('dither', () => {
     expect(on).toBe(8);
   });
 
-  it('is not a solid block or a plain checkerboard', () => {
-    // An ordered mask should break up gradients without producing visible
-    // stripes; both degenerate patterns look wrong on large plate.
-    expect(ditherMask(0, 0)).not.toBe(ditherMask(1, 0));
-    const checker = (x: number, y: number) => (x + y) % 2 === 0;
-    let differs = false;
-    for (let y = 0; y < 4; y++) {
-      for (let x = 0; x < 4; x++) if (ditherMask(x, y) !== checker(x, y)) differs = true;
+  it('never clumps into 2x2 blocks', () => {
+    // Corrected during execution (commit `5fd29d6`). This test originally
+    // asserted the mask was NOT a plain checkerboard — which forbade the
+    // correct answer. A 4x4 Bayer matrix at 50% IS a checkerboard by
+    // construction, and that is the canonical fine dither: measured tiled, it
+    // gives zero fully-on 2x2 blocks where a hand-authored "non-checkerboard"
+    // alternative gave 38, reading as woven corduroy on hull plate.
+    //
+    // State the property that matters — no clumping — not a shape to distrust.
+    let blocks = 0;
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        if (ditherMask(x, y) && ditherMask(x + 1, y) &&
+            ditherMask(x, y + 1) && ditherMask(x + 1, y + 1)) {
+          blocks++;
+        }
+      }
     }
-    expect(differs).toBe(true);
+    expect(blocks).toBe(0);
+  });
+
+  it('never runs more than one cell horizontally', () => {
+    for (let y = 0; y < 16; y++) {
+      let run = 0;
+      for (let x = 0; x < 32; x++) {
+        run = ditherMask(x, y) ? run + 1 : 0;
+        expect(run).toBeLessThanOrEqual(1);
+      }
+    }
   });
 });
 
