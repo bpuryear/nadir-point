@@ -5090,7 +5090,18 @@ export function buildModule(def: ModuleDef, faction: FactionId, rng: Rng): Modul
 
   // Reverse the reach for hardpoints whose outward direction runs toward
   // decreasing coordinates, so `t = 0` is always the end that touches the hull.
-  const flip = def.hardpoint === 'port' || def.hardpoint === 'bow';
+  //
+  // Amended during execution (commit `82c3f38`). `dorsal` is in this set so it
+  // leans to PORT while `ventral` leans to starboard. Centreline modules cannot
+  // straddle the spine: dorsal and ventral sit at the hull's widest run
+  // (half-width up to 25px), so a centred anchor would need a reach of 2H+16 ≈
+  // 66px against the 48px size ceiling — measured, and widening to the maximum
+  // still left 0px escape on one side. The spec requires centreline HARDPOINTS
+  // and distinct POSITIONS, not symmetric sprites, and explicitly welcomes
+  // port/starboard asymmetry. The real defect was that all eight leaned the same
+  // way, which made dorsal read as a starboard sponson.
+  const flip =
+    def.hardpoint === 'port' || def.hardpoint === 'bow' || def.hardpoint === 'dorsal';
 
   for (let r = 0; r < reach; r++) {
     const t = reach === 1 ? 0 : r / (reach - 1);
