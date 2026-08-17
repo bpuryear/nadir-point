@@ -16,34 +16,34 @@ import {
 } from './pixbuf.js';
 
 /** Cold steel. The player's structural hull and every faction's shared plating. */
-export const NEUTRAL: readonly Rgba[] = [
+export const NEUTRAL: readonly Rgba[] = Object.freeze([
   fromHex('#0a0d12'), fromHex('#161c26'), fromHex('#26303f'), fromHex('#3c4a5c'),
   fromHex('#5a6b80'), fromHex('#8496ab'), fromHex('#b6c4d4'), fromHex('#dce6f0'),
-];
+]);
 
 /** Rust and bronze. Derelict hulls, oxidised salvage, scorch. */
-export const WARM: readonly Rgba[] = [
+export const WARM: readonly Rgba[] = Object.freeze([
   fromHex('#1a120c'), fromHex('#2e2015'), fromHex('#4a3320'), fromHex('#6b4a2c'),
   fromHex('#91663a'), fromHex('#b98a52'), fromHex('#d9ab73'),
-];
+]);
 
 /** Faction A — cold blue-white. Disciplined, uniform, navy. */
-export const CONCORD_RAMP: readonly Rgba[] = [
+export const CONCORD_RAMP: readonly Rgba[] = Object.freeze([
   fromHex('#0c1622'), fromHex('#16293f'), fromHex('#234460'), fromHex('#356585'),
   fromHex('#4f8cae'), fromHex('#7fb8d4'), fromHex('#a8dcf0'),
-];
+]);
 
 /** Faction B — olive and ochre. Industrial, welded, agricultural-machinery green. */
-export const COALITION_RAMP: readonly Rgba[] = [
+export const COALITION_RAMP: readonly Rgba[] = Object.freeze([
   fromHex('#14170c'), fromHex('#242a12'), fromHex('#3c451e'), fromHex('#5a6630'),
   fromHex('#7f8c44'), fromHex('#a8b263'), fromHex('#ccd68a'),
-];
+]);
 
 export type EmissiveName =
   | 'cyan' | 'blue' | 'amber' | 'red' | 'green' | 'white' | 'magenta' | 'orange';
 
 /** The only colours permitted to bloom. Everything else is matte by rule. */
-export const EMISSIVE: Readonly<Record<EmissiveName, Rgba>> = {
+export const EMISSIVE: Readonly<Record<EmissiveName, Rgba>> = Object.freeze({
   cyan: fromHex('#5ff2e6'),
   blue: fromHex('#4a9df2'),
   amber: fromHex('#ffb03a'),
@@ -52,24 +52,24 @@ export const EMISSIVE: Readonly<Record<EmissiveName, Rgba>> = {
   white: fromHex('#f2f7ff'),
   magenta: fromHex('#d45ff2'),
   orange: fromHex('#ff7a29'),
-};
+});
 
 /** Deep space and nebula. Cold at the bottom, drifting warm-violet at the top. */
-export const SPACE: readonly Rgba[] = [
+export const SPACE: readonly Rgba[] = Object.freeze([
   fromHex('#04050a'), fromHex('#080b14'), fromHex('#0e1322'), fromHex('#161d33'),
   fromHex('#221a3a'), fromHex('#33224a'), fromHex('#4a2e52'), fromHex('#6b3d55'),
-];
+]);
 
 /** Panel chrome. Phosphor green — the terminal register the UI speaks in. */
-export const UI: readonly Rgba[] = [
+export const UI: readonly Rgba[] = Object.freeze([
   fromHex('#0a0f0c'), fromHex('#12211a'), fromHex('#1e3a2c'), fromHex('#2f5c45'),
   fromHex('#468a66'), fromHex('#7fd4a0'), fromHex('#b8f2cc'),
-];
+]);
 
-export const MASTER_PALETTE: readonly Rgba[] = [
+export const MASTER_PALETTE: readonly Rgba[] = Object.freeze([
   ...NEUTRAL, ...WARM, ...CONCORD_RAMP, ...COALITION_RAMP,
   ...Object.values(EMISSIVE), ...SPACE, ...UI,
-];
+]);
 
 const PALETTE_SET: ReadonlySet<Rgba> = new Set(MASTER_PALETTE);
 
@@ -81,24 +81,24 @@ export type FactionId = 'concord' | 'coalition' | 'derelict' | 'player';
  * Each faction's locked subset. Shared neutrals are what let salvaged parts sit
  * on a foreign hull at all; the ramp is what keeps their origin legible.
  */
-export const FACTION_PALETTE: Readonly<Record<FactionId, readonly Rgba[]>> = {
-  concord: [
+export const FACTION_PALETTE: Readonly<Record<FactionId, readonly Rgba[]>> = Object.freeze({
+  concord: Object.freeze([
     ...CONCORD_RAMP, ...NEUTRAL,
     EMISSIVE.blue, EMISSIVE.cyan, EMISSIVE.white,
-  ],
-  coalition: [
+  ]),
+  coalition: Object.freeze([
     ...COALITION_RAMP, ...NEUTRAL.slice(0, 5), ...WARM.slice(0, 4),
     EMISSIVE.amber, EMISSIVE.orange, EMISSIVE.red,
-  ],
-  derelict: [
+  ]),
+  derelict: Object.freeze([
     ...WARM, ...NEUTRAL.slice(0, 4),
     EMISSIVE.green, EMISSIVE.red,
-  ],
-  player: [
+  ]),
+  player: Object.freeze([
     ...NEUTRAL, ...WARM.slice(2, 5),
     EMISSIVE.amber, EMISSIVE.white, EMISSIVE.red,
-  ],
-};
+  ]),
+});
 
 export type PoiId =
   | 'gasgiant' | 'belt' | 'station' | 'graveyard'
@@ -109,16 +109,16 @@ export type PoiId =
  * The star's lock is deliberately the harshest: blown-out warm values with the
  * cold end of the palette withheld entirely.
  */
-export const POI_PALETTE: Readonly<Record<PoiId, readonly Rgba[]>> = {
-  gasgiant: [...SPACE.slice(0, 6), ...WARM.slice(2, 6), ...NEUTRAL.slice(1, 6), EMISSIVE.amber],
-  belt: [...SPACE.slice(0, 4), ...NEUTRAL, ...WARM.slice(1, 4), EMISSIVE.white],
-  station: [...SPACE.slice(0, 5), ...NEUTRAL.slice(1, 7), EMISSIVE.amber, EMISSIVE.red, EMISSIVE.cyan],
-  graveyard: [...SPACE.slice(0, 4), ...NEUTRAL.slice(0, 5), ...WARM.slice(0, 5), EMISSIVE.green],
-  yard: [...SPACE.slice(1, 5), ...NEUTRAL.slice(2, 8), ...CONCORD_RAMP.slice(1, 5), EMISSIVE.blue, EMISSIVE.white],
-  star: [...WARM.slice(1, 7), ...NEUTRAL.slice(4, 8), EMISSIVE.orange, EMISSIVE.amber, EMISSIVE.white],
-  deepfield: [...SPACE, ...NEUTRAL.slice(0, 4), EMISSIVE.cyan],
-  wreckreef: [...SPACE.slice(2, 8), ...WARM.slice(0, 4), ...NEUTRAL.slice(1, 5), EMISSIVE.magenta, EMISSIVE.red],
-};
+export const POI_PALETTE: Readonly<Record<PoiId, readonly Rgba[]>> = Object.freeze({
+  gasgiant: Object.freeze([...SPACE.slice(0, 6), ...WARM.slice(2, 6), ...NEUTRAL.slice(1, 6), EMISSIVE.amber]),
+  belt: Object.freeze([...SPACE.slice(0, 4), ...NEUTRAL, ...WARM.slice(1, 4), EMISSIVE.white]),
+  station: Object.freeze([...SPACE.slice(0, 5), ...NEUTRAL.slice(1, 7), EMISSIVE.amber, EMISSIVE.red, EMISSIVE.cyan]),
+  graveyard: Object.freeze([...SPACE.slice(0, 4), ...NEUTRAL.slice(0, 5), ...WARM.slice(0, 5), EMISSIVE.green]),
+  yard: Object.freeze([...SPACE.slice(1, 5), ...NEUTRAL.slice(2, 8), ...CONCORD_RAMP.slice(1, 5), EMISSIVE.blue, EMISSIVE.white]),
+  star: Object.freeze([...WARM.slice(1, 7), ...NEUTRAL.slice(4, 8), EMISSIVE.orange, EMISSIVE.amber, EMISSIVE.white]),
+  deepfield: Object.freeze([...SPACE, ...NEUTRAL.slice(0, 4), EMISSIVE.cyan]),
+  wreckreef: Object.freeze([...SPACE.slice(2, 8), ...WARM.slice(0, 4), ...NEUTRAL.slice(1, 5), EMISSIVE.magenta, EMISSIVE.red]),
+});
 
 /** Transparency is a valid state, not an off-palette colour. */
 export function isInPalette(c: Rgba): boolean {
@@ -151,12 +151,12 @@ export function snapToPalette(c: Rgba, allowed: readonly Rgba[] = MASTER_PALETTE
   return best;
 }
 
-const HULL_RAMP: Readonly<Record<FactionId, readonly Rgba[]>> = {
+const HULL_RAMP: Readonly<Record<FactionId, readonly Rgba[]>> = Object.freeze({
   concord: CONCORD_RAMP,
   coalition: COALITION_RAMP,
   derelict: WARM,
   player: NEUTRAL,
-};
+});
 
 export function rampOf(faction: FactionId): readonly Rgba[] {
   return HULL_RAMP[faction];

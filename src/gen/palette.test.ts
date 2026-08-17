@@ -180,3 +180,26 @@ describe('shadeStep', () => {
     expect(shadeStep(NEUTRAL, 1.6)).toBe(NEUTRAL[2]!);
   });
 });
+
+describe('the palette is immutable at runtime', () => {
+  it('refuses mutation of the master palette', () => {
+    expect(Object.isFrozen(MASTER_PALETTE)).toBe(true);
+  });
+
+  it('refuses mutation of every ramp', () => {
+    for (const ramp of [NEUTRAL, WARM, CONCORD_RAMP, COALITION_RAMP, SPACE, UI]) {
+      expect(Object.isFrozen(ramp)).toBe(true);
+    }
+  });
+
+  it('refuses mutation of the faction and POI locks, inner arrays included', () => {
+    expect(Object.isFrozen(FACTION_PALETTE)).toBe(true);
+    expect(Object.isFrozen(POI_PALETTE)).toBe(true);
+    for (const lock of Object.values(FACTION_PALETTE)) expect(Object.isFrozen(lock)).toBe(true);
+    for (const lock of Object.values(POI_PALETTE)) expect(Object.isFrozen(lock)).toBe(true);
+  });
+
+  it('hands out a frozen ramp from rampOf', () => {
+    expect(Object.isFrozen(rampOf('concord'))).toBe(true);
+  });
+});
