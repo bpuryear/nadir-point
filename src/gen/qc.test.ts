@@ -107,16 +107,40 @@ describe('light direction check', () => {
   });
 
   it('ignores emissive pixels, which are self-lit', () => {
-    // An engine glow along the stern is bright and faces bottom-right. Counting
-    // it would invert the verdict on a correctly-lit hull.
-    const b = litBlob(12);
-    for (let x = 2; x < 10; x++) setPx(b, x, 9, EMISSIVE.amber);
-    expect(checkLightDirection(b)!.pass).toBe(true);
+    // An engine glow sits along the stern — the bottom edge, in shadow. If the
+    // check counted it, a correctly shaded hull would read as lit from the
+    // wrong side. Placing the strip on the true shadow edge is what makes this
+    // test exercise the exclusion rather than merely coexist with it.
+    const plain = checkLightDirection(litBlob(12))!;
+
+    const glowing = litBlob(12);
+    for (let x = 2; x <= 8; x++) setPx(glowing, x, 10, EMISSIVE.amber);
+    const report = checkLightDirection(glowing)!;
+
+    // The emissive pixels sat on edge rows, so excluding them must reduce the
+    // sample count. If this fails, the strip is landing on interior pixels
+    // again and the test has gone hollow.
+    expect(report.samples).toBeLessThan(plain.samples);
+    expect(report.pass).toBe(true);
   });
 
   it('counts enough samples to be meaningful', () => {
     const report = checkLightDirection(litBlob(16));
     expect(report!.samples).toBeGreaterThanOrEqual(MIN_LIGHT_SAMPLES);
+  });
+
+  it('abstains when one side has too few samples to be a measurement', () => {
+    // A verdict resting on one or two pixels is noise, not evidence.
+    const b = createBuf(14, 14);
+    for (let y = 1; y < 5; y++) {
+      for (let x = 1; x < 5; x++) {
+        const onTopLeft = x === 1 || y === 1;
+        setPx(b, x, y, onTopLeft ? NEUTRAL[6]! : NEUTRAL[3]!);
+      }
+    }
+    // A small 4x4 blob has too few shadow-facing edge pixels to meet the
+    // per-side minimum, starving the shadow sample count.
+    expect(checkLightDirection(b)).toBeNull();
   });
 });
 

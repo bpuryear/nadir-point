@@ -48,6 +48,13 @@ export const LIGHT_MARGIN = 8;
 /** Below this many edge samples the check abstains instead of guessing. */
 export const MIN_LIGHT_SAMPLES = 12;
 
+/**
+ * Each side needs its own floor, not just the combined total. A verdict resting
+ * on one shadow pixel is not a measurement — an almost-unshaded hull with a
+ * single incidentally dark pixel would otherwise read as correctly lit.
+ */
+export const MIN_SIDE_SAMPLES = 4;
+
 export function checkPalette(buf: PixBuf, allowed?: readonly Rgba[]): PaletteViolation[] {
   const violations: PaletteViolation[] = [];
   const allowedSet = allowed ? new Set(allowed) : null;
@@ -116,7 +123,11 @@ export function checkLightDirection(buf: PixBuf): LightReport | null {
   }
 
   const samples = litCount + shadowCount;
-  if (litCount === 0 || shadowCount === 0 || samples < MIN_LIGHT_SAMPLES) {
+  if (
+    litCount < MIN_SIDE_SAMPLES ||
+    shadowCount < MIN_SIDE_SAMPLES ||
+    samples < MIN_LIGHT_SAMPLES
+  ) {
     return null;
   }
 
