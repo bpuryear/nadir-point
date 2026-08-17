@@ -123,16 +123,31 @@ describe('dither', () => {
     expect(on).toBe(8);
   });
 
-  it('is not a solid block or a plain checkerboard', () => {
-    // An ordered mask should break up gradients without producing visible
-    // stripes; both degenerate patterns look wrong on large plate.
-    expect(ditherMask(0, 0)).not.toBe(ditherMask(1, 0));
-    const checker = (x: number, y: number) => (x + y) % 2 === 0;
-    let differs = false;
-    for (let y = 0; y < 4; y++) {
-      for (let x = 0; x < 4; x++) if (ditherMask(x, y) !== checker(x, y)) differs = true;
+  it('never clumps into 2x2 blocks', () => {
+    // This is what the pattern actually has to avoid. A 50% ordered dither is
+    // a checkerboard by construction — that is correct and near-invisible
+    // between two adjacent ramp steps. What ruins hull plate is clumping:
+    // fully-on 2x2 blocks read as woven texture rather than as shading.
+    let blocks = 0;
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        if (ditherMask(x, y) && ditherMask(x + 1, y) &&
+            ditherMask(x, y + 1) && ditherMask(x + 1, y + 1)) {
+          blocks++;
+        }
+      }
     }
-    expect(differs).toBe(true);
+    expect(blocks).toBe(0);
+  });
+
+  it('never runs more than one cell horizontally', () => {
+    for (let y = 0; y < 16; y++) {
+      let run = 0;
+      for (let x = 0; x < 32; x++) {
+        run = ditherMask(x, y) ? run + 1 : 0;
+        expect(run).toBeLessThanOrEqual(1);
+      }
+    }
   });
 });
 

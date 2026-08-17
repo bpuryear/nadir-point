@@ -36,27 +36,27 @@ export interface PlatedHull {
 export const BASE_STEP = 3;
 
 /**
- * 4x4 ordered dither mask, ~50% coverage.
+ * 4x4 Bayer matrix, normalised to a boolean test at 50%.
  *
- * A textbook 4x4 Bayer matrix thresholded at its midpoint is not a candidate
- * here even though it is the obvious first attempt: the Bayer matrix is built
- * recursively from a 2x2 checkerboard base, so its coarsest bit-plane — which
- * is exactly what a 50% threshold reads out — degenerates to a plain
- * checkerboard. That reads as a visible grid line once a whole plate dithers
- * against it. This mask keeps the same ~50% coverage and tiling but disperses
- * the "on" cells in a ring instead, so it breaks up a gradient without adding
- * a periodic stripe of its own.
+ * At exactly 50% coverage a Bayer matrix's threshold is, by construction, a
+ * plain checkerboard — it is built recursively from a 2x2 checkerboard base,
+ * so the coarsest bit-plane a midpoint threshold reads out is always that
+ * base pattern. That is correct here, not a bug: a checkerboard is the
+ * canonical 50% ordered dither and, between two adjacent ramp steps, reads as
+ * shading rather than as a visible texture. What actually ruins hull plate is
+ * clumping — fully-on 2x2 blocks reading as woven texture — and a Bayer
+ * threshold has none of that.
  */
-const DITHER: readonly boolean[] = [
-  true, false, false, true,
-  false, true, true, false,
-  false, true, true, false,
-  true, false, false, true,
+const BAYER: readonly number[] = [
+   0,  8,  2, 10,
+  12,  4, 14,  6,
+   3, 11,  1,  9,
+  15,  7, 13,  5,
 ];
 
 export function ditherMask(x: number, y: number): boolean {
   const i = (((y % 4) + 4) % 4) * 4 + (((x % 4) + 4) % 4);
-  return DITHER[i]!;
+  return BAYER[i]! < 8;
 }
 
 /** True when the pixel's exposed side faces up and left — the lit direction. */
