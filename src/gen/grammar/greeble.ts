@@ -99,8 +99,17 @@ export function applyGreebles(
 }
 
 /**
- * The rows running lights land on. Exposed separately so the scale-cue check can
- * verify spacing without re-deriving it.
+ * The rows running lights land on.
+ *
+ * Lights sit on a fixed lattice: candidate rows are multiples of
+ * RUNNING_LIGHT_SPACING, and a row is dropped only where the hull is too thin
+ * to carry a light. That means consecutive gaps on an eroded derelict may be 32
+ * or 48 rather than 16 — a blown-away section cannot carry a lamp — while the
+ * lattice itself stays regular, which is what makes the spacing readable as a
+ * scale cue.
+ *
+ * Exposed separately so the scale-cue check can verify the lattice without
+ * re-deriving it.
  */
 export function runningLightRows(profile: Profile): number[] {
   const rows: number[] = [];

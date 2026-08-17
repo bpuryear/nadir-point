@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { makeRng } from '../../sim/rng.js';
 import { getPx, isOpaque, opaqueBounds } from '../pixbuf.js';
-import { EMISSIVE, isEmissive, NEUTRAL } from '../palette.js';
+import {
+  EMISSIVE, type FactionId, isEmissive, NEUTRAL, rampOf,
+} from '../palette.js';
 import { checkLightDirection, checkPalette } from '../qc.js';
 import { buildProfile, type SizeClass } from './profile.js';
 import { plateHull } from './plates.js';
@@ -9,8 +11,10 @@ import {
   applyGreebles, applyRunningLights, GREEBLE_BUDGET, RUNNING_LIGHT_SPACING, runningLightRows,
 } from './greeble.js';
 
-const make = (sizeClass: SizeClass = 'cruiser', seed = 'g') => {
-  const profile = buildProfile({ faction: 'player', sizeClass, rng: makeRng(seed) });
+const ALL_FACTIONS: FactionId[] = ['concord', 'coalition', 'derelict', 'player'];
+
+const make = (sizeClass: SizeClass = 'cruiser', seed = 'g', faction: FactionId = 'player') => {
+  const profile = buildProfile({ faction, sizeClass, rng: makeRng(seed) });
   const hull = plateHull({ profile, ramp: NEUTRAL, rng: makeRng(seed) });
   return { profile, hull };
 };
@@ -61,6 +65,18 @@ describe('greebles never touch the outline', () => {
     }
   });
 
+  it('leaves the silhouette pixel-identical, across every faction', () => {
+    for (const faction of ALL_FACTIONS) {
+      for (const seed of ['a', 'b', 'c']) {
+        const { profile, hull } = make('cruiser', seed, faction);
+        const before = silhouette(hull.buf, (x, y) => getPx(hull.buf, x, y));
+        applyGreebles(hull, profile, rampOf(faction), makeRng(seed));
+        const after = silhouette(hull.buf, (x, y) => getPx(hull.buf, x, y));
+        expect(after, `${faction}/${seed}`).toEqual(before);
+      }
+    }
+  });
+
   it('leaves the bounding box unchanged', () => {
     const { profile, hull } = make();
     const before = opaqueBounds(hull.buf);
@@ -98,12 +114,44 @@ describe('running lights', () => {
     }
   });
 
-  it('gives longer hulls more lights — this is the scale cue', () => {
-    // Known spacing along a hull is one of the three cues that make a 4px
-    // speck read as kilometres long. More hull, more lights.
-    const cruiser = runningLightRows(make('cruiser').profile).length;
-    const capital = runningLightRows(make('capital').profile).length;
-    expect(capital).toBeGreaterThan(cruiser);
+  it('places lights on a fixed lattice, across every faction', () => {
+    for (const faction of ALL_FACTIONS) {
+      for (const sizeClass of ['destroyer', 'cruiser', 'capital'] as SizeClass[]) {
+        for (let i = 0; i < 25; i++) {
+          const profile = buildProfile({ faction, sizeClass, rng: makeRng(`lat-${i}`) });
+          const rows = runningLightRows(profile);
+          for (const y of rows) {
+            expect(y % RUNNING_LIGHT_SPACING, `${faction}/${sizeClass}/${i} row ${y}`).toBe(0);
+          }
+          // Gaps are always whole multiples of the spacing — never an arbitrary
+          // interval. An eroded hull drops lamps; it does not shift them.
+          for (let k = 1; k < rows.length; k++) {
+            expect((rows[k]! - rows[k - 1]!) % RUNNING_LIGHT_SPACING).toBe(0);
+          }
+        }
+      }
+    }
+  });
+
+  it('never gives a longer hull fewer lights', () => {
+    // This is the scale cue: more hull, more lamps. The relation is monotonic,
+    // not strict — a 130px capital and a 128px cruiser can land on the same
+    // lattice count, and a single sampled pair is not evidence either way.
+    let ties = 0;
+    for (const faction of ALL_FACTIONS) {
+      for (let i = 0; i < 50; i++) {
+        const seed = `pair-${i}`;
+        const cruiser = buildProfile({ faction, sizeClass: 'cruiser', rng: makeRng(seed) });
+        const capital = buildProfile({ faction, sizeClass: 'capital', rng: makeRng(seed) });
+        const a = runningLightRows(cruiser).length;
+        const b = runningLightRows(capital).length;
+        expect(b, `${faction}/${seed}: capital ${b} < cruiser ${a}`).toBeGreaterThanOrEqual(a);
+        if (b === a) ties++;
+      }
+    }
+    // Ties are legal but should be uncommon; if most pairs tie, the lattice has
+    // stopped tracking hull length at all.
+    expect(ties).toBeLessThan(50);
   });
 
   it('places an emissive pixel on each side at each row', () => {
