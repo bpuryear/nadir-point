@@ -4333,8 +4333,24 @@ export function applyGreebles(
 }
 
 /**
- * The rows running lights land on. Exposed separately so the scale-cue check can
- * verify spacing without re-deriving it.
+ * The rows running lights land on.
+ *
+ * Corrected during execution (commit `c493843`). Lights sit on a fixed
+ * LATTICE: candidate rows are multiples of RUNNING_LIGHT_SPACING, and a row is
+ * dropped only where the hull is too thin to carry one. Consecutive gaps on an
+ * eroded derelict may therefore be 32 or 48 rather than 16 — a blown-away
+ * section cannot carry a lamp — while the lattice itself stays regular, which
+ * is what actually reads as a scale cue. Measured at 209 of 1,200 derelict
+ * profiles having at least one gap above 16.
+ *
+ * The earlier claim that spacing "is a constant" was false, and the tests hid
+ * it because the test helper hardcoded the player faction, which has no
+ * erosion. Related: capital hulls get NEVER FEWER lights than cruisers, not
+ * strictly more — a 130px capital and a 128px cruiser can land on the same
+ * lattice count.
+ *
+ * Exposed separately so the scale-cue check can verify the lattice without
+ * re-deriving it.
  */
 export function runningLightRows(profile: Profile): number[] {
   const rows: number[] = [];
