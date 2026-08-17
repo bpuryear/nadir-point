@@ -3645,6 +3645,26 @@ Expected: PASS, 21 tests.
 
 If the Coalition/Concord shape-language assertions fail, tune `slabs` and the curve exponents rather than relaxing the test — those two numbers *are* the shape language, and the assertion is the only thing keeping the two factions distinguishable by outline as the generator evolves.
 
+> **Amended during execution (commits `a34135c`, `4ee55ab`, `b50cad6`).** The curve
+> constants below are the *starting* values; three were wrong and were corrected
+> against measurement. A re-run must apply these or it will reproduce the defects:
+>
+> - **`concordCurve` was too flat**, yielding 18 width changes against the >20
+>   assertion. Nose span 0.32→0.5, exponent 0.62→0.9; stern flare breakpoint
+>   0.88→0.85 and amplitude 0.22→0.35.
+> - **`playerCurve` produced a brick.** It returned exactly 1.0 across t=0.2..0.82,
+>   so slabbing collapsed 62% of the hull to one width — 72 identical rows out of
+>   122. Replaced with a nose/body/stern formulation that carries mass forward of
+>   amidships and narrows aft.
+> - **The player slab floor is 5**, not 3 or 4. Measured across 3,000 seeds:
+>   floor 4 → worst flat ratio 0.500 (fails), floor 5 → 0.423, floor 6 → 0.500,
+>   floor 7 → 0.571. Not monotonic, because at 24px the peak half-width is ~4 and
+>   extra slabs quantize onto the same integer. Do not raise it.
+> - **A flat-run assertion was added** — no faction/size/seed may be flat for more
+>   than half its length, swept over 40 seeds and reporting its worst case.
+>   Fighters are exempt; at 8-12px there is no shape to hold. Verified over 80,000
+>   combinations: worst 0.423, nothing above 0.45.
+
 - [ ] **Step 5: Commit**
 
 ```bash
