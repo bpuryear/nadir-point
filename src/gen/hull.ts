@@ -74,9 +74,9 @@ const RUNNING_LIGHT_COLOR: Readonly<Record<FactionId, number>> = {
  */
 const MIN_ROW_GAP = 4;
 
-function tooClose(y: number, claimed: Set<number>): boolean {
+function withinGap(y: number, claimed: Set<number>, gap: number): boolean {
   for (const c of claimed) {
-    if (Math.abs(y - c) < MIN_ROW_GAP) return true;
+    if (Math.abs(y - c) < gap) return true;
   }
   return false;
 }
@@ -116,18 +116,34 @@ function searchOutward(
 }
 
 /**
- * A row for a centreline hardpoint: on real hull, and clear of rows already
- * taken.
+ * A row for a centreline hardpoint: on real hull, and as clear of rows already
+ * taken as the hull's geometry allows.
  *
- * The tiers degrade through DISTINCTNESS, never through validity. A hardpoint
- * sharing a row is cosmetic on a hull too small to hold six; one floating in a
- * hole is a defect at any size, and every profile has a filled row by
- * construction, so tier 3 always succeeds.
+ * The gap degrades one pixel at a time rather than being abandoned outright —
+ * a row three pixels from another hardpoint is a much better outcome than one
+ * pixel away, and an all-or-nothing fallback throws that distinction away. On
+ * a hull where five hardpoints at gap 4 is an exact fit, erosion removing a
+ * few rows can make the full gap infeasible without making every gap
+ * infeasible, and the descending sweep finds whatever the hull can still
+ * support before giving up on the gap entirely.
+ *
+ * Only past that does the fallback degrade through DISTINCTNESS, never
+ * through validity: a hardpoint sharing a row is cosmetic on a hull too small
+ * to hold six; one floating in a hole is a defect at any size. `buildProfile`
+ * guarantees at least one filled row even after erosion, so the distinctness
+ * tiers always succeed; the terminal `nominalRow` fallback exists only as a
+ * belt-and-braces guard against that guarantee ever regressing, not as a claim
+ * it currently relies on.
  */
 function anchorRow(profile: Profile, fraction: number, claimed: Set<number>): number {
   const filled = (y: number) => profile.halfWidth[y]! >= 1;
+
+  for (let gap = MIN_ROW_GAP; gap >= 1; gap--) {
+    const found = searchOutward(profile, fraction, (y) => filled(y) && !withinGap(y, claimed, gap));
+    if (found !== null) return found;
+  }
+
   return (
-    searchOutward(profile, fraction, (y) => filled(y) && !tooClose(y, claimed)) ??
     searchOutward(profile, fraction, (y) => filled(y) && !claimed.has(y)) ??
     searchOutward(profile, fraction, filled) ??
     nominalRow(profile, fraction)
@@ -136,13 +152,22 @@ function anchorRow(profile: Profile, fraction: number, claimed: Set<number>): nu
 
 /**
  * A row for the sponsons: broad enough that port and starboard land at least
- * four pixels apart, and clear of rows already taken.
+ * four pixels apart, and as clear of rows already taken as the hull allows.
+ *
+ * Same descending-gap degradation as `anchorRow`, applied to the "broad
+ * enough" rows first; only once no broad row exists at any gap does it fall
+ * back to distinctness and then to any filled row.
  */
 function sponsonRow(profile: Profile, fraction: number, claimed: Set<number>): number {
   const broad = (y: number) => profile.halfWidth[y]! >= 3;
   const filled = (y: number) => profile.halfWidth[y]! >= 1;
+
+  for (let gap = MIN_ROW_GAP; gap >= 1; gap--) {
+    const found = searchOutward(profile, fraction, (y) => broad(y) && !withinGap(y, claimed, gap));
+    if (found !== null) return found;
+  }
+
   return (
-    searchOutward(profile, fraction, (y) => broad(y) && !tooClose(y, claimed)) ??
     searchOutward(profile, fraction, (y) => broad(y) && !claimed.has(y)) ??
     searchOutward(profile, fraction, broad) ??
     searchOutward(profile, fraction, filled) ??

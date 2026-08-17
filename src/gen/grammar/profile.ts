@@ -115,12 +115,28 @@ export function buildProfile(spec: ProfileSpec): Profile {
     halfWidth[y] = Math.max(0, Math.round(shape * peak));
   }
 
-  // A hull one pixel wide at the bow is a point, not a prow. Guarantee the very
-  // front row is at least present so the silhouette has a tip to read.
-  if (halfWidth[0] === 0) halfWidth[0] = 0;
-
   if (faction === 'derelict') {
     erode(halfWidth, rng);
+  }
+
+  // Erosion is allowed to take bites out of a derelict, but not to eat it
+  // whole. A profile with no filled rows is an invisible ship — its sprite is
+  // empty, its hardpoints have nowhere to land, and nothing downstream can
+  // render it. Short hulls are the exposed case: a few bites can clear an
+  // 8-12px fighter entirely.
+  //
+  // Restore a minimal spine around midships rather than undoing the erosion —
+  // what survives should still read as wreckage, just wreckage that exists.
+  let anyFilled = false;
+  for (const w of halfWidth) {
+    if (w > 0) { anyFilled = true; break; }
+  }
+  if (!anyFilled) {
+    const mid = Math.floor(length / 2);
+    const spine = Math.max(1, Math.round(length * 0.2));
+    for (let y = Math.max(0, mid - spine); y <= Math.min(length - 1, mid + spine); y++) {
+      halfWidth[y] = 1;
+    }
   }
 
   let maxHalfWidth = 0;

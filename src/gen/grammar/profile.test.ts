@@ -107,6 +107,19 @@ describe('profile shape', () => {
     expect(anyGap).toBe(true);
   });
 
+  it('never erodes a hull out of existence', () => {
+    // A profile with no filled rows is an invisible ship: empty sprite, no
+    // surface for hardpoints, nothing to render. Erosion may take bites; it may
+    // not eat the whole hull. Short derelicts are the exposed case.
+    for (const sizeClass of ['fighter', 'corvette', 'destroyer', 'cruiser'] as SizeClass[]) {
+      for (let i = 0; i < 500; i++) {
+        const p = build('derelict', sizeClass, `erode-${i}`);
+        expect(p.maxHalfWidth, `derelict/${sizeClass}/erode-${i}`).toBeGreaterThan(0);
+        expect(profileArea(p), `derelict/${sizeClass}/erode-${i}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it('never lets a hull be flat for more than half its length', () => {
     // A profile that holds one width across most of the hull has no
     // silhouette. Slab sides are the Coalition and player languages; a single
