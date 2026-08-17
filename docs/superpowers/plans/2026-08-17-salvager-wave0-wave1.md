@@ -5262,11 +5262,41 @@ describe('the outline rule', () => {
     }
   });
 
-  it('punches interior holes at critical without shrinking the bounding box', () => {
+  it('punches interior holes at critical without touching the outline', () => {
+    // Corrected during execution (commit `f00244c`). This originally asserted
+    // bounding-box equality as a proxy for "the outline survives" — and could
+    // not detect the defect. Mutation testing showed that setting
+    // `erodeEdges: true` for critical left ALL tests green: a boundary row is
+    // dozens of pixels wide and erosion is per-pixel at 30%, so clearing an
+    // entire extreme row essentially never happens. The proxy caught it in 1 of
+    // 32 seeds.
+    //
+    // Assert the rule itself: every pixel on the intact silhouette edge must
+    // still be opaque at critical. Under the mutation this now fails with
+    // "97 of 278 outline pixels lost".
     const src = source();
     const critical = frame('critical');
+
+    const isEdge = (buf: typeof src, x: number, y: number) =>
+      isOpaque(getPx(buf, x, y)) &&
+      (!isOpaque(getPx(buf, x - 1, y)) || !isOpaque(getPx(buf, x + 1, y)) ||
+       !isOpaque(getPx(buf, x, y - 1)) || !isOpaque(getPx(buf, x, y + 1)));
+
+    let edgePixels = 0;
+    let lost = 0;
+    for (let y = 0; y < src.h; y++) {
+      for (let x = 0; x < src.w; x++) {
+        if (!isEdge(src, x, y)) continue;
+        edgePixels++;
+        if (!isOpaque(getPx(critical, x, y))) lost++;
+      }
+    }
+
+    // Without this guard the assertion passes vacuously on an empty buffer —
+    // the failure mode that has bitten this plan repeatedly.
+    expect(edgePixels).toBeGreaterThan(50);
+    expect(lost, `${lost} of ${edgePixels} outline pixels lost at critical`).toBe(0);
     expect(countOpaque(critical)).toBeLessThan(countOpaque(src));
-    expect(opaqueBounds(critical)).toEqual(opaqueBounds(src));
   });
 
   it('erodes the outline itself only once destroyed', () => {
