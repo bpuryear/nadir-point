@@ -4726,6 +4726,37 @@ Expected: PASS, 15 tests.
 
 The four-pixel hardpoint separation may fail on the narrowest cruiser draws. If it does, widen the gap between `port`/`starboard` and `dorsal`/`ventral` in `HARDPOINT_AT` rather than lowering the threshold — six positions a player cannot tell apart is the failure the assertion exists to catch.
 
+> **Amended during execution — five fix rounds (`4ab9276`, `1eeaad1`).** The
+> `anchorRow` below is wrong in three ways a 3-seed test cannot see. A re-run
+> must apply all of these:
+>
+> - **The walk `y += y < mid ? 1 : -1` has a fixed point at midships.** Below mid
+>   it steps up, which puts it at/above mid, which steps it back down — it
+>   oscillates between two adjacent rows until the guard expires, never reaching
+>   a valid row just past them. Replaced with `searchOutward`, which tries
+>   offsets 0, ±1, ±2 … from the nominal row. Cannot oscillate, and preferring
+>   the nearest row is what preserves bow→stern ordering.
+> - **Row identity is not separation.** The claimed-row set must reject rows
+>   *within `MIN_ROW_GAP = 4`*, not merely identical ones — the sponsons sit off
+>   the centreline, so a hardpoint 3 rows away is only √13 ≈ 3.6px distant.
+>   Sponsons additionally need a row with `halfWidth >= 3` or they land 2px apart.
+> - **Fallbacks must degrade the constraint gradually, and never through
+>   validity.** Try gap 4, 3, 2, 1 before abandoning the gap — an all-or-nothing
+>   fallback takes the *first* available row, not the *best* one, producing 1px
+>   separations. Then give up distinctness before ever returning an unfilled row,
+>   and walk the sponson x inboard until `isFilled` is genuinely true (erosion can
+>   hollow the edge pixel while leaving the row nominally filled).
+>
+> **Adjudicated:** six hardpoints at 4px separation is an exact fit on a 24px
+> hull, and erosion can make it impossible. That is geometry, like the fighter
+> exemption but rare. The assertion states the honest invariant — never below
+> 2px, under-4px pairs rare — with distinctness absolute at corvette and above.
+> Verified over 960,000 pairs: minimum observed 3px, 6 pairs under 4px.
+>
+> Task 10's `profile.ts` also needed a fix found here: erosion could zero out
+> *every* row of a short derelict (~0.2%), yielding an invisible ship. The guard
+> for it was a no-op (`if (halfWidth[0] === 0) halfWidth[0] = 0;`).
+
 - [ ] **Step 5: Commit**
 
 ```bash
