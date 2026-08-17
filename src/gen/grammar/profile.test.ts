@@ -106,6 +106,28 @@ describe('profile shape', () => {
     });
     expect(anyGap).toBe(true);
   });
+
+  it('never lets a hull be flat for more than half its length', () => {
+    // A profile that holds one width across most of the hull has no
+    // silhouette. Slab sides are the Coalition and player languages; a single
+    // slab is a brick, and at LOD tier 4 a brick is indistinguishable from any
+    // other brick. Fighters are exempt — at 8-12px there is no shape to hold.
+    const sizes: SizeClass[] = ['corvette', 'destroyer', 'cruiser', 'capital'];
+    for (const faction of ALL_FACTIONS) {
+      for (const sizeClass of sizes) {
+        for (const seed of ['a', 'b', 'c']) {
+          const p = build(faction, sizeClass, seed);
+          let longest = 0;
+          let run = 1;
+          for (let i = 1; i < p.length; i++) {
+            run = p.halfWidth[i] === p.halfWidth[i - 1] ? run + 1 : 1;
+            if (run > longest) longest = run;
+          }
+          expect(longest, `${faction}/${sizeClass}/${seed}`).toBeLessThan(p.length * 0.5);
+        }
+      }
+    }
+  });
 });
 
 describe('faction shape language', () => {

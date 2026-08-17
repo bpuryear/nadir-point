@@ -64,11 +64,12 @@ function concordCurve(t: number): number {
   return nose * body * stern;
 }
 
-/** A blunt working hull: short bow taper, long parallel midbody, square stern. */
+/** A working salvager: blunt bow, mass carried forward of amidships, narrowing aft. */
 function playerCurve(t: number): number {
-  const nose = Math.pow(Math.min(t / 0.2, 1), 0.5);
-  const taper = t > 0.82 ? 1 - 0.18 * ((t - 0.82) / 0.18) : 1;
-  return nose * taper;
+  const nose = Math.pow(Math.min(t / 0.18, 1), 0.45);
+  const body = 1 - 0.34 * Math.pow(Math.max(t - 0.4, 0) / 0.6, 1.4);
+  const stern = t > 0.9 ? 1 + 0.12 * ((t - 0.9) / 0.1) : 1;
+  return nose * body * stern;
 }
 
 /** Quantises a curve into slabs so the hull reads as welded rather than milled. */
@@ -107,7 +108,7 @@ export function buildProfile(spec: ProfileSpec): Profile {
         shape = concordCurve(t);
         break;
       case 'player':
-        shape = slabbed(playerCurve, Math.max(3, Math.round(length / 26)), t);
+        shape = slabbed(playerCurve, Math.max(4, Math.round(length / 20)), t);
         break;
     }
 
