@@ -129,8 +129,9 @@ describe('light direction check', () => {
     expect(report!.samples).toBeGreaterThanOrEqual(MIN_LIGHT_SAMPLES);
   });
 
-  it('abstains when one side has too few samples to be a measurement', () => {
-    // A verdict resting on one or two pixels is noise, not evidence.
+  it('abstains when there is too little of the sprite to measure at all', () => {
+    // Ten edge samples against a floor of twelve: this is the total-sample
+    // abstention, not the per-side one.
     const b = createBuf(14, 14);
     for (let y = 1; y < 5; y++) {
       for (let x = 1; x < 5; x++) {
@@ -138,9 +139,41 @@ describe('light direction check', () => {
         setPx(b, x, y, onTopLeft ? NEUTRAL[6]! : NEUTRAL[3]!);
       }
     }
-    // A small 4x4 blob has too few shadow-facing edge pixels to meet the
-    // per-side minimum, starving the shadow sample count.
     expect(checkLightDirection(b)).toBeNull();
+  });
+
+  it('abstains when one side is starved, even with plenty of samples overall', () => {
+    // A hull whose shadowed flank is almost entirely covered by running lights.
+    // Emissives are excluded from sampling, so the shadow side starves while the
+    // lit side stays healthy — and the total stays well above MIN_LIGHT_SAMPLES.
+    // That is what makes this test isolate the per-side floor: if it abstains,
+    // the total floor cannot be the reason.
+    const build = (bare: number) => {
+      const b = createBuf(14, 14);
+      for (let y = 1; y <= 11; y++) {
+        for (let x = 1; x <= 11; x++) {
+          setPx(b, x, y, x === 1 || y === 1 ? NEUTRAL[6]! : NEUTRAL[3]!);
+        }
+      }
+      const edge: [number, number][] = [];
+      for (let y = 1; y <= 11; y++) {
+        for (let x = 1; x <= 11; x++) {
+          if (x === 11 || y === 11) edge.push([x, y]);
+        }
+      }
+      for (let i = 0; i < edge.length - bare; i++) {
+        setPx(b, edge[i]![0], edge[i]![1], EMISSIVE.amber);
+      }
+      return b;
+    };
+
+    // 21 samples, but only 2 face the shadow side. Not a measurement.
+    expect(checkLightDirection(build(2))).toBeNull();
+
+    // Four bare pixels meets MIN_SIDE_SAMPLES exactly and judging resumes.
+    // Without this second assertion the first one proves nothing about which
+    // floor fired.
+    expect(checkLightDirection(build(4))).not.toBeNull();
   });
 });
 
