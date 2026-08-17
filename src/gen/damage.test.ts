@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeRng } from '../sim/rng.js';
-import { countOpaque, getPx, isOpaque, opaqueBounds } from './pixbuf.js';
+import { countOpaque, getPx, isOpaque } from './pixbuf.js';
 import { FACTION_PALETTE, isEmissive, WARM } from './palette.js';
 import { checkPalette } from './qc.js';
 import { buildHull } from './hull.js';
@@ -74,11 +74,36 @@ describe('the outline rule', () => {
     }
   });
 
-  it('punches interior holes at critical without shrinking the bounding box', () => {
+  it('punches interior holes at critical without touching the outline', () => {
+    // The bounding box is not the outline. A boundary row is dozens of pixels
+    // wide, so per-pixel erosion almost never clears one entirely — a bounds
+    // check passed even when critical was eroding edges, in 31 of 32 seeds.
+    // Assert the actual rule: every edge pixel of the intact hull survives.
     const src = source();
     const critical = frame('critical');
+
+    const isEdge = (buf: typeof src, x: number, y: number) =>
+      isOpaque(getPx(buf, x, y)) &&
+      (!isOpaque(getPx(buf, x - 1, y)) || !isOpaque(getPx(buf, x + 1, y)) ||
+       !isOpaque(getPx(buf, x, y - 1)) || !isOpaque(getPx(buf, x, y + 1)));
+
+    let edgePixels = 0;
+    let lost = 0;
+    for (let y = 0; y < src.h; y++) {
+      for (let x = 0; x < src.w; x++) {
+        if (!isEdge(src, x, y)) continue;
+        edgePixels++;
+        if (!isOpaque(getPx(critical, x, y))) lost++;
+      }
+    }
+
+    // Sanity: the hull must actually have an outline to protect, or this test
+    // would pass vacuously on an empty buffer.
+    expect(edgePixels).toBeGreaterThan(50);
+    expect(lost, `${lost} of ${edgePixels} outline pixels lost at critical`).toBe(0);
+
+    // Interior holes must still be punched — critical has to do something.
     expect(countOpaque(critical)).toBeLessThan(countOpaque(src));
-    expect(opaqueBounds(critical)).toEqual(opaqueBounds(src));
   });
 
   it('erodes the outline itself only once destroyed', () => {
