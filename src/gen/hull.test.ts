@@ -58,30 +58,42 @@ describe('hardpoints', () => {
     }
   });
 
-  it('puts every hardpoint at a distinct position', () => {
-    // The spec requires all six to be visually distinct positions on the
-    // sprite; coincident anchors would make two modules indistinguishable.
-    const h = hull();
-    const seen = new Set(HARDPOINT_IDS.map((id) => `${h.hardpoints[id].x},${h.hardpoints[id].y}`));
-    expect(seen.size).toBe(6);
-  });
-
-  it('separates every pair by at least four pixels on a cruiser', () => {
-    const h = hull();
-    for (let i = 0; i < HARDPOINT_IDS.length; i++) {
-      for (let j = i + 1; j < HARDPOINT_IDS.length; j++) {
-        const a = h.hardpoints[HARDPOINT_IDS[i]!];
-        const b = h.hardpoints[HARDPOINT_IDS[j]!];
-        expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThanOrEqual(4);
+  it('keeps all six hardpoints distinct and separated, every faction and size', () => {
+    // Fighters are exempt: six points cannot be 4px apart on an 8-12px hull.
+    const sizes: SizeClass[] = ['corvette', 'destroyer', 'cruiser', 'capital'];
+    for (const faction of ALL_FACTIONS) {
+      for (const sizeClass of sizes) {
+        for (let i = 0; i < 40; i++) {
+          const h = hull(faction, sizeClass, `sep-${i}`);
+          const seen = new Set(HARDPOINT_IDS.map((id) => `${h.hardpoints[id].x},${h.hardpoints[id].y}`));
+          expect(seen.size, `${faction}/${sizeClass}/${i}`).toBe(6);
+          for (let a = 0; a < HARDPOINT_IDS.length; a++) {
+            for (let b = a + 1; b < HARDPOINT_IDS.length; b++) {
+              const p = h.hardpoints[HARDPOINT_IDS[a]!];
+              const q = h.hardpoints[HARDPOINT_IDS[b]!];
+              expect(Math.hypot(p.x - q.x, p.y - q.y), `${faction}/${sizeClass}/${i}`)
+                .toBeGreaterThanOrEqual(4);
+            }
+          }
+        }
       }
     }
   });
 
-  it('orders them bow to stern along the hull', () => {
-    const h = hull();
-    expect(h.hardpoints.bow.y).toBeLessThan(h.hardpoints.dorsal.y);
-    expect(h.hardpoints.dorsal.y).toBeLessThan(h.hardpoints.ventral.y);
-    expect(h.hardpoints.ventral.y).toBeLessThan(h.hardpoints.engine.y);
+  it('orders them bow to stern along the hull, every faction and size', () => {
+    // Fighters are exempt for the same reason: too short to guarantee distinct
+    // rows for every hardpoint once collisions are resolved.
+    const sizes: SizeClass[] = ['corvette', 'destroyer', 'cruiser', 'capital'];
+    for (const faction of ALL_FACTIONS) {
+      for (const sizeClass of sizes) {
+        for (let i = 0; i < 40; i++) {
+          const h = hull(faction, sizeClass, `order-${i}`);
+          expect(h.hardpoints.bow.y, `${faction}/${sizeClass}/${i}`).toBeLessThan(h.hardpoints.dorsal.y);
+          expect(h.hardpoints.dorsal.y, `${faction}/${sizeClass}/${i}`).toBeLessThan(h.hardpoints.ventral.y);
+          expect(h.hardpoints.ventral.y, `${faction}/${sizeClass}/${i}`).toBeLessThan(h.hardpoints.engine.y);
+        }
+      }
+    }
   });
 
   it('puts the sponsons on opposite sides of the centreline', () => {
@@ -97,12 +109,18 @@ describe('hardpoints', () => {
     }
   });
 
-  it('keeps every hardpoint on the hull, not floating beside it', () => {
-    for (const seed of ['a', 'b', 'c', 'd']) {
-      const h = hull('player', 'cruiser', seed);
-      for (const id of HARDPOINT_IDS) {
-        const hp = h.hardpoints[id];
-        expect(isFilled(h.profile, hp.x - h.centreX, hp.y)).toBe(true);
+  it('lands every hardpoint on filled hull, every faction and size', () => {
+    const sizes: SizeClass[] = ['fighter', 'corvette', 'destroyer', 'cruiser', 'capital'];
+    for (const faction of ALL_FACTIONS) {
+      for (const sizeClass of sizes) {
+        for (let i = 0; i < 40; i++) {
+          const h = hull(faction, sizeClass, `fill-${i}`);
+          for (const id of HARDPOINT_IDS) {
+            const hp = h.hardpoints[id];
+            expect(isFilled(h.profile, hp.x - h.centreX, hp.y), `${faction}/${sizeClass}/${i}/${id}`)
+              .toBe(true);
+          }
+        }
       }
     }
   });
