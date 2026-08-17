@@ -34,6 +34,9 @@ export const FORBIDDEN_GLOBALS: readonly string[] = [
 const SPECIFIER_RE =
   /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]/g;
 
+/** Matches namespaced access to globals like globalThis.document and self.window. */
+const NAMESPACED_RE = /\b(?:globalThis|self)\s*\.\s*(\w+)/g;
+
 /** Strips line and block comments so a mention of `document` in prose is not a violation. */
 function stripComments(source: string): string {
   // Replace comment bodies with spaces to preserve line numbering exactly.
@@ -110,6 +113,25 @@ export function scanSource(file: string, source: string): PurityViolation[] {
     }
   }
 
+  // Namespaced access — `globalThis.document`, `self.window`. The bare-word
+  // check above cannot see these: its lookbehind deliberately ignores anything
+  // preceded by a dot, so that `opts.window` stays legal.
+  for (let i = 0; i < lines.length; i++) {
+    NAMESPACED_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = NAMESPACED_RE.exec(lines[i]!)) !== null) {
+      const name = m[1]!;
+      if (FORBIDDEN_GLOBALS.includes(name)) {
+        violations.push({
+          file,
+          line: i + 1,
+          rule: 'forbidden-global',
+          detail: `references DOM global '${name}' via a namespace`,
+        });
+      }
+    }
+  }
+
   return violations;
 }
 
@@ -117,8 +139,13 @@ function walk(dir: string, out: string[] = []): string[] {
   let entries: string[];
   try {
     entries = readdirSync(dir);
-  } catch {
-    return out; // Directory does not exist yet — not a violation.
+  } catch (err) {
+    // A directory that does not exist yet is normal and not a violation.
+    // Anything else — permissions, I/O — must surface: this tool's value is
+    // that silence means clean, so a directory it could not read has to be
+    // loud rather than absent.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return out;
+    throw err;
   }
   for (const entry of entries) {
     const full = join(dir, entry);

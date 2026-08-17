@@ -66,6 +66,21 @@ describe('scanSource rejects DOM access', () => {
     expect(scanSource('src/sim/a.ts', `// never touch document here`)).toEqual([]);
     expect(scanSource('src/sim/a.ts', `/* window is forbidden */`)).toEqual([]);
   });
+
+  it('flags a DOM global reached through globalThis', () => {
+    const v = scanSource('src/sim/a.ts', `const d = globalThis.document;`);
+    expect(v).toHaveLength(1);
+    expect(v[0]!.rule).toBe('forbidden-global');
+    expect(v[0]!.detail).toContain('document');
+  });
+
+  it('flags a DOM global reached through self', () => {
+    expect(scanSource('src/gen/a.ts', `self.window.alert('x');`).length).toBeGreaterThan(0);
+  });
+
+  it('still allows an unrelated namespaced property', () => {
+    expect(scanSource('src/sim/a.ts', `const v = globalThis.structuredClone;`)).toEqual([]);
+  });
 });
 
 describe('scanSource confines sim to its own tree', () => {
