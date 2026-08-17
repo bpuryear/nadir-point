@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { makeRng } from '../sim/rng.js';
 import { countOpaque, getPx, isOpaque, opaqueBounds } from './pixbuf.js';
-import { FACTION_PALETTE } from './palette.js';
+import { FACTION_PALETTE, type FactionId } from './palette.js';
 import { checkPalette } from './qc.js';
 import { buildHull } from './hull.js';
 import { buildModule, MODULE_CATALOGUE, modulesFor } from './module.js';
@@ -116,6 +116,45 @@ describe('every module changes the outline', () => {
     const leftReach = ship.centreX - b.x0;
     const rightReach = b.x1 - ship.centreX;
     expect(leftReach).not.toBe(rightReach);
+  });
+
+  it('leans dorsal and ventral to opposite sides of the spine', () => {
+    // Centreline modules are allowed to hang off one side — the art direction
+    // asks for asymmetry, and a hull half-width of 25px makes straddling
+    // impossible inside the 48px size band. What must not happen is all of them
+    // leaning the same way, which makes dorsal indistinguishable from a
+    // starboard sponson.
+    for (const faction of ['player', 'concord'] as FactionId[]) {
+      const hull = buildHull({ faction, sizeClass: 'cruiser', rng: makeRng(`lean-${faction}`) });
+      const hullPx = new Set<string>();
+      for (let y = 0; y < hull.buf.h; y++) {
+        for (let x = 0; x < hull.buf.w; x++) {
+          if (isOpaque(getPx(hull.buf, x, y))) hullPx.add(`${x},${y}`);
+        }
+      }
+
+      const leanOf = (hardpoint: 'dorsal' | 'ventral') => {
+        let left = 0;
+        let right = 0;
+        for (const def of MODULE_CATALOGUE.filter((m) => m.hardpoint === hardpoint)) {
+          const s = buildModule(def, faction, makeRng(def.id));
+          const hp = hull.hardpoints[hardpoint];
+          for (let y = 0; y < s.buf.h; y++) {
+            for (let x = 0; x < s.buf.w; x++) {
+              if (!isOpaque(getPx(s.buf, x, y))) continue;
+              const gx = hp.x - s.anchorX + x;
+              const gy = hp.y - s.anchorY + y;
+              if (hullPx.has(`${gx},${gy}`)) continue;
+              if (gx < hull.centreX) left++;
+              else if (gx > hull.centreX) right++;
+            }
+          }
+        }
+        return left > right ? 'port' : 'starboard';
+      };
+
+      expect(leanOf('dorsal'), faction).not.toBe(leanOf('ventral'));
+    }
   });
 });
 

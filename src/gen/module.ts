@@ -168,7 +168,19 @@ export function buildModule(def: ModuleDef, faction: FactionId, _rng: Rng): Modu
 
   // Reverse the reach for hardpoints whose outward direction runs toward
   // decreasing coordinates, so `t = 0` is always the end that touches the hull.
-  const flip = def.hardpoint === 'port' || def.hardpoint === 'bow';
+  //
+  // Dorsal and ventral are both centreline hardpoints — the hull is wide
+  // enough there (up to H=25px on a player capital, see composite.test.ts)
+  // that straddling the spine would need up to 66px of reach, well past the
+  // 16-48px band the art direction sets for module detail density. So they
+  // stay edge-anchored like the sponsons and lean to one side instead. Left
+  // unflipped, both would reach toward increasing x (starboard) — the same
+  // direction as the starboard sponson itself — making dorsal read as a
+  // starboard sponson at a different station. Flipping dorsal only makes it
+  // lean to port (decreasing x, the same direction `port` reaches) while
+  // ventral leans to starboard, so the two centreline stations — and the two
+  // sponsons — are each visually distinct from one another.
+  const flip = def.hardpoint === 'port' || def.hardpoint === 'bow' || def.hardpoint === 'dorsal';
 
   for (let r = 0; r < reach; r++) {
     const t = reach === 1 ? 0 : r / (reach - 1);
