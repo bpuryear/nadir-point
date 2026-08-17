@@ -52,17 +52,30 @@ export const MODULE_CATALOGUE: readonly ModuleDef[] = [
   { id: 'breaching-prow',  name: 'BREACHING PROW',  hardpoint: 'bow',        archetype: 'block',  tier: 2, length: 22, width: 18 },
   { id: 'siege-lance',     name: 'SIEGE LANCE',     hardpoint: 'bow',        archetype: 'boom',   tier: 3, length: 40, width: 12 },
 
-  // Dorsal spine — heavy weapons, sensors
-  { id: 'sensor-mast',     name: 'SENSOR MAST',     hardpoint: 'dorsal',     archetype: 'boom',   tier: 1, length: 24, width: 10 },
-  { id: 'missile-cells',   name: 'MISSILE CELLS',   hardpoint: 'dorsal',     archetype: 'pod',    tier: 2, length: 20, width: 18 },
-  { id: 'rail-battery',    name: 'RAIL BATTERY',    hardpoint: 'dorsal',     archetype: 'barrel', tier: 2, length: 26, width: 16 },
-  { id: 'spinal-coil',     name: 'SPINAL COIL',     hardpoint: 'dorsal',     archetype: 'boom',   tier: 3, length: 44, width: 14 },
+  // Dorsal spine — heavy weapons, sensors.
+  //
+  // Dorsal mounts near the hull's widest run (see HARDPOINT_AT.dorsal in
+  // hull.ts), and a beamy player-faction capital hull reaches a local
+  // half-width around 30px there. `width` is the reach for a lateral module
+  // (see `buildModule`), so these need to be wide enough to clear that —
+  // roughly 30px of hull plus an 8px margin — not merely wide enough to look
+  // proportionate next to a tier-1 flak cluster.
+  { id: 'sensor-mast',     name: 'SENSOR MAST',     hardpoint: 'dorsal',     archetype: 'boom',   tier: 1, length: 16, width: 40 },
+  { id: 'missile-cells',   name: 'MISSILE CELLS',   hardpoint: 'dorsal',     archetype: 'pod',    tier: 2, length: 18, width: 42 },
+  { id: 'rail-battery',    name: 'RAIL BATTERY',    hardpoint: 'dorsal',     archetype: 'barrel', tier: 2, length: 20, width: 42 },
+  { id: 'spinal-coil',     name: 'SPINAL COIL',     hardpoint: 'dorsal',     archetype: 'boom',   tier: 3, length: 18, width: 46 },
 
-  // Ventral bay — utility, capacity
-  { id: 'salvage-tractor', name: 'SALVAGE TRACTOR', hardpoint: 'ventral',    archetype: 'array',  tier: 1, length: 18, width: 20 },
-  { id: 'cargo-expansion', name: 'CARGO EXPANSION', hardpoint: 'ventral',    archetype: 'block',  tier: 2, length: 26, width: 22 },
-  { id: 'repair-bay',      name: 'REPAIR BAY',      hardpoint: 'ventral',    archetype: 'block',  tier: 2, length: 24, width: 20 },
-  { id: 'hangar-deck',     name: 'HANGAR DECK',     hardpoint: 'ventral',    archetype: 'block',  tier: 3, length: 38, width: 30 },
+  // Ventral bay — utility, capacity.
+  //
+  // Same widened-for-reach reasoning as dorsal: ventral is also a centreline
+  // mount (see buildModule's `lateral` comment), and a coalition capital hull
+  // can run a local half-width past 25px there. hangar-deck is bumped enough
+  // to stay the largest ventral module by a comfortable margin even after the
+  // other three grew to clear the hull.
+  { id: 'salvage-tractor', name: 'SALVAGE TRACTOR', hardpoint: 'ventral',    archetype: 'array',  tier: 1, length: 16, width: 38 },
+  { id: 'cargo-expansion', name: 'CARGO EXPANSION', hardpoint: 'ventral',    archetype: 'block',  tier: 2, length: 20, width: 40 },
+  { id: 'repair-bay',      name: 'REPAIR BAY',      hardpoint: 'ventral',    archetype: 'block',  tier: 2, length: 18, width: 40 },
+  { id: 'hangar-deck',     name: 'HANGAR DECK',     hardpoint: 'ventral',    archetype: 'block',  tier: 3, length: 38, width: 46 },
 
   // Port sponson — broadside
   { id: 'flak-cluster',    name: 'FLAK CLUSTER',    hardpoint: 'port',       archetype: 'pod',    tier: 1, length: 16, width: 16 },

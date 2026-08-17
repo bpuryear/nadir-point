@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { makeRng } from '../sim/rng.js';
-import { countOpaque, opaqueBounds } from './pixbuf.js';
+import { countOpaque, getPx, isOpaque } from './pixbuf.js';
 import { FACTION_PALETTE, type FactionId } from './palette.js';
 import { qcSprite } from './qc.js';
-import { HARDPOINT_IDS } from './hull.js';
+import { HARDPOINT_IDS, buildHull } from './hull.js';
+import type { SizeClass } from './grammar/profile.js';
 import { buildModule, MODULE_CATALOGUE, modulesFor, type ModuleDef } from './module.js';
 
 const ALL_FACTIONS: FactionId[] = ['concord', 'coalition', 'derelict', 'player'];
@@ -93,20 +94,40 @@ describe('module sprites', () => {
     }
   });
 
-  it('extends outward from its anchor, so it can change the outline', () => {
-    // A module that sits entirely inboard of its anchor would be swallowed by
-    // the hull and invisible in silhouette — the one failure mode that breaks
-    // the core loop.
-    for (const def of MODULE_CATALOGUE) {
-      const s = buildModule(def, 'player', makeRng(def.id));
-      const b = opaqueBounds(s.buf)!;
-      const reach =
-        def.hardpoint === 'port' ? s.anchorX - b.x0
-        : def.hardpoint === 'starboard' ? b.x1 - s.anchorX
-        : def.hardpoint === 'engine' ? b.y1 - s.anchorY
-        : def.hardpoint === 'bow' ? s.anchorY - b.y0
-        : Math.max(s.anchorX - b.x0, b.x1 - s.anchorX);
-      expect(reach, def.id).toBeGreaterThanOrEqual(4);
+  it('changes the hull outline when installed — every module, every faction', () => {
+    // The proxy this used to check (reach within the module's own buffer) let
+    // three dorsal modules through while they were entirely swallowed by the
+    // hull. What matters is pixels landing outside the hull's silhouette: a
+    // module that cannot be identified from the outline is not finished, and an
+    // invisible upgrade is the one failure the salvage loop cannot survive.
+    for (const faction of ['player', 'concord', 'coalition'] as FactionId[]) {
+      for (const sizeClass of ['cruiser', 'capital'] as SizeClass[]) {
+        const hull = buildHull({ faction, sizeClass, rng: makeRng(`sil-${faction}`) });
+
+        const hullPx = new Set<string>();
+        for (let y = 0; y < hull.buf.h; y++) {
+          for (let x = 0; x < hull.buf.w; x++) {
+            if (isOpaque(getPx(hull.buf, x, y))) hullPx.add(`${x},${y}`);
+          }
+        }
+
+        for (const def of MODULE_CATALOGUE) {
+          const s = buildModule(def, faction, makeRng(def.id));
+          const hp = hull.hardpoints[def.hardpoint];
+          const ox = hp.x - s.anchorX;
+          const oy = hp.y - s.anchorY;
+
+          let outside = 0;
+          for (let y = 0; y < s.buf.h; y++) {
+            for (let x = 0; x < s.buf.w; x++) {
+              if (!isOpaque(getPx(s.buf, x, y))) continue;
+              if (!hullPx.has(`${ox + x},${oy + y}`)) outside++;
+            }
+          }
+
+          expect(outside, `${def.id} on ${faction}/${sizeClass}`).toBeGreaterThanOrEqual(8);
+        }
+      }
     }
   });
 
