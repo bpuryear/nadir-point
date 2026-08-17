@@ -1,25 +1,27 @@
 {
-  "name": "nadir-point",
+  "name": "salvager",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Nadir Point - a single-ship space roguelike RTS built on three.js",
+  "description": "A single-ship space salvage game in 2D pixel art",
+  "engines": { "node": ">=24" },
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4173",
-    "capture": "node tools/capture.mjs",
-    "bench": "node tools/bench.mjs",
-    "smoke": "node tools/smoke.mjs",
-    "flight": "node tools/flight.mjs",
-    "uicheck": "node tools/uicheck.mjs",
-    "occlusion": "node tools/occlusion.mjs"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "contactsheet": "tsx tools/contactsheet.ts"
   },
   "dependencies": {
-    "three": "^0.185.1"
+    "pixi.js": "^8.6.0"
   },
   "devDependencies": {
-    "playwright": "^1.62.0",
-    "vite": "^8.1.5"
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vite": "^8.1.5",
+    "vitest": "^3.0.0"
   }
 }
