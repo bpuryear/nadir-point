@@ -247,7 +247,7 @@ export function buildContactSheet(seed: string): SheetResult {
   sheet.heading(`7. ROTATION - 8 OF ${ROTATION_BINS} BINS`);
 
   const fitted = compositeShip(cruiser, loadouts[1]![1]);
-  const bins = bakeRotations(fitted.buf, ROTATION_BINS);
+  const bins = bakeRotations(fitted.buf, ROTATION_BINS, fitted.plan);
   for (let i = 0; i < ROTATION_BINS; i += Math.floor(ROTATION_BINS / 8)) {
     sheet.place(bins[i]!, `BIN ${i}`);
     recordPaletteOnly(`rotation-${i}`, bins[i]!, FACTION_PALETTE.player);

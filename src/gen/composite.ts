@@ -15,6 +15,7 @@
 import {
   blit, createBuf, opaqueBounds, type PixBuf,
 } from './pixbuf.js';
+import { blitDitherPlan, createDitherPlan, type DitherPlan } from './grammar/plates.js';
 import type { HardpointId, Hull } from './hull.js';
 import type { ModuleSprite } from './module.js';
 
@@ -27,6 +28,8 @@ export interface CompositeShip {
   centreY: number;
   hull: Hull;
   installed: readonly HardpointId[];
+  /** Which pixels of `buf` were resolved by an interior dither, and how. */
+  plan: DitherPlan;
 }
 
 /**
@@ -75,22 +78,29 @@ export function compositeShip(hull: Hull, loadout: Loadout): CompositeShip {
   const offsetX = -minX;
   const offsetY = -minY;
   const buf = createBuf(maxX - minX + 1, maxY - minY + 1);
+  const plan = createDitherPlan(buf.w, buf.h);
 
-  // Ventral goes under the hull; the rest go over it.
+  // Ventral goes under the hull; the rest go over it. The plan is composited
+  // in lockstep with the colour buffer, same order and same opacity rule, so
+  // it always describes exactly what ended up on top of `buf`.
   for (const p of placements) {
     if (p.sprite.def.hardpoint !== 'ventral') continue;
     blit(buf, p.sprite.buf, p.x + offsetX, p.y + offsetY);
+    blitDitherPlan(plan, p.sprite.plan, p.sprite.buf, p.x + offsetX, p.y + offsetY);
   }
 
   blit(buf, hull.buf, offsetX, offsetY);
+  blitDitherPlan(plan, hull.plan, hull.buf, offsetX, offsetY);
 
   for (const p of placements) {
     if (p.sprite.def.hardpoint === 'ventral') continue;
     blit(buf, p.sprite.buf, p.x + offsetX, p.y + offsetY);
+    blitDitherPlan(plan, p.sprite.plan, p.sprite.buf, p.x + offsetX, p.y + offsetY);
   }
 
   return {
     buf,
+    plan,
     centreX: hull.centreX + offsetX,
     centreY: Math.floor(hull.buf.h / 2) + offsetY,
     hull,

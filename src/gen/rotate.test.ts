@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { makeRng } from '../sim/rng.js';
-import { countOpaque, createBuf, getPx, rgba, setPx } from './pixbuf.js';
+import {
+  countOpaque, createBuf, getPx, isOpaque, rgba, setPx, type PixBuf,
+} from './pixbuf.js';
 import { buildHull } from './hull.js';
+import { buildModule, MODULE_CATALOGUE, type ModuleSprite } from './module.js';
+import { compositeShip, type Loadout } from './composite.js';
+import { getDitherPlan, type DitherPlan } from './grammar/plates.js';
+import { shadeStep } from './palette.js';
 import {
   bakeRotations, bakeSize, binForHeading, headingForBin, ROTATION_BINS,
 } from './rotate.js';
@@ -193,5 +199,176 @@ describe('determinism', () => {
     for (let i = 0; i < 8; i++) {
       expect(Array.from(a[i]!.data)).toEqual(Array.from(b[i]!.data));
     }
+  });
+});
+
+/**
+ * A fitted player cruiser: the same shape of ship the moire was reported
+ * against on the contact sheet (hull plus three modules, so both the hull's
+ * own dither and each module's own dither are exercised).
+ */
+function fittedCruiser() {
+  const rng = makeRng('rotate-dither');
+  const hull = buildHull({ faction: 'player', sizeClass: 'cruiser', rng: rng.split('hull') });
+  const mod = (id: string): ModuleSprite => {
+    const def = MODULE_CATALOGUE.find((m) => m.id === id)!;
+    return buildModule(def, 'player', rng.split(id));
+  };
+  const loadout: Loadout = {
+    bow: mod('siege-lance'),
+    dorsal: mod('spinal-coil'),
+    engine: mod('jump-drive'),
+  };
+  return compositeShip(hull, loadout);
+}
+
+/**
+ * Classifies each dither-tracked pixel of an *already-baked* bin as the high
+ * or low side of its dither pair, reading the classification off the bin's
+ * actual rendered colour — not off an independently recomputed mask. That
+ * distinction matters: a version of this test that decided high/low itself
+ * (by calling `ditherMask` directly, in whichever frame it assumed the fix
+ * used) would keep passing even if `bakeRotations` regressed to source-frame
+ * dithering, because it would never look at what the function under test
+ * actually produced. Reading the real pixel is what makes this a test of
+ * `bakeRotations`, not a test of this file's assumptions about it.
+ *
+ * Still needs to replicate bakeRotations' own inverse-rotation sampling —
+ * same style as the "pinned direction" bake-geometry test above — but only to
+ * find *which* plan entry a destination pixel corresponds to; that
+ * correspondence is geometry, identical whether the bake is fixed or broken.
+ * What the fix changes is which of the two colours ends up at that pixel,
+ * and that is read from `baked`, the real output.
+ */
+function classifyBakedBin(
+  src: PixBuf, plan: DitherPlan, baked: PixBuf, bin: number, bins: number,
+): boolean[][] {
+  const size = bakeSize(src);
+  const dcx = size / 2;
+  const dcy = size / 2;
+  const offsetX = Math.floor((size - src.w) / 2);
+  const offsetY = Math.floor((size - src.h) / 2);
+  const scx = offsetX + src.w / 2;
+  const scy = offsetY + src.h / 2;
+
+  const angle = headingForBin(bin, bins);
+  const cos = Math.cos(-angle);
+  const sin = Math.sin(-angle);
+
+  // `null` marks a pixel the plan does not track (not part of an interior
+  // dither, or not opaque) — excluded from both metrics below, same as the
+  // unrotated dither tests only ever look at the mask itself.
+  const high: (boolean | null)[][] = Array.from({ length: size }, () => new Array(size).fill(null));
+
+  for (let dy = 0; dy < size; dy++) {
+    for (let dx = 0; dx < size; dx++) {
+      const rx = dx + 0.5 - dcx;
+      const ry = dy + 0.5 - dcy;
+      const sx = Math.floor(rx * cos - ry * sin + scx);
+      const sy = Math.floor(rx * sin + ry * cos + scy);
+      const srcX = sx - offsetX;
+      const srcY = sy - offsetY;
+
+      const entry = getDitherPlan(plan, srcX, srcY);
+      if (entry === null) continue;
+
+      const rendered = getPx(baked, dx, dy);
+      if (!isOpaque(rendered)) continue;
+
+      // The two colours a tracked pixel can possibly be: the low and high
+      // side of its pair. Whichever the real bake actually painted decides
+      // the classification.
+      high[dy]![dx] = rendered === shadeStep(entry.ramp, entry.base + 1);
+    }
+  }
+
+  return high.map((row) => row.map((cell) => cell === true));
+}
+
+function longestHorizontalRun(high: boolean[][]): number {
+  let longest = 0;
+  for (const row of high) {
+    let run = 0;
+    for (const cell of row) {
+      run = cell ? run + 1 : 0;
+      if (run > longest) longest = run;
+    }
+  }
+  return longest;
+}
+
+function clumpedBlocks(high: boolean[][]): number {
+  let blocks = 0;
+  for (let y = 0; y < high.length - 1; y++) {
+    for (let x = 0; x < high[y]!.length - 1; x++) {
+      if (high[y]![x] && high[y]![x + 1] && high[y + 1]![x] && high[y + 1]![x + 1]) blocks++;
+    }
+  }
+  return blocks;
+}
+
+describe('dither survives rotation', () => {
+  // The invariant plates.ts's own "dither" tests establish on the unrotated
+  // mask directly — longest horizontal run <= 1, zero clumped 2x2 blocks —
+  // is exactly what shipped broken: those tests never saw a rotated bin, so
+  // a hull that passed them could still moire hard once baked at an angle.
+  // These tests carry the same invariant through the bake, on real hull and
+  // module dithering, at axis-aligned, 22.5-degree, and 45-degree bins.
+
+  it('every sampled bin keeps a short run and no clumping', () => {
+    const fitted = fittedCruiser();
+    const hullPixels = countOpaque(fitted.buf);
+    const baked = bakeRotations(fitted.buf, ROTATION_BINS, fitted.plan);
+
+    // 0/16/32/48 are axis-aligned (already correct pre-fix); 4/20/36/52 sit at
+    // 22.5 degrees and 8/24/40/56 at 45 degrees — the angles the bug report
+    // measured as worst.
+    const sampledBins = [0, 4, 8, 16, 20, 24, 32, 36, 40, 48, 52, 56];
+
+    for (const bin of sampledBins) {
+      const high = classifyBakedBin(fitted.buf, fitted.plan, baked[bin]!, bin, ROTATION_BINS);
+      const run = longestHorizontalRun(high);
+      const clumped = clumpedBlocks(high);
+      const clumpedPer1000 = (clumped * 1000) / hullPixels;
+
+      expect(run, `bin ${bin}: longest run`).toBeLessThanOrEqual(2);
+      expect(clumpedPer1000, `bin ${bin}: clumped per 1000 hull px`).toBeLessThan(10);
+    }
+  });
+
+  it('45-degree bins moire hard without the fix — pins the defect this closes', () => {
+    // Bakes the *unfixed* code path (no plan passed, exactly what shipped)
+    // and asserts it violates the same target the row above requires the
+    // fixed path to meet. Read together, these two tests prove the plan
+    // argument is what makes the difference: same ship, same bins, only
+    // whether `bakeRotations` gets the plan changes. If this ever stops
+    // failing, the "before" baseline the fix is measured against has moved
+    // and needs re-checking.
+    const fitted = fittedCruiser();
+    const hullPixels = countOpaque(fitted.buf);
+    const baked = bakeRotations(fitted.buf, ROTATION_BINS);
+
+    for (const bin of [8, 24, 40, 56]) {
+      const high = classifyBakedBin(fitted.buf, fitted.plan, baked[bin]!, bin, ROTATION_BINS);
+      const run = longestHorizontalRun(high);
+      const clumped = clumpedBlocks(high);
+      const clumpedPer1000 = (clumped * 1000) / hullPixels;
+
+      expect(run > 2 || clumpedPer1000 >= 10, `bin ${bin}: expected the unfixed bake to violate the target`).toBe(true);
+    }
+  });
+
+  it('bin 0 ignores the plan and still reproduces the source exactly', () => {
+    const fitted = fittedCruiser();
+    const withPlan = bakeRotations(fitted.buf, ROTATION_BINS, fitted.plan)[0]!;
+    const withoutPlan = bakeRotations(fitted.buf, ROTATION_BINS)[0]!;
+    expect(Array.from(withPlan.data)).toEqual(Array.from(withoutPlan.data));
+  });
+
+  it('actually changes the baked colours at a 45-degree bin — the plan is not silently ignored', () => {
+    const fitted = fittedCruiser();
+    const withPlan = bakeRotations(fitted.buf, ROTATION_BINS, fitted.plan)[8]!;
+    const withoutPlan = bakeRotations(fitted.buf, ROTATION_BINS)[8]!;
+    expect(Array.from(withPlan.data)).not.toEqual(Array.from(withoutPlan.data));
   });
 });

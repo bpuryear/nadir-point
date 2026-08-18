@@ -19,6 +19,7 @@
  */
 
 import { createBuf, EMPTY, getPx, setPx, type PixBuf } from './pixbuf.js';
+import { resolveDither, type DitherPlan } from './grammar/plates.js';
 
 export const ROTATION_BINS = 64;
 
@@ -40,7 +41,26 @@ export function bakeSize(src: PixBuf): number {
   return diagonal % 2 === 0 ? diagonal : diagonal + 1;
 }
 
-export function bakeRotations(src: PixBuf, bins = ROTATION_BINS): PixBuf[] {
+/**
+ * `plan` is optional and, when supplied, must be paired with `src` — same
+ * dimensions, same coordinate frame (`compositeShip` and `plateHull` both
+ * produce a colour buffer and a plan together for exactly this reason).
+ *
+ * Rotating an already-dithered sprite scrambles its checkerboard into
+ * diagonal clumps: a Bayer mask is only a clean checkerboard when read in the
+ * grid it was built for, and rotation changes which pixels are adjacent to
+ * which. The fix is to never carry a *resolved* dither pixel through a
+ * rotation at all — carry what it was dithering between instead, and decide
+ * fresh once the pixel is sitting in the bin's own destination grid, via
+ * `resolveDither`.
+ *
+ * Bin 0 is the exception: it is a pure translation, not a rotation, so it
+ * skips the plan entirely and copies `src` as-is. That is what keeps bin 0 a
+ * byte-for-byte reproduction of the source regardless of dithering — the
+ * property `bakeSize`'s pivot arithmetic is checked against — rather than a
+ * fresh dither decision that happens to usually agree with it.
+ */
+export function bakeRotations(src: PixBuf, bins = ROTATION_BINS, plan?: DitherPlan): PixBuf[] {
   const size = bakeSize(src);
   const out: PixBuf[] = [];
 
@@ -57,6 +77,7 @@ export function bakeRotations(src: PixBuf, bins = ROTATION_BINS): PixBuf[] {
   for (let bin = 0; bin < bins; bin++) {
     const buf = createBuf(size, size);
     const angle = headingForBin(bin, bins);
+    const recompute = plan !== undefined && bin !== 0;
 
     // Inverse rotation: walk destination pixels and sample the source, which is
     // the only way to guarantee every destination pixel is written exactly once
@@ -73,8 +94,13 @@ export function bakeRotations(src: PixBuf, bins = ROTATION_BINS): PixBuf[] {
         const sx = Math.floor(rx * cos - ry * sin + scx);
         const sy = Math.floor(rx * sin + ry * cos + scy);
 
-        const c = getPx(src, sx - offsetX, sy - offsetY);
-        if (c !== EMPTY) setPx(buf, dx, dy, c);
+        const srcX = sx - offsetX;
+        const srcY = sy - offsetY;
+        const c = getPx(src, srcX, srcY);
+        if (c === EMPTY) continue;
+
+        const color = recompute ? resolveDither(plan, srcX, srcY, dx, dy, c) : c;
+        setPx(buf, dx, dy, color);
       }
     }
 

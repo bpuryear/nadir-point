@@ -20,7 +20,9 @@ import {
   EMISSIVE, FACTION_PALETTE, rampOf, shadeStep, type FactionId,
 } from './palette.js';
 import { assertQc, qcSprite } from './qc.js';
-import { ditherMask } from './grammar/plates.js';
+import {
+  clearDitherPlan, createDitherPlan, ditherMask, setDitherPlan, type DitherPlan,
+} from './grammar/plates.js';
 import type { HardpointId } from './hull.js';
 
 export type ModuleArchetype = 'barrel' | 'boom' | 'block' | 'pod' | 'nozzle' | 'array';
@@ -112,6 +114,8 @@ export interface ModuleSprite {
   anchorX: number;
   anchorY: number;
   faction: FactionId;
+  /** Which pixels of `buf` were resolved by the interior dither, and how. */
+  plan: DitherPlan;
 }
 
 /** Emissive accent each faction lights its modules with. */
@@ -152,6 +156,7 @@ const SHAPE: Readonly<Record<ModuleArchetype, (t: number) => number>> = {
 // callers (and the determinism test) rely on.
 export function buildModule(def: ModuleDef, faction: FactionId, _rng: Rng): ModuleSprite {
   const buf = createBuf(def.width, def.length);
+  const plan = createDitherPlan(buf.w, buf.h);
   const ramp = rampOf(faction);
   const accent = ACCENT[faction];
 
@@ -203,9 +208,17 @@ export function buildModule(def: ModuleDef, faction: FactionId, _rng: Rng): Modu
       const onShadowEdge = s === centre + halfSpan || (!lateral && r === reach - 1);
 
       let step = 3;
-      if (onLitEdge && !onShadowEdge) step += 2;
-      else if (onShadowEdge && !onLitEdge) step -= 2;
-      else if (ditherMask(x, y)) step += 1;
+      if (onLitEdge && !onShadowEdge) {
+        step += 2;
+      } else if (onShadowEdge && !onLitEdge) {
+        step -= 2;
+      } else {
+        // Interior plate: same dither-between-two-steps treatment as the
+        // hull, and recorded in the plan before the mask is applied so the
+        // rotation baker can re-evaluate it in the destination frame.
+        setDitherPlan(plan, x, y, ramp, step);
+        if (ditherMask(x, y)) step += 1;
+      }
 
       setPx(buf, x, y, shadeStep(ramp, step));
     }
@@ -221,6 +234,7 @@ export function buildModule(def: ModuleDef, faction: FactionId, _rng: Rng): Modu
     const x = lateral ? rr : centre;
     const y = lateral ? centre : rr;
     setPx(buf, x, y, accent);
+    clearDitherPlan(plan, x, y);
   }
 
   // The anchor sits at the hull-side end of the reach, centred across the span.
@@ -231,5 +245,5 @@ export function buildModule(def: ModuleDef, faction: FactionId, _rng: Rng): Modu
 
   assertQc(qcSprite(`module:${def.id}:${faction}`, buf, FACTION_PALETTE[faction]));
 
-  return { def, buf, anchorX, anchorY, faction };
+  return { def, buf, anchorX, anchorY, faction, plan };
 }

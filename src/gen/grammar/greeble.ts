@@ -22,7 +22,7 @@ import type { Rng } from '../../sim/rng.js';
 import { getPx, isOpaque, setPx, type Rgba } from '../pixbuf.js';
 import { shadeStep } from '../palette.js';
 import { isFilled, type Profile, type SizeClass } from './profile.js';
-import { BASE_STEP, type PlatedHull } from './plates.js';
+import { BASE_STEP, clearDitherPlan, type PlatedHull } from './plates.js';
 
 /** Maximum greebles by size class. Deliberately austere. */
 export const GREEBLE_BUDGET: Readonly<Record<SizeClass, number>> = {
@@ -90,6 +90,10 @@ export function applyGreebles(
     for (let dy = 0; dy < h; dy++) {
       for (let dx = 0; dx < w; dx++) {
         setPx(hull.buf, x + dx, y + dy, color);
+        // A greeble is a fixed colour, not a dither — clear any interior
+        // dither plan entry it just painted over so rotation doesn't
+        // resurrect a decision this pixel no longer carries.
+        clearDitherPlan(hull.plan, x + dx, y + dy);
       }
     }
     placed++;
@@ -135,6 +139,7 @@ export function applyRunningLights(
     for (const x of [cx - half + 1, cx + half - 1]) {
       if (isOpaque(getPx(hull.buf, x, y))) {
         setPx(hull.buf, x, y, color);
+        clearDitherPlan(hull.plan, x, y);
         placed++;
       }
     }
