@@ -6103,8 +6103,23 @@ export const LOD_DIVISORS: readonly [1, 4, 8, 32] = [1, 4, 8, 32];
 
 export type LodTier = 0 | 1 | 2 | 3;
 
-/** Below three pixels a silhouette cannot encode a spine, so the far tier clamps. */
-export const TIER_FLOOR = 3;
+/**
+ * The far tier's minimum extent on any axis.
+ *
+ * Lowered from 3 to 2 during execution (commit `b2b52a4`). At 3, a 107px
+ * cruiser (3.3px reduced) and a 56px destroyer (1.75px reduced) both clamped to
+ * 3x3 and came out byte-identical in 35 of 120 same-faction pairs — an
+ * acceptance criterion failing 29% of the time. A floor that collapses two size
+ * classes onto the same dimensions defeats the purpose it exists for.
+ *
+ * At 2, a destroyer is 2x2 and a cruiser 2x3 or 2x4: they differ by SIZE, which
+ * is the only honest signal at 32x reduction. Collisions measured 0 of 160.
+ *
+ * Accepted consequence: corvettes and destroyers both clamp to 2 and may
+ * collide with each other. The criterion names cruiser-versus-destroyer, and at
+ * this reduction two small classes genuinely are both specks.
+ */
+export const TIER_FLOOR = 2;
 
 /** An emissive pixel counts this much more than a hull pixel when reducing. */
 export const EMISSIVE_WEIGHT = 8;
