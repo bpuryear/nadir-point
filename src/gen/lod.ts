@@ -8,10 +8,12 @@
  * Tiers 2 and 3 are reductions, but not box filters. A plain average erases the
  * two things that have to survive: the outline, which is the only way ships stay
  * tellable apart, and the running lights, which are the scale cue that makes a
- * small sprite read as a huge object. So the reduction scores candidate colours
- * by count *plus* a heavy bonus for emissives and a smaller one for
- * silhouette-edge pixels. Interior panel seams are expected to vanish by tier 3.
- * The outline is not.
+ * small sprite read as a huge object. So the reduction scores hull candidate
+ * colours by count *plus* a bonus for silhouette-edge pixels, and handles
+ * running lights separately: any block touching a light is a *candidate* to
+ * stay lit, but only a shrinking budget of them actually do, so the lights
+ * thin out with the hull instead of multiplying into a solid ladder. Interior
+ * panel seams are expected to vanish by tier 3. The outline is not.
  *
  * Tier 4 is not reduced at all. At four pixels the question is which four
  * pixels, and no filter answers it well — so it is drawn from the shape
@@ -33,7 +35,11 @@ export type LodTier = 0 | 1 | 2 | 3;
 /** Below three pixels a silhouette cannot encode a spine, so the far tier clamps. */
 export const TIER_FLOOR = 3;
 
-/** An emissive pixel counts this much more than a hull pixel when reducing. */
+/**
+ * An emissive pixel counts this much more than a hull pixel when a block has
+ * more than one candidate emissive colour. It does not decide how many blocks
+ * stay lit overall — that is the emissive budget in `reduceTier`, not this.
+ */
 export const EMISSIVE_WEIGHT = 8;
 
 /** A silhouette-edge pixel counts this much more than an interior one. */
@@ -49,6 +55,17 @@ function isEdgePixel(src: PixBuf, x: number, y: number): boolean {
   );
 }
 
+interface LitBlock {
+  ox: number;
+  oy: number;
+  /** Best emissive colour in this block, for when the budget keeps it lit. */
+  emissiveColor: Rgba;
+  /** Raw count of emissive source pixels in this block — the budget ranks on this. */
+  emissiveCount: number;
+  /** Best hull colour in this block, for when the budget does not keep it lit. */
+  fallback: Rgba;
+}
+
 export function reduceTier(src: PixBuf, divisor: number, allowed: readonly Rgba[]): PixBuf {
   // No TIER_FLOOR here — that floor belongs to the generated far tier. A plain
   // reduction is only ever asked to divide by 4 or 8 against real hull sizes,
@@ -62,15 +79,44 @@ export function reduceTier(src: PixBuf, divisor: number, allowed: readonly Rgba[
   const blockW = src.w / w;
   const blockH = src.h / h;
 
+  let sourceEmissiveCount = 0;
+  for (let y = 0; y < src.h; y++) {
+    for (let x = 0; x < src.w; x++) {
+      if (isEmissive(getPx(src, x, y))) sourceEmissiveCount++;
+    }
+  }
+
+  /**
+   * Running lights thin out as tiers shrink; they never multiply and never
+   * vanish.
+   *
+   * Preserving every light while the hull shrinks 57x made a tier-2 cruiser 17.5%
+   * emissive — a ladder of lights that blooms into a blob at the zoom where
+   * silhouette matters most. The budget keeps spacing legible as a scale cue
+   * while leaving the hull readable as a hull.
+   */
+  const emissiveBudget = sourceEmissiveCount === 0
+    ? 0
+    : Math.max(1, Math.round(sourceEmissiveCount / divisor));
+
+  const litBlocks: LitBlock[] = [];
+
   for (let oy = 0; oy < h; oy++) {
+    // x1/y1 come from the *next* block's own x0/y0 rather than a rounded-up
+    // width, so adjacent blocks partition the source exactly instead of
+    // sharing a column or row. A shared column was letting a single light
+    // pixel win two neighbouring blocks at once, turning 14 source lights
+    // into 16 in the output — a reduction that isn't allowed to create light.
+    const y0 = Math.floor(oy * blockH);
+    const y1 = oy === h - 1 ? src.h : Math.floor((oy + 1) * blockH);
+
     for (let ox = 0; ox < w; ox++) {
       const x0 = Math.floor(ox * blockW);
-      const y0 = Math.floor(oy * blockH);
-      const x1 = Math.min(src.w, Math.ceil((ox + 1) * blockW));
-      const y1 = Math.min(src.h, Math.ceil((oy + 1) * blockH));
-      const area = (x1 - x0) * (y1 - y0);
+      const x1 = ox === w - 1 ? src.w : Math.floor((ox + 1) * blockW);
 
-      const scores = new Map<Rgba, number>();
+      const hullScores = new Map<Rgba, number>();
+      const emissiveScores = new Map<Rgba, number>();
+      let emissiveCount = 0;
       let filled = 0;
       let total = 0;
 
@@ -81,19 +127,14 @@ export function reduceTier(src: PixBuf, divisor: number, allowed: readonly Rgba[
           if (!isOpaque(c)) continue;
           filled++;
 
-          // An emissive pixel's weight is scaled by the whole block's area, not
-          // just EMISSIVE_WEIGHT flat, so a single running-light pixel always
-          // outscores every other pixel in the block combined — even if every
-          // one of them is a silhouette edge. EDGE_WEIGHT < EMISSIVE_WEIGHT
-          // guarantees (area - 1) * EDGE_WEIGHT < area * EMISSIVE_WEIGHT for
-          // any area, so the light can never be voted out by the hull around
-          // it. That is the whole point of tier 2/3 reduction: the light is
-          // the scale cue and must survive no matter how rare it is.
-          let weight = 1;
-          if (isEmissive(c)) weight = EMISSIVE_WEIGHT * area;
-          else if (isEdgePixel(src, x, y)) weight = EDGE_WEIGHT;
+          if (isEmissive(c)) {
+            emissiveCount++;
+            emissiveScores.set(c, (emissiveScores.get(c) ?? 0) + EMISSIVE_WEIGHT);
+            continue;
+          }
 
-          scores.set(c, (scores.get(c) ?? 0) + weight);
+          const weight = isEdgePixel(src, x, y) ? EDGE_WEIGHT : 1;
+          hullScores.set(c, (hullScores.get(c) ?? 0) + weight);
         }
       }
 
@@ -102,17 +143,51 @@ export function reduceTier(src: PixBuf, divisor: number, allowed: readonly Rgba[
         continue;
       }
 
-      let best = EMPTY;
-      let bestScore = -1;
-      for (const [color, score] of scores) {
-        if (score > bestScore) {
-          bestScore = score;
-          best = color;
+      let bestHull = EMPTY;
+      let bestHullScore = -1;
+      for (const [color, score] of hullScores) {
+        if (score > bestHullScore) {
+          bestHullScore = score;
+          bestHull = color;
         }
       }
 
-      setPx(out, ox, oy, snapToPalette(best, allowed));
+      if (emissiveCount === 0) {
+        setPx(out, ox, oy, snapToPalette(bestHull, allowed));
+        continue;
+      }
+
+      let bestEmissive = EMPTY;
+      let bestEmissiveScore = -1;
+      for (const [color, score] of emissiveScores) {
+        if (score > bestEmissiveScore) {
+          bestEmissiveScore = score;
+          bestEmissive = color;
+        }
+      }
+
+      // Don't decide yet whether this block stays lit — that is a global
+      // decision made once every block has been scored, so the budget can
+      // keep the blocks with the most light in them rather than whichever
+      // happen to be scanned first.
+      litBlocks.push({
+        ox,
+        oy,
+        emissiveColor: snapToPalette(bestEmissive, allowed),
+        emissiveCount,
+        fallback: snapToPalette(bestHull === EMPTY ? bestEmissive : bestHull, allowed),
+      });
     }
+  }
+
+  // Keep the `emissiveBudget` blocks carrying the most light; every other
+  // light-touched block falls back to its own best hull colour instead of
+  // lighting up. Array#sort is a stable sort, so blocks tied on count keep
+  // their scan order — output stays deterministic for a given input.
+  litBlocks.sort((a, b) => b.emissiveCount - a.emissiveCount);
+  for (let i = 0; i < litBlocks.length; i++) {
+    const block = litBlocks[i]!;
+    setPx(out, block.ox, block.oy, i < emissiveBudget ? block.emissiveColor : block.fallback);
   }
 
   return out;

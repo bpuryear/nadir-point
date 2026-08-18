@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeRng } from '../sim/rng.js';
-import { countOpaque, getPx, isOpaque } from './pixbuf.js';
+import { countOpaque, getPx, isOpaque, type PixBuf } from './pixbuf.js';
 import { EMISSIVE, FACTION_PALETTE, isEmissive, NEUTRAL } from './palette.js';
 import { checkPalette } from './qc.js';
 import { buildProfile } from './grammar/profile.js';
@@ -81,18 +81,48 @@ describe('reduction preserves what matters', () => {
     }
   });
 
-  it('weights emissives above their pixel count', () => {
-    // A single emissive in a 4x4 block must win against 15 hull pixels.
-    const src = { w: 4, h: 4, data: new Uint8ClampedArray(4 * 4 * 4) };
-    for (let i = 0; i < 16; i++) {
-      const c = i === 5 ? EMISSIVE.amber : NEUTRAL[3]!;
-      src.data[i * 4] = (c >>> 24) & 255;
-      src.data[i * 4 + 1] = (c >>> 16) & 255;
-      src.data[i * 4 + 2] = (c >>> 8) & 255;
-      src.data[i * 4 + 3] = 255;
+  it('thins running lights proportionally without losing them', () => {
+    // Lights are the scale cue: a 4px speck reads as kilometres long because it
+    // still carries one. But preserving all of them while the hull shrinks makes
+    // the sprite mostly lights, which blooms into a blob. They must thin, not
+    // multiply and not vanish.
+    const h = hull();
+    const tiers = buildLodSet(h.buf, h.profile, allowed, NEUTRAL[3]!, EMISSIVE.amber);
+
+    const emissiveCount = (b: PixBuf) => {
+      let n = 0;
+      for (let y = 0; y < b.h; y++) {
+        for (let x = 0; x < b.w; x++) if (isEmissive(getPx(b, x, y))) n++;
+      }
+      return n;
+    };
+
+    const counts = tiers.map(emissiveCount);
+
+    // Never lost.
+    for (const [i, n] of counts.entries()) {
+      expect(n, `tier ${i} has no running lights`).toBeGreaterThan(0);
     }
-    const reduced = reduceTier(src, 4, allowed);
-    expect(isEmissive(getPx(reduced, 0, 0))).toBe(true);
+
+    // Never multiplied — a reduction cannot create lights.
+    for (let i = 1; i < counts.length; i++) {
+      expect(counts[i]!, `tier ${i} gained lights`).toBeLessThanOrEqual(counts[i - 1]!);
+    }
+
+    // The reduction tiers must not let lights dominate: emissives are the only
+    // colours permitted to bloom, and a sprite that is mostly lights blooms
+    // into a blob at exactly the zoom where silhouette matters most.
+    for (const i of [0, 1, 2]) {
+      const tier = tiers[i]!;
+      const ratio = emissiveCount(tier) / countOpaque(tier);
+      expect(ratio, `tier ${i} is ${(ratio * 100).toFixed(0)}% emissive`).toBeLessThan(0.15);
+    }
+
+    // The far tier is generated, not reduced, and carries exactly one light by
+    // design. On a 3-5 pixel speck that is 20-33% — which is the scale cue
+    // working, not a density failure. A ratio cap does not apply here; the
+    // count does.
+    expect(emissiveCount(tiers[3]!), 'far tier must carry exactly one light').toBe(1);
   });
 
   it('keeps a mostly-filled block filled and a mostly-empty block empty', () => {
