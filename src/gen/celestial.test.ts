@@ -32,9 +32,25 @@ describe('starfield', () => {
 });
 
 describe('nebula', () => {
-  it('covers a large fraction of the frame', () => {
-    const neb = buildNebula(160, 100, 'wreckreef', makeRng('n'));
-    expect(countOpaque(neb) / (160 * 100)).toBeGreaterThan(0.2);
+  it('covers a large fraction of the frame, across every POI', () => {
+    // A nebula is a wash, not a scatter. The generator now grows its blobs
+    // until the frame is actually covered, so this asserts the design floor
+    // rather than the deepest point a sweep happened to reach — an earlier
+    // version of this test asserted 0.2 and held only because it sampled one
+    // seed; the real distribution reached 0.11.
+    let worst = 1;
+    let worstAt = '';
+    for (const poi of ALL_POIS) {
+      for (let i = 0; i < 40; i++) {
+        const neb = buildNebula(160, 100, poi, makeRng(`neb-${i}`));
+        const coverage = countOpaque(neb) / (160 * 100);
+        if (coverage < worst) {
+          worst = coverage;
+          worstAt = `${poi}/neb-${i}`;
+        }
+      }
+    }
+    expect(worst, `thinnest nebula was ${worst.toFixed(3)} at ${worstAt}`).toBeGreaterThanOrEqual(0.24);
   });
 
   it('stays on the POI palette', () => {

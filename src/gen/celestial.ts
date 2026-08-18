@@ -15,7 +15,7 @@
 
 import type { Rng } from '../sim/rng.js';
 import {
-  createBuf, luminance, setPx, type PixBuf, type Rgba,
+  countOpaque, createBuf, luminance, setPx, type PixBuf, type Rgba,
 } from './pixbuf.js';
 import { POI_PALETTE, snapToPalette, type PoiId } from './palette.js';
 import { ditherMask } from './grammar/plates.js';
@@ -67,18 +67,33 @@ export function buildStarfield(w: number, h: number, poi: PoiId, rng: Rng): PixB
   return buf;
 }
 
-export function buildNebula(w: number, h: number, poi: PoiId, rng: Rng): PixBuf {
-  const buf = createBuf(w, h);
-  const palette = darkest(poi, 4);
+interface NebulaBlob {
+  cx: number;
+  cy: number;
+  r: number;
+}
 
-  // Three overlapping soft blobs, quantised into palette bands and dithered at
-  // the boundaries. Ordered dither on a large gradient is what the post chain
-  // expects; a smooth ramp would band uglily once the palette snapped it.
-  const blobs = Array.from({ length: 3 }, () => ({
-    cx: rng.range(0, w),
-    cy: rng.range(0, h),
-    r: rng.range(Math.min(w, h) * 0.3, Math.min(w, h) * 0.8),
-  }));
+/**
+ * A nebula is a wash, not a scatter.
+ *
+ * Three independently drawn blobs can come out small and barely overlapping, at
+ * which point the density cutoff discards most of the frame — measured down to
+ * 11% coverage in 1 draw in 14,000. Chasing that with a lower assertion just
+ * records how hard anyone has looked; the geometry is what needs fixing.
+ *
+ * So the blob set is a candidate: draw it, measure, and grow the radii until the
+ * wash actually covers the frame. Growth is monotonic, so this always
+ * terminates, and the fallback at full growth is a nebula that covers almost
+ * everything — which is a far better failure than a near-empty sky.
+ */
+const NEBULA_MIN_COVERAGE = 0.25;
+const NEBULA_MAX_GROWTH_STEPS = 8;
+const NEBULA_GROWTH = 1.25;
+
+function renderNebula(
+  w: number, h: number, poi: PoiId, palette: readonly Rgba[], blobs: readonly NebulaBlob[],
+): PixBuf {
+  const buf = createBuf(w, h);
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -97,6 +112,37 @@ export function buildNebula(w: number, h: number, poi: PoiId, rng: Rng): PixBuf 
       const c = palette[Math.min(palette.length - 1, band)]!;
       setPx(buf, x, y, snapToPalette(c, POI_PALETTE[poi]));
     }
+  }
+
+  return buf;
+}
+
+export function buildNebula(w: number, h: number, poi: PoiId, rng: Rng): PixBuf {
+  const palette = darkest(poi, 4);
+
+  // Three overlapping soft blobs, quantised into palette bands and dithered at
+  // the boundaries. Ordered dither on a large gradient is what the post chain
+  // expects; a smooth ramp would band uglily once the palette snapped it.
+  //
+  // Centres and base radii are drawn once, before the growth loop below —
+  // redrawing them per attempt would consume unbounded randomness and break
+  // the determinism every other system relies on.
+  const baseBlobs: NebulaBlob[] = Array.from({ length: 3 }, () => ({
+    cx: rng.range(0, w),
+    cy: rng.range(0, h),
+    r: rng.range(Math.min(w, h) * 0.3, Math.min(w, h) * 0.8),
+  }));
+
+  let buf = renderNebula(w, h, poi, palette, baseBlobs);
+
+  for (let step = 1; step < NEBULA_MAX_GROWTH_STEPS; step++) {
+    if (countOpaque(buf) / (w * h) >= NEBULA_MIN_COVERAGE) break;
+
+    // Growth scales radii only; centres stay put so the composition thickens
+    // instead of rearranging.
+    const scale = NEBULA_GROWTH ** step;
+    const grown = baseBlobs.map((b) => ({ ...b, r: b.r * scale }));
+    buf = renderNebula(w, h, poi, palette, grown);
   }
 
   return buf;
