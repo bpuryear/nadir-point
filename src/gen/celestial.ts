@@ -15,12 +15,13 @@
 
 import type { Rng } from '../sim/rng.js';
 import {
-  countOpaque, createBuf, luminance, setPx, type PixBuf, type Rgba,
+  blit, countOpaque, createBuf, getPx, isOpaque, luminance, setPx, type PixBuf, type Rgba,
 } from './pixbuf.js';
 import {
-  POI_PALETTE, SPACE, snapToPalette, type PoiId,
+  POI_PALETTE, rampOf, SPACE, snapToPalette, type FactionId, type PoiId,
 } from './palette.js';
 import { ditherMask } from './grammar/plates.js';
+import { buildDebris, type DebrisSize } from './debris.js';
 
 export interface Layer {
   buf: PixBuf;
@@ -273,45 +274,134 @@ export function buildGasGiant(diameter: number, poi: PoiId, rng: Rng): PixBuf {
 }
 
 /**
- * Blobs per 1000 square pixels for the two scaled debris layers, tuned so
- * each paints roughly 2-6% of the frame. The previous fixed counts (14 and
- * 26, regardless of canvas size) measured 0.2-0.4% coverage on a 220x130
- * frame — 60 to 116 opaque pixels total, not a layer. Scaling by area also
- * makes coverage resolution-independent, matching STAR_DENSITY's approach.
+ * Ceiling on a background layer's luminance: the documented top of the
+ * background band (see BACKGROUND_LUMINANCE_FLOOR's comment — the band runs
+ * roughly 15-45, hulls start around 40). Debris is shaded plate cut from a
+ * faction ramp, which reaches well past hull brightness at its lit end
+ * (WARM alone tops out at 178), so recolouring has to clamp it back down —
+ * without a ceiling, a "distant" wreck could paint as bright as the ship
+ * flying past it.
  */
-const FAR_DEBRIS_DENSITY = 5.5;
-const NEAR_DEBRIS_DENSITY = 12;
+const BACKGROUND_LUMINANCE_CEILING = 45;
 
 /**
- * Picks a background tone for debris silhouettes: dim, but one step up from
- * the single darkest usable colour. `darkest(poi, 1)` sits right at
- * BACKGROUND_LUMINANCE_FLOOR, which is enough to clear the void but leaves
- * no headroom of its own — with only a few opaque pixels per blob, a layer
- * painted exactly at the floor still reads thin. The occlusion job (blocking
- * the starfield, implying depth) only works if the eye can find the shape.
+ * A small dark-to-light ramp of background-safe tones for recolouring
+ * debris: the `n` darkest colours in the POI's lock that clear
+ * BACKGROUND_LUMINANCE_FLOOR and stay under BACKGROUND_LUMINANCE_CEILING.
+ * Distant layers ask for fewer entries than near ones — a shorter, darker
+ * ramp is the distance-based darkening pass: it reads as farther away
+ * because there is less room in it to be bright.
+ *
+ * If nothing in the lock clears the ceiling — star's lock is deliberately
+ * harsh, see POI_PALETTE — falls back to the single darkest usable colour,
+ * which `darkest()` guarantees exists for every POI. A flat silhouette with
+ * no shading headroom still stays dimmer than a hull, which a shaded one
+ * that ignored the ceiling would not.
  */
-function debrisColor(poi: PoiId): Rgba {
-  const usable = darkest(poi, 3);
-  return usable[Math.min(usable.length - 1, 1)]!;
+function backgroundPalette(poi: PoiId, n: number): Rgba[] {
+  const usable = darkest(poi, POI_PALETTE[poi].length)
+    .filter((c) => luminance(c) <= BACKGROUND_LUMINANCE_CEILING);
+  return usable.length > 0 ? usable.slice(0, n) : darkest(poi, 1);
 }
 
-/** Sparse silhouettes for the near-debris, distant-wrecks, and foreground layers. */
+/**
+ * Remaps a debris sprite's own faction-ramp shading into a POI-locked
+ * background sub-palette. Every entry in `subPalette` is already
+ * floor-and-ceiling bounded (see backgroundPalette), so whatever this picks
+ * is guaranteed on-lock and dim enough to read as background — the job here
+ * is only to decide *which* of those safe tones each pixel gets, preserving
+ * the piece's own lit/shadow gradient (what makes a torn plate read as a
+ * plate) instead of flattening it to one flat silhouette colour.
+ */
+function recolorForBackground(
+  buf: PixBuf, ramp: readonly Rgba[], subPalette: readonly Rgba[],
+): PixBuf {
+  const out = createBuf(buf.w, buf.h);
+  const rampLum = ramp.map((c) => luminance(c));
+  const rampMin = Math.min(...rampLum);
+  const rampMax = Math.max(...rampLum);
+  const span = Math.max(1, rampMax - rampMin);
+
+  for (let y = 0; y < buf.h; y++) {
+    for (let x = 0; x < buf.w; x++) {
+      const c = getPx(buf, x, y);
+      if (!isOpaque(c)) continue;
+      const t = Math.max(0, Math.min(1, (luminance(c) - rampMin) / span));
+      const idx = Math.round(t * (subPalette.length - 1));
+      setPx(out, x, y, subPalette[idx]!);
+    }
+  }
+  return out;
+}
+
+/**
+ * Which faction's wreckage a POI's debris is drawn from — narrative flavour
+ * ("a graveyard of derelict hulks", "a Concord staging yard") more than a
+ * strict colour requirement, since recolorForBackground remaps every pixel
+ * into the POI's own locked tones regardless of which ramp built the shape.
+ * Picked toward whichever ramp the POI's own lock already leans on, so a
+ * piece still looks plausible if anyone inspects it before recolouring.
+ */
+const DEBRIS_FACTION: Readonly<Record<PoiId, FactionId>> = Object.freeze({
+  gasgiant: 'derelict',
+  belt: 'derelict',
+  station: 'player',
+  graveyard: 'derelict',
+  yard: 'concord',
+  star: 'derelict',
+  deepfield: 'player',
+  wreckreef: 'derelict',
+});
+
+/** Weighted pools: a duplicated entry is picked more often. */
+const DISTANT_WRECK_SIZES: readonly DebrisSize[] = ['hulk', 'hulk', 'chunk'];
+const NEAR_DEBRIS_SIZES: readonly DebrisSize[] = ['chip', 'chip', 'shard', 'shard', 'shard', 'chunk'];
+
+/** Shading-ramp lengths for the two debris bands — see backgroundPalette. */
+const DISTANT_WRECK_SHADES = 3;
+const NEAR_DEBRIS_SHADES = 4;
+
+/**
+ * Debris-sprite counts per 10,000 square pixels. Distant wrecks are sparse —
+ * the remains of a battle, not a crowd — near debris denser, matching the
+ * "sparse large silhouettes far / smaller more numerous pieces near" split
+ * the spec describes. Tuned so the contact sheet's 220x130 POI canvas
+ * (28,600px^2) gets ~5 distant wrecks and ~16 near pieces: enough for the
+ * layer to read as wreckage while keeping buildDebris's own retry loop
+ * cheap. See celestial.test.ts's "debris layers" describe block for
+ * measured build cost.
+ */
+const DISTANT_WRECK_DENSITY = 1.8;
+const NEAR_DEBRIS_SPRITE_DENSITY = 5.5;
+
+/**
+ * Scatters real wreckage sprites (see debris.ts) across the frame, recoloured
+ * into the POI's own dim background band. Replaces an earlier version that
+ * scattered filled rectangles — present on screen, but shapeless: at layer
+ * resolution a random rect and a random star speckle read the same. A POI
+ * named "graveyard" needs its distant-wrecks layer to look like broken
+ * ships, not like a second, dimmer starfield.
+ */
 function buildDebrisLayer(
-  w: number, h: number, poi: PoiId, rng: Rng, count: number, maxSize: number,
+  w: number, h: number, poi: PoiId, rng: Rng,
+  sizes: readonly DebrisSize[], count: number, shades: number,
 ): PixBuf {
   const buf = createBuf(w, h);
-  const color = debrisColor(poi);
+  const faction = DEBRIS_FACTION[poi];
+  const ramp = rampOf(faction);
+  const subPalette = backgroundPalette(poi, shades);
 
   for (let i = 0; i < count; i++) {
-    const bw = 1 + rng.int(maxSize);
-    const bh = 1 + rng.int(maxSize);
-    const x0 = rng.int(w);
-    const y0 = rng.int(h);
-    for (let y = y0; y < y0 + bh; y++) {
-      for (let x = x0; x < x0 + bw; x++) {
-        if (rng.chance(0.8)) setPx(buf, x, y, color);
-      }
-    }
+    const size = rng.pick(sizes);
+    const piece = buildDebris(size, faction, rng.split(`piece-${i}`));
+    const recoloured = recolorForBackground(piece.buf, ramp, subPalette);
+
+    // Roll the centre, not the corner, so a piece can drift off any edge —
+    // matches the old scatter's coverage instead of clustering pieces away
+    // from the border.
+    const x = rng.int(w) - Math.floor(recoloured.w / 2);
+    const y = rng.int(h) - Math.floor(recoloured.h / 2);
+    blit(buf, recoloured, x, y);
   }
 
   return buf;
@@ -323,11 +413,11 @@ export function buildPoiStack(poi: PoiId, w: number, h: number, rng: Rng): PoiSt
     { buf: buildNebula(w, h, poi, rng.split('nebula')), parallax: 0.10, name: 'nebula' },
   ];
 
-  // Blob counts for the two scaled layers are derived from frame area so
-  // coverage stays ~2-6% regardless of canvas size — see FAR_DEBRIS_DENSITY.
+  // Debris-sprite counts are derived from frame area — see
+  // DISTANT_WRECK_DENSITY / NEAR_DEBRIS_SPRITE_DENSITY.
   const area = w * h;
-  const farDebrisCount = Math.max(1, Math.round((area / 1000) * FAR_DEBRIS_DENSITY));
-  const nearDebrisCount = Math.max(1, Math.round((area / 1000) * NEAR_DEBRIS_DENSITY));
+  const distantWreckCount = Math.max(2, Math.round((area / 10000) * DISTANT_WRECK_DENSITY));
+  const nearDebrisCount = Math.max(4, Math.round((area / 10000) * NEAR_DEBRIS_SPRITE_DENSITY));
 
   // The celestial layer: a gas giant where the POI has one, otherwise a
   // distant wreck field. Either way it is the thing that dwarfs everything.
@@ -340,14 +430,18 @@ export function buildPoiStack(poi: PoiId, w: number, h: number, rng: Rng): PoiSt
     });
   } else {
     layers.push({
-      buf: buildDebrisLayer(w, h, poi, rng.split('far-wrecks'), farDebrisCount, 5),
+      buf: buildDebrisLayer(
+        w, h, poi, rng.split('far-wrecks'), DISTANT_WRECK_SIZES, distantWreckCount, DISTANT_WRECK_SHADES,
+      ),
       parallax: 0.18,
       name: 'distant-wrecks',
     });
   }
 
   layers.push({
-    buf: buildDebrisLayer(w, h, poi, rng.split('near-debris'), nearDebrisCount, 3),
+    buf: buildDebrisLayer(
+      w, h, poi, rng.split('near-debris'), NEAR_DEBRIS_SIZES, nearDebrisCount, NEAR_DEBRIS_SHADES,
+    ),
     parallax: 0.45,
     name: 'near-debris',
   });
@@ -355,7 +449,7 @@ export function buildPoiStack(poi: PoiId, w: number, h: number, rng: Rng): PoiSt
   // Foreground occlusion, used on the two densest POIs only. Seasoning.
   const foreground = poi === 'wreckreef' || poi === 'belt'
     ? {
-        buf: buildDebrisLayer(w, h, poi, rng.split('foreground'), 5, 7),
+        buf: buildDebrisLayer(w, h, poi, rng.split('foreground'), NEAR_DEBRIS_SIZES, 5, NEAR_DEBRIS_SHADES),
         parallax: 1.6,
         name: 'foreground-debris',
       }

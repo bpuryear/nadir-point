@@ -257,30 +257,90 @@ describe('POI stacks', () => {
 describe('debris layers', () => {
   const DEBRIS_LAYER_NAMES = new Set(['near-debris', 'distant-wrecks', 'foreground-debris']);
 
-  it('near-debris and distant-wrecks read as populated fields, not a rounding error', () => {
-    // Measured before the density fix: fixed counts of 14 and 26 blobs
-    // (regardless of canvas size) produced 60-116 opaque pixels total on a
-    // 220x130 frame — 0.2-0.4% coverage, not a layer. Density is now
-    // area-scaled (FAR_DEBRIS_DENSITY / NEAR_DEBRIS_DENSITY), targeting
-    // roughly 2-6% coverage.
+  /**
+   * Counts 8-connected opaque blobs and how many of those blobs are a single
+   * pixel with no opaque neighbour at all.
+   *
+   * Coverage was the wrong property to assert on here: a layer built from
+   * real debris.ts sprites and a layer built from hundreds of tiny scattered
+   * rectangles can paint the exact same fraction of the frame while looking
+   * completely different — one reads as broken ships, the other as a second,
+   * dimmer starfield. What actually separates "wreckage" from "noise" is
+   * shape: a real debris sprite is one connected silhouette no matter how
+   * large, while noise is many small disconnected flecks. Component count
+   * and isolated-pixel fraction measure exactly that, independent of how
+   * much of the frame ends up painted.
+   */
+  function shapeStats(buf: ReturnType<typeof buildPoiStack>['layers'][number]['buf']): {
+    components: number;
+    isolatedFraction: number;
+  } {
+    const seen = new Uint8Array(buf.w * buf.h);
+    let components = 0;
+    let opaque = 0;
+    let isolated = 0;
+    for (let y = 0; y < buf.h; y++) {
+      for (let x = 0; x < buf.w; x++) {
+        if (!isOpaque(getPx(buf, x, y))) continue;
+        opaque++;
+        const idx = y * buf.w + x;
+        if (seen[idx]) continue;
+        components++;
+        let size = 0;
+        const stack: [number, number][] = [[x, y]];
+        seen[idx] = 1;
+        while (stack.length > 0) {
+          const [cx, cy] = stack.pop()!;
+          size++;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              const nx = cx + dx, ny = cy + dy;
+              if (nx < 0 || ny < 0 || nx >= buf.w || ny >= buf.h) continue;
+              const nidx = ny * buf.w + nx;
+              if (seen[nidx] || !isOpaque(getPx(buf, nx, ny))) continue;
+              seen[nidx] = 1;
+              stack.push([nx, ny]);
+            }
+          }
+        }
+        if (size === 1) isolated++;
+      }
+    }
+    return { components, isolatedFraction: opaque > 0 ? isolated / opaque : 0 };
+  }
+
+  it('reads as a scatter of distinct wreck shapes, not uniform speckle', () => {
+    // Measured against the rectangle-scatter this replaced, on the same
+    // 220x130 canvas swept across the same 25 seeds x 8 POIs: the old
+    // implementation never produced fewer than 140 connected blobs in a
+    // single near-debris or distant-wrecks layer (mean blob size 3.3-8.1px —
+    // essentially a fleck field). This implementation, built from real
+    // debris.ts sprites in hulk/chunk (distant) and chip/shard/chunk (near)
+    // bands, tops out at 50 blobs across the same sweep, and isolated
+    // (no-neighbour) pixels never exceeded 3.4% of a layer. The thresholds
+    // below sit with a wide margin on the correct side of both.
     const w = 220, h = 130;
-    let worst = Infinity;
-    let worstAt = '';
+    let worstComponents = 0;
+    let worstComponentsAt = '';
+    let worstIsolated = 0;
+    let worstIsolatedAt = '';
     for (const poi of ALL_POIS) {
-      for (let i = 0; i < 40; i++) {
-        const stack = buildPoiStack(poi, w, h, makeRng(`debris-${i}`));
+      for (let i = 0; i < 25; i++) {
+        const stack = buildPoiStack(poi, w, h, makeRng(`shape-${poi}-${i}`));
         for (const layer of stack.layers) {
           if (layer.name !== 'near-debris' && layer.name !== 'distant-wrecks') continue;
-          const coverage = countOpaque(layer.buf) / (w * h);
-          expect(coverage, `${poi}/${layer.name}/${i}`).toBeLessThanOrEqual(0.08);
-          if (coverage < worst) {
-            worst = coverage;
-            worstAt = `${poi}/${layer.name}/${i}`;
-          }
+          const { components, isolatedFraction } = shapeStats(layer.buf);
+          const at = `${poi}/${layer.name}/${i}`;
+          expect(components, at).toBeLessThanOrEqual(70);
+          expect(isolatedFraction, at).toBeLessThanOrEqual(0.15);
+          if (components > worstComponents) { worstComponents = components; worstComponentsAt = at; }
+          if (isolatedFraction > worstIsolated) { worstIsolated = isolatedFraction; worstIsolatedAt = at; }
         }
       }
     }
-    expect(worst, `sparsest debris layer was ${worst.toFixed(4)} at ${worstAt}`).toBeGreaterThanOrEqual(0.015);
+    expect(worstComponents, `most fragmented layer was ${worstComponentsAt}`).toBeLessThanOrEqual(70);
+    expect(worstIsolated, `speckliest layer was ${worstIsolatedAt}`).toBeLessThanOrEqual(0.15);
   });
 
   it('paints debris well above the void, not at the palette floor', () => {

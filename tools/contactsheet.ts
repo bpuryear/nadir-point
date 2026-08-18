@@ -113,15 +113,21 @@ export function buildContactSheet(seed: string): SheetResult {
    *    (-121) — a clean sinusoid, not sprite-to-sprite noise. Roughly half of
    *    every 64-bin set is structurally guaranteed to fail a check built for
    *    the canonical, unrotated orientation.
-   *  - The nebula and near/far debris-silhouette POI layers
-   *    (`buildNebula`, `buildDebrisLayer`) are washes and flat silhouettes:
-   *    a radial density falloff and a single flat colour, with no lit/shadow
-   *    split at all. Measured: near-debris and distant-wrecks layers land
-   *    exactly margin 0.0 (lit mean equals shadow mean, because every opaque
-   *    pixel is the same colour) whenever they clear the sample floor, and
-   *    the nebula's dithered wash lands within noise of 0. That is
+   *  - The nebula and near/far debris-silhouette POI layers (`buildNebula`,
+   *    `buildDebrisLayer`) are collages, not single hulls under one light.
+   *    The nebula is a radial density falloff with no directional lighting
+   *    at all. The debris layers scatter many independent wreckage sprites
+   *    (see debris.ts), each internally lit from its own top-left like every
+   *    other sprite in the game — but the check classifies edges across the
+   *    *whole layer buffer*, so one piece's shadowed corner sits pixels away
+   *    from an unrelated piece's lit corner with empty space in between,
+   *    and the aggregate has nothing to do with any single piece's lighting.
+   *    Measured: margins land around 3-7 (below the 8 the check requires)
+   *    rather than at the 0 a true flat wash would produce, because the
+   *    pieces are shaded, just not as one coherent surface. That is
    *    `buildGasGiant`'s job — its terminator is explicitly lit from the top
-   *    left and passes this same check with a +104 margin — not theirs.
+   *    left across the *whole* disc and passes this same check with a +104
+   *    margin — not theirs.
    *
    * Palette and alpha discipline still apply in full: nothing here loosens
    * what colours a rotated bin or a background layer is allowed to contain.
