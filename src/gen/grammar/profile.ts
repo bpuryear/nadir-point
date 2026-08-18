@@ -12,7 +12,8 @@
  *   concord    a milled wedge — continuous taper, narrow bow, flared stern
  *   coalition  welded slabs — long constant-width runs with abrupt shoulders
  *   derelict   an eroded hull — a base shape with bites taken out of it
- *   player     a working salvager — blunt bow, slab sides, heavy midsection
+ *   player     a working salvager — modest notched bow, narrow spine, a
+ *              stern engine block wider than everything ahead of it
  */
 
 import type { Rng } from '../../sim/rng.js';
@@ -65,12 +66,23 @@ function concordCurve(t: number): number {
 }
 
 /**
- * A working salvager: broad squared bow with a central notch (the salvage
- * maw wrecks get drawn into), a waist pinched in amidships, and a heavy
- * engine block aft wider than anything ahead of it. This is the shape the
- * hull is built around — an hourglass with a bow-heavy jaw and a stern-heavy
- * drive section — rather than a taper (Concord) or a stack of constant-width
- * runs (Coalition).
+ * A working salvager: a modest, squared forward block with a central notch
+ * (the salvage maw wrecks get drawn into), a long narrow spine amidships, and
+ * a heavy engine block aft that is both the widest mass on the hull and wider
+ * than the bow block by a wide margin. Three differentiated masses — not a
+ * taper (Concord), not a stack of constant-width runs (Coalition), and not
+ * the earlier stack of near-equal lozenges this replaced.
+ *
+ * That earlier version paired a bow-heavy jaw with a stern-heavy drive
+ * section of *comparable* size, which made the hull read as nearly the same
+ * shape rotated 180° — a contact-sheet review measured it at ~0.76-0.79
+ * overlap against its own reversal (see the `rotationOverlap` metric in
+ * profile.test.ts) and called it a turned-wood baluster. The fix here is not
+ * "pinch the waist harder", it is asymmetry of *kind*: the bow stays modest
+ * and blocky (notch, short plateaus, nothing past ~0.44 of peak width) while
+ * the stern is one continuous flare that is *never* matched by anything
+ * forward of the spine — the widest point on the whole hull sits at the very
+ * stern. Reversed, this hull cannot be mistaken for itself.
  *
  * Expressed as a control polygon rather than a formula: each pair is
  * [fraction of length, half-width as a fraction of the peak], linearly
@@ -78,19 +90,20 @@ function concordCurve(t: number): number {
  * the point — it reads as milled panels bolted together, not a milled curve.
  */
 const PLAYER_HULL: ReadonlyArray<readonly [number, number]> = [
-  [0.00, 0.62], // squared bow face — broad, not a taper to a point
-  [0.045, 0.66], // bow corner
-  [0.12, 0.46], // the notch: the maw pinches in right behind the bow face
-  [0.20, 0.60], // rises back out of the notch
-  [0.30, 0.64], // forward hull — broad, but not the hull's widest (dorsal sits here)
-  [0.40, 0.58],
-  [0.50, 0.36], // waist: pinched hard amidships (port/starboard sponsons sit here)
-  [0.58, 0.48],
-  [0.66, 0.62], // ventral bay, widening again aft of the waist
-  [0.80, 0.86],
-  [0.90, 1.00], // engine block — the widest point on the hull
-  [0.97, 0.94],
-  [1.00, 0.86], // stern face narrows slightly off the engine-block peak
+  [0.00, 0.40], // squared bow face — blunt, but modest: the bow is not the ship's mass
+  [0.05, 0.44], // bow corner — a short flat plateau, not a taper to a point
+  [0.10, 0.22], // the maw: a hard notch cut into the jaw right behind the bow face
+  [0.16, 0.40], // rises back out of the notch
+  [0.24, 0.44], // forward working block (dorsal sits here) — squared, but not the hull's mass
+  [0.34, 0.32],
+  [0.44, 0.20], // the spine: narrow, offset toward the bow half (port/starboard sponsons sit here)
+  [0.54, 0.24], // climbs straight back out — a pinch, not a held plateau
+  [0.62, 0.34], // ventral bay, on the rise off the spine
+  [0.70, 0.48],
+  [0.78, 0.64], // engine block ramp — one long continuous run to the stern
+  [0.86, 0.82],
+  [0.93, 0.97],
+  [1.00, 1.00], // engine block — the widest point, right at the stern: a flare, not a point
 ];
 
 function playerCurve(t: number): number {
@@ -150,7 +163,14 @@ export function buildProfile(spec: ProfileSpec): Profile {
         break;
     }
 
-    halfWidth[y] = Math.max(0, Math.round(shape * peak));
+    // A shape function that is strictly positive at `t` says this row is part
+    // of the hull; rounding must not override that to 0. At the small end of
+    // the size range `peak` itself can be 1-2px, and a shape fraction like a
+    // notch minimum (~0.2) rounds straight to 0 there — an interior gap with
+    // no erosion involved, splitting the silhouette exactly like the erosion
+    // bug this file's `erode` guards against. A shape of exactly 0 (the bow
+    // tip of the concord/derelict taper) is a deliberate point and stays 0.
+    halfWidth[y] = shape > 0 ? Math.max(1, Math.round(shape * peak)) : 0;
   }
 
   if (faction === 'derelict') {
@@ -186,7 +206,13 @@ export function buildProfile(spec: ProfileSpec): Profile {
     const scale = (length - 1) / (maxHalfWidth * 2);
     maxHalfWidth = 0;
     for (let y = 0; y < length; y++) {
-      halfWidth[y] = Math.floor(halfWidth[y]! * scale);
+      // Math.floor alone can round an originally-filled row down to 0, which
+      // opens exactly the interior gap this file works elsewhere to prevent
+      // (see `erode`) — a plain floor scaled a small hull's row from 1 to 0
+      // on tiny fighter-class hulls, splitting the silhouette in two. A row
+      // that was filled before rescaling stays filled after it.
+      const scaled = Math.floor(halfWidth[y]! * scale);
+      halfWidth[y] = halfWidth[y]! > 0 ? Math.max(1, scaled) : 0;
       if (halfWidth[y]! > maxHalfWidth) maxHalfWidth = halfWidth[y]!;
     }
   }
@@ -196,8 +222,18 @@ export function buildProfile(spec: ProfileSpec): Profile {
 
 /**
  * Takes bites out of a hull. Derelicts have been dead for a long time; the
- * erosion is the difference between "a ship" and "what is left of a ship", and
- * it is the only faction permitted interior gaps.
+ * erosion is the difference between "a ship" and "what is left of a ship".
+ *
+ * A bite thins a row toward nothing but must never actually reach it: `plates.ts`
+ * skips any row whose half-width is 0 (`if (half === 0) continue;`), so a single
+ * zeroed interior row paints as a fully transparent band the width of the
+ * canvas — the pixels above and below it are no longer even diagonally
+ * adjacent. Two masses of hull sharing a canvas but not a single connected
+ * pixel is not "an eroded ship", it is a broken umbrella stand: an
+ * attachment-offset bug wearing damage as an excuse. Flooring every bitten row
+ * at a half-width of 1 keeps the hull one connected object — down to a single
+ * bridging pixel column at the worst of a bite — while still reading as
+ * severely thinned, which is what erosion is for.
  */
 function erode(halfWidth: Int32Array, rng: Rng): void {
   const length = halfWidth.length;
@@ -210,7 +246,13 @@ function erode(halfWidth: Int32Array, rng: Rng): void {
     const severity = rng.range(0.45, 1);
 
     for (let y = start; y < Math.min(length, start + span); y++) {
-      halfWidth[y] = Math.max(0, Math.round(halfWidth[y]! * (1 - severity)));
+      // Never floor to 0 here: that would sever the hull into disconnected
+      // pieces (see the note above). A bitten row may still hit 0 by way of a
+      // *different* mechanism — e.g. it started at 0 already — but erosion
+      // itself must not be the thing that creates the gap.
+      if (halfWidth[y]! > 0) {
+        halfWidth[y] = Math.max(1, Math.round(halfWidth[y]! * (1 - severity)));
+      }
     }
   }
 }

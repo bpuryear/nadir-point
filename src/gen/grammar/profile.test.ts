@@ -96,15 +96,27 @@ describe('profile shape', () => {
     }
   });
 
-  it('lets derelicts be eroded — they may have gaps', () => {
-    const anyGap = ['a', 'b', 'c', 'd', 'e'].some((seed) => {
+  it('lets derelicts be eroded — bites thin the hull down to a bare bridge', () => {
+    // This used to assert the opposite of what it should: that an interior
+    // row could drop clean to zero. `plates.ts` skips any row whose
+    // half-width is 0 (`if (half === 0) continue;`), so a zeroed interior row
+    // is a fully transparent band the width of the canvas — the pixels above
+    // and below it are not even diagonally adjacent, i.e. the hull renders as
+    // two or more disconnected sprites sharing a canvas. That is the exact
+    // "witch's hat floating over a barrel hull" defect a rendered contact
+    // sheet caught. Erosion is still allowed to be brutal — thinned rows
+    // should bottom out at the 1px floor, not stay comfortably wide — it just
+    // may never reach 0 on a row with hull on both sides of it. See
+    // 'never splits a hull into disconnected pieces' below for the positive
+    // connectivity guarantee this replaces.
+    const anyFloored = ['a', 'b', 'c', 'd', 'e'].some((seed) => {
       const p = build('derelict', 'cruiser', seed);
       const filled = Array.from(p.halfWidth);
       const first = filled.findIndex((w) => w > 0);
       const last = filled.length - 1 - [...filled].reverse().findIndex((w) => w > 0);
-      return filled.slice(first, last + 1).some((w) => w === 0);
+      return filled.slice(first, last + 1).some((w) => w === 1);
     });
-    expect(anyGap).toBe(true);
+    expect(anyFloored).toBe(true);
   });
 
   it('never erodes a hull out of existence', () => {
@@ -236,5 +248,87 @@ describe('queries', () => {
     let expected = 0;
     for (let y = 0; y < p.length; y++) expected += profileWidth(p, y);
     expect(profileArea(p)).toBe(expected);
+  });
+});
+
+describe('fore/aft asymmetry', () => {
+  /**
+   * Overlap-under-180°-rotation, as a fraction: treat the profile and its own
+   * row-reversal as two silhouettes and measure intersection-over-union of
+   * their per-row widths. 1.0 means the profile is pixel-identical to itself
+   * rotated 180° — the exact "turned-wood baluster" defect a contact-sheet
+   * review caught, where the bow and stern were interchangeable. 0 is
+   * unreachable for any hull that tapers at all (both ends are always
+   * somewhat narrower than the peak, so they always overlap partially); a
+   * maximally lopsided monotonic wedge from this generator's own width range
+   * still scores ~0.5-0.6. So the useful signal isn't distance from 0, it's
+   * distance from where the old hull sat.
+   */
+  function rotationOverlap(halfWidth: Int32Array): number {
+    const n = halfWidth.length;
+    let inter = 0;
+    let union = 0;
+    for (let i = 0; i < n; i++) {
+      const a = halfWidth[i]! * 2 + 1;
+      const b = halfWidth[n - 1 - i]! * 2 + 1;
+      inter += Math.min(a, b);
+      union += Math.max(a, b);
+    }
+    return inter / union;
+  }
+
+  it('gives the player hull a bow/stern silhouette that reads under 180° rotation', () => {
+    // The pre-fix player hull (seven near-radially-symmetric lozenges) scored
+    // a mean of ~0.75 and a worst case of ~0.79 on this exact metric across
+    // the same seed/size sweep — see the module doc comment on PLAYER_HULL.
+    // 0.72 sits clearly below that worst case (and well below the ~0.755
+    // mean), comfortably above the ~0.5-0.6 floor a maximally lopsided
+    // monotonic taper hits, and gives room for both per-seed beam-ratio
+    // jitter and the coarser rounding a 24-36px corvette hull is stuck with
+    // (the binding case: corvettes round to so few distinct half-widths that
+    // no amount of curve asymmetry pushes them as low as the longer classes)
+    // without the test being seed- or size-brittle.
+    const sizes: SizeClass[] = ['corvette', 'destroyer', 'cruiser', 'capital'];
+    const seeds = Array.from({ length: 30 }, (_, i) => `asym-${i}`);
+
+    let worst = -Infinity;
+    let worstAt = '';
+    for (const sizeClass of sizes) {
+      for (const seed of seeds) {
+        const p = build('player', sizeClass, seed);
+        const overlap = rotationOverlap(p.halfWidth);
+        if (overlap > worst) { worst = overlap; worstAt = `${sizeClass}/${seed}`; }
+      }
+    }
+
+    expect(worst, `worst (most self-mirroring) case: ${worstAt} = ${worst}`).toBeLessThan(0.72);
+  });
+});
+
+describe('connectivity', () => {
+  it('never splits a hull into disconnected pieces — no interior zero-width row', () => {
+    // `plates.ts` draws nothing on a row whose half-width is 0
+    // (`if (half === 0) continue;`), so any zero row strictly between the
+    // first and last filled row cuts the silhouette into two pieces that
+    // share a canvas but touch no common pixel — not even diagonally. That
+    // read as a broken umbrella stand, not a hulk, on the actual contact
+    // sheet. Derelicts are the only faction that erodes, so they are the only
+    // ones that can produce this defect, and they are swept hard here: every
+    // size class, hundreds of seeds each.
+    for (const faction of ALL_FACTIONS) {
+      const seedCount = faction === 'derelict' ? 300 : 20;
+      for (const sizeClass of ALL_SIZES) {
+        for (let i = 0; i < seedCount; i++) {
+          const p = build(faction, sizeClass, `conn-${i}`);
+          const filled = Array.from(p.halfWidth);
+          const first = filled.findIndex((w) => w > 0);
+          const last = filled.length - 1 - [...filled].reverse().findIndex((w) => w > 0);
+          if (first === -1) continue; // covered by "never erodes out of existence"
+          for (let y = first; y <= last; y++) {
+            expect(p.halfWidth[y]!, `${faction}/${sizeClass}/conn-${i} row ${y}`).toBeGreaterThan(0);
+          }
+        }
+      }
+    }
   });
 });
