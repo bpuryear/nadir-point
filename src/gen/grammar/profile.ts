@@ -64,12 +64,45 @@ function concordCurve(t: number): number {
   return nose * body * stern;
 }
 
-/** A working salvager: blunt bow, mass carried forward of amidships, narrowing aft. */
+/**
+ * A working salvager: broad squared bow with a central notch (the salvage
+ * maw wrecks get drawn into), a waist pinched in amidships, and a heavy
+ * engine block aft wider than anything ahead of it. This is the shape the
+ * hull is built around — an hourglass with a bow-heavy jaw and a stern-heavy
+ * drive section — rather than a taper (Concord) or a stack of constant-width
+ * runs (Coalition).
+ *
+ * Expressed as a control polygon rather than a formula: each pair is
+ * [fraction of length, half-width as a fraction of the peak], linearly
+ * interpolated between neighbours. Straight facets between control points is
+ * the point — it reads as milled panels bolted together, not a milled curve.
+ */
+const PLAYER_HULL: ReadonlyArray<readonly [number, number]> = [
+  [0.00, 0.62], // squared bow face — broad, not a taper to a point
+  [0.045, 0.66], // bow corner
+  [0.12, 0.46], // the notch: the maw pinches in right behind the bow face
+  [0.20, 0.60], // rises back out of the notch
+  [0.30, 0.64], // forward hull — broad, but not the hull's widest (dorsal sits here)
+  [0.40, 0.58],
+  [0.50, 0.36], // waist: pinched hard amidships (port/starboard sponsons sit here)
+  [0.58, 0.48],
+  [0.66, 0.62], // ventral bay, widening again aft of the waist
+  [0.80, 0.86],
+  [0.90, 1.00], // engine block — the widest point on the hull
+  [0.97, 0.94],
+  [1.00, 0.86], // stern face narrows slightly off the engine-block peak
+];
+
 function playerCurve(t: number): number {
-  const nose = Math.pow(Math.min(t / 0.18, 1), 0.45);
-  const body = 1 - 0.34 * Math.pow(Math.max(t - 0.4, 0) / 0.6, 1.4);
-  const stern = t > 0.9 ? 1 + 0.12 * ((t - 0.9) / 0.1) : 1;
-  return nose * body * stern;
+  for (let i = 0; i < PLAYER_HULL.length - 1; i++) {
+    const [t0, h0] = PLAYER_HULL[i]!;
+    const [t1, h1] = PLAYER_HULL[i + 1]!;
+    if (t <= t1 || i === PLAYER_HULL.length - 2) {
+      const f = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
+      return h0 + (h1 - h0) * Math.min(1, Math.max(0, f));
+    }
+  }
+  return PLAYER_HULL[PLAYER_HULL.length - 1]![1];
 }
 
 /** Quantises a curve into slabs so the hull reads as welded rather than milled. */
@@ -108,7 +141,12 @@ export function buildProfile(spec: ProfileSpec): Profile {
         shape = concordCurve(t);
         break;
       case 'player':
-        shape = slabbed(playerCurve, Math.max(5, Math.round(length / 20)), t);
+        // No slab quantisation here — the control-polygon curve itself is
+        // already faceted (straight runs between control points), and its
+        // shape carries the player identity (notch, waist, engine block).
+        // Quantising on top would flatten those facets back into the wide,
+        // near-featureless plateaus this profile replaced.
+        shape = playerCurve(t);
         break;
     }
 
