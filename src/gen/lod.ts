@@ -32,8 +32,25 @@ export const LOD_DIVISORS: readonly [1, 4, 8, 32] = [1, 4, 8, 32];
 
 export type LodTier = 0 | 1 | 2 | 3;
 
-/** Below three pixels a silhouette cannot encode a spine, so the far tier clamps. */
-export const TIER_FLOOR = 3;
+/**
+ * Minimum pixels on either axis at the far tier.
+ *
+ * Was 3. At 3, a 107px cruiser (107/32 ≈ 3.3) and a 56px destroyer
+ * (56/32 ≈ 1.75) both floored to the same 3 rows — two different size classes
+ * drawing identical silhouettes in 29% of sampled pairs, which collapsed the
+ * acceptance criterion that a cruiser must stay distinguishable from a
+ * destroyer at the far tier. At 2, a destroyer floors to 2 rows and a cruiser
+ * to 3-4, and the size difference between them becomes the signal instead of
+ * being erased by it. Below 2 there is no spine left to draw, so 2 is the
+ * true floor.
+ *
+ * Accepted consequence: corvette (24-36px) and destroyer (48-72px) both floor
+ * to 2 rows and may still collide with each other at this tier. The
+ * acceptance criterion names cruiser-versus-destroyer specifically, and at
+ * 32x reduction two small classes are both genuinely just specks — that is
+ * not chased further here.
+ */
+export const TIER_FLOOR = 2;
 
 /**
  * An emissive pixel counts this much more than a hull pixel when a block has
