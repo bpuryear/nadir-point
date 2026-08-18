@@ -6766,6 +6766,30 @@ export interface DebrisSprite {
   faction: FactionId;
 }
 
+/**
+ * Amended during execution (commit `e0a1dd7`). The single-draw tear below is
+ * accepted unconditionally, and that is wrong three ways — all found by sweeping
+ * 16,000 builds where the tests sampled a handful of seeds:
+ *
+ *   - It **throws**. Roughly 1 build in 1,300 erodes enough lit edge that the
+ *     piece fails its own `assertQc` light check (margin 6.4 against 8), which
+ *     is ~0.5% of `buildDebrisSet` calls — a crash in the contact sheet.
+ *   - The fill **ceiling** (0.92, "reads as cargo") is seed-lucky: 0.80% of
+ *     chunk and 1.35% of hulk seeds exceed it.
+ *   - Raising tear intensity to fix that removes the **floor**, producing
+ *     17.5%-fill pieces that read as confetti rather than torn plate.
+ *
+ * The fix makes the tear a CANDIDATE inside a bounded retry loop: repaint,
+ * tear, crop, and accept only if fill lands in [0.35, 0.92] and QC passes,
+ * easing intensity as attempts run out, with a minimally-torn fallback so it
+ * always terminates on something valid. Measured afterwards: 0 throws in 12,800
+ * builds, attempt 1 in 12,726 cases, max 3, fallback never reached by realistic
+ * seeds but proven reachable and QC-passing under an adversarial RNG.
+ *
+ * The fill band applies to `chunk` and `hulk` ONLY — a final crop of
+ * bounding-box area 2 or less cannot satisfy a sub-0.92 ratio by construction.
+ * Geometry, not tuning.
+ */
 export function buildDebris(size: DebrisSize, faction: FactionId, rng: Rng): DebrisSprite {
   const [lo, hi] = DEBRIS_EXTENT[size];
   const extent = lo + rng.int(hi - lo + 1);
