@@ -1,9 +1,16 @@
 /**
  * The module catalogue: 24 modules across six hardpoints and three tiers.
  *
- * Modules are built from six shape archetypes rather than drawn one at a time,
- * so a faction's visual identity is a palette lock plus an archetype choice
- * rather than 24 hand-authored sprites per faction.
+ * Modules are built from seven shape archetypes rather than drawn one at a
+ * time, so a faction's visual identity is a palette lock plus an archetype
+ * choice rather than 24 hand-authored sprites per faction. Six of the seven
+ * (`barrel`, `boom`, `block`, `pod`, `nozzle`, `array`) are pure one-line
+ * half-width rules over the module's reach. The seventh, `dock`, is a
+ * one-off for `hangar-deck` alone — the spec calls the hangar deck the
+ * structural pivot of the whole game, and a plain filled shape read as a
+ * disc rather than as hardware, so it gets a launch slot and a deck line
+ * carved in as a small post-process rather than trying to force that read
+ * out of a single half-width formula.
  *
  * The anchor is the pixel that lands on the hull's hardpoint. Everything else
  * extends *outward* from it, which is the property that makes an installed
@@ -14,7 +21,7 @@
 
 import type { Rng } from '../sim/rng.js';
 import {
-  createBuf, setPx, type PixBuf,
+  createBuf, EMPTY, getPx, isOpaque, setPx, type PixBuf, type Rgba,
 } from './pixbuf.js';
 import {
   EMISSIVE, FACTION_PALETTE, rampOf, shadeStep, type FactionId,
@@ -25,7 +32,7 @@ import {
 } from './grammar/plates.js';
 import type { HardpointId } from './hull.js';
 
-export type ModuleArchetype = 'barrel' | 'boom' | 'block' | 'pod' | 'nozzle' | 'array';
+export type ModuleArchetype = 'barrel' | 'boom' | 'block' | 'pod' | 'nozzle' | 'array' | 'dock';
 
 export type ModuleId =
   | 'siege-lance' | 'breaching-prow' | 'mining-array' | 'ram-spike'
@@ -82,7 +89,7 @@ export const MODULE_CATALOGUE: readonly ModuleDef[] = [
   { id: 'salvage-tractor', name: 'SALVAGE TRACTOR', hardpoint: 'ventral',    archetype: 'array',  tier: 1, length: 16, width: 34 },
   { id: 'cargo-expansion', name: 'CARGO EXPANSION', hardpoint: 'ventral',    archetype: 'block',  tier: 2, length: 20, width: 34 },
   { id: 'repair-bay',      name: 'REPAIR BAY',      hardpoint: 'ventral',    archetype: 'block',  tier: 2, length: 18, width: 34 },
-  { id: 'hangar-deck',     name: 'HANGAR DECK',     hardpoint: 'ventral',    archetype: 'block',  tier: 3, length: 38, width: 36 },
+  { id: 'hangar-deck',     name: 'HANGAR DECK',     hardpoint: 'ventral',    archetype: 'dock',   tier: 3, length: 38, width: 36 },
 
   // Port sponson — broadside
   { id: 'flak-cluster',    name: 'FLAK CLUSTER',    hardpoint: 'port',       archetype: 'pod',    tier: 1, length: 16, width: 16 },
@@ -132,23 +139,223 @@ const ACCENT: Readonly<Record<FactionId, number>> = {
  * so an archetype is a one-line shape rule rather than a bitmap.
  */
 const SHAPE: Readonly<Record<ModuleArchetype, (t: number) => number>> = {
-  // A gun barrel: broad breech, narrow muzzle.
+  // A gun barrel: broad breech, narrow muzzle. `paintBarrelLanes` below cuts
+  // this wedge into 2-3 separate barrels — the wedge alone was reading as a
+  // solid pennant, not a bank of guns.
   barrel: (t) => 1 - 0.62 * t,
-  // A mast or lance: thin, near-constant, tapering only at the tip. 0.4 is the
-  // thinnest value that still clears a full pixel of half-width once rounded
-  // and inset (see the `halfSpan` maths below) on the narrowest boom module in
-  // the catalogue (ram-spike, 8px across) — any thinner and the mast degenerates
-  // to a single-pixel hairline too sparse to read as a drawn module at all.
-  boom: (t) => (t > 0.82 ? 0.4 * (1 - (t - 0.82) / 0.18) : 0.4),
+  // A mast or lance: a flared mount collar at the hull, a near-constant
+  // shaft, then a taper to a point at the tip. The old version held 0.4 —
+  // "near-constant" — for the whole run apart from a taper in the last 18%;
+  // on a 12px-wide module (siege-lance) that rounds to a 3px hairline, which
+  // is what read as an antenna rather than a weapon. BASE now carries enough
+  // mass on its own, and the mount flare gives the breech end extra bulk on
+  // top of that so the shape reads as "gun", not "mast", while still tapering
+  // to a point at the working end the way a lance or sensor mast should.
+  boom: (t) => {
+    const BASE = 0.5;
+    const FLARE = 0.3;
+    const MOUNT = 0.16;
+    const TIP = 0.18;
+    if (t > 1 - TIP) return BASE * (1 - (t - (1 - TIP)) / TIP);
+    if (t < MOUNT) return BASE + FLARE * (1 - t / MOUNT);
+    return BASE;
+  },
   // A bolted-on box: square, full width the whole way.
   block: () => 1,
-  // A cluster: bulges in the middle.
+  // A cluster: bulges in the middle. `paintPodBands` below rings it with two
+  // dark seams so a pair of these mounted port and starboard reads as
+  // segmented hardware, not a matched pair of plain circles.
   pod: (t) => 0.55 + 0.45 * Math.sin(Math.PI * Math.min(1, Math.max(0, t))),
   // An exhaust bell: narrow throat flaring to a wide mouth.
   nozzle: (t) => 0.45 + 0.55 * t,
   // A flat panel bank: full width, squared off, shallow.
   array: (t) => (t > 0.9 ? 0.8 : 1),
+  // A flight deck: full width, same as `block`. `paintFlightDeck` below is
+  // what actually makes this a dock rather than a crate — it carves the
+  // launch slot and paints the deck line as a post-process, because neither
+  // an opening nor a runway stripe is expressible as a single half-width
+  // value per row.
+  dock: () => 1,
 };
+
+/** Maps a module-local (reach, span) pair to buffer (x, y), honouring flip/lateral. */
+interface Frame {
+  reach: number;
+  span: number;
+  lateral: boolean;
+  flip: boolean;
+  toXY(r: number, s: number): readonly [number, number];
+}
+
+function makeFrame(reach: number, span: number, lateral: boolean, flip: boolean): Frame {
+  return {
+    reach,
+    span,
+    lateral,
+    flip,
+    toXY(r, s) {
+      const rr = flip ? reach - 1 - r : r;
+      return lateral ? [rr, s] : [s, rr];
+    },
+  };
+}
+
+/**
+ * Cuts a solid barrel wedge into 2-3 separate barrels: a dark seam running
+ * the length of the reach at each lane boundary, plus one muzzle accent per
+ * lane instead of one centred accent. Without this a cannon bank is just a
+ * tapered triangle — correct in outline, but a solid wedge of one colour
+ * reads as a pennant, not "a bank of guns cut off a wreck".
+ */
+function paintBarrelLanes(
+  buf: PixBuf, plan: DitherPlan, ramp: readonly Rgba[],
+  accent: number, frame: Frame, shape: (t: number) => number,
+): void {
+  const { reach, span } = frame;
+  const lanes = span >= 15 ? 3 : 2;
+  const seam = shadeStep(ramp, 0);
+
+  const dividers: number[] = [];
+  for (let i = 1; i < lanes; i++) dividers.push(Math.round((span * i) / lanes));
+
+  for (let r = 0; r < reach; r++) {
+    for (const d of dividers) {
+      const [x, y] = frame.toXY(r, d);
+      if (!isOpaque(getPx(buf, x, y))) continue;
+      setPx(buf, x, y, seam);
+      clearDitherPlan(plan, x, y);
+    }
+  }
+
+  // One muzzle accent per lane, positioned proportionally within whatever
+  // the wedge's actual half-width is at that row — a fixed absolute offset
+  // would fall outside the silhouette once the wedge has tapered this far.
+  const tipT = 0.88;
+  const r = Math.round((reach - 1) * tipT);
+  const localHalf = Math.max(1, Math.round((shape(tipT) * span) / 2) - 1);
+  const centre = Math.floor(span / 2);
+  for (let i = 0; i < lanes; i++) {
+    const frac = (i + 0.5) / lanes;
+    const s = centre - localHalf + Math.round(frac * 2 * localHalf);
+    const [x, y] = frame.toXY(r, s);
+    if (!isOpaque(getPx(buf, x, y))) continue;
+    setPx(buf, x, y, accent);
+    clearDitherPlan(plan, x, y);
+  }
+}
+
+/**
+ * Rings a pod with two dark seams, splitting the smooth bulge into three
+ * segments, and punches three dark tube-mouth pits into its outward face —
+ * a canister of launch tubes with joints, not a plain ball. `torpedo-rack`
+ * mounted port and starboard was the case this fixes: two identical,
+ * featureless circles flanking the hull read as a cartoon animal's ears, not
+ * hardware. The tube mouths are unlit (dark bore holes), unlike the emissive
+ * accent every other archetype gets, since a torpedo tube reads as a hole cut
+ * into the hull, not a light.
+ */
+function paintPodBands(
+  buf: PixBuf, plan: DitherPlan, ramp: readonly Rgba[],
+  frame: Frame, shape: (t: number) => number,
+): void {
+  const { reach, span } = frame;
+  const dark = shadeStep(ramp, 1);
+  const bore = shadeStep(ramp, 0);
+  const centre = Math.floor(span / 2);
+
+  for (const t of [0.35, 0.65]) {
+    const r = Math.round((reach - 1) * t);
+    const half = Math.max(0, Math.round((shape(t) * span) / 2) - 1);
+    for (let s = centre - half; s <= centre + half; s++) {
+      const [x, y] = frame.toXY(r, s);
+      if (!isOpaque(getPx(buf, x, y))) continue;
+      setPx(buf, x, y, dark);
+      clearDitherPlan(plan, x, y);
+    }
+  }
+
+  const tipT = 0.82;
+  const r = Math.round((reach - 1) * tipT);
+  const localHalf = Math.max(1, Math.round((shape(tipT) * span) / 2) - 1);
+  const lanes = 3;
+  for (let i = 0; i < lanes; i++) {
+    const frac = (i + 0.5) / lanes;
+    const s = centre - localHalf + Math.round(frac * 2 * localHalf);
+    const [x, y] = frame.toXY(r, s);
+    if (!isOpaque(getPx(buf, x, y))) continue;
+    setPx(buf, x, y, bore);
+    clearDitherPlan(plan, x, y);
+  }
+}
+
+/**
+ * Carves a launch slot into the outward tip of a `dock` block and paints a
+ * bright deck line down the middle of the run leading to it, then places twin
+ * "approach light" accents flanking the slot's mouth instead of the one
+ * accent every other archetype gets centred on the tip (which would land
+ * inside the slot's opening and read as a stray floating pixel).
+ *
+ * Returns the accent positions actually painted, so the caller can skip the
+ * generic single-accent placement for this archetype.
+ */
+function paintFlightDeck(
+  buf: PixBuf, plan: DitherPlan, ramp: readonly Rgba[],
+  accent: number, frame: Frame,
+): void {
+  const { reach, span } = frame;
+  const centre = Math.floor(span / 2);
+  const notchStart = Math.round(reach * 0.68);
+  const baseSlotHalf = Math.max(2, Math.round(span * 0.14));
+  const runwayBright = shadeStep(ramp, 6);
+
+  // Deck line: a bright centreline stripe from the hull mount up to where the
+  // slot opens, reading as a runway leading out to the bay mouth.
+  for (let r = 0; r < notchStart; r++) {
+    const [x, y] = frame.toXY(r, centre);
+    if (!isOpaque(getPx(buf, x, y))) continue;
+    setPx(buf, x, y, runwayBright);
+    clearDitherPlan(plan, x, y);
+  }
+
+  // Launch slot: an open channel down the centre of the outward tip, flaring
+  // wider as it nears the mouth — the opening a strike craft would leave
+  // through, flanked by two solid rails.
+  let slotHalfAtTip = baseSlotHalf;
+  for (let r = notchStart; r < reach; r++) {
+    const frac = reach - 1 > notchStart ? (r - notchStart) / (reach - 1 - notchStart) : 1;
+    const slotHalf = Math.round(baseSlotHalf + frac * baseSlotHalf * 0.8);
+    slotHalfAtTip = slotHalf;
+    for (let s = centre - slotHalf; s <= centre + slotHalf; s++) {
+      const [x, y] = frame.toXY(r, s);
+      if (!isOpaque(getPx(buf, x, y))) continue;
+      setPx(buf, x, y, EMPTY);
+      clearDitherPlan(plan, x, y);
+    }
+  }
+
+  // Twin approach lights, just outside the slot mouth on each rail's inner edge.
+  const tipR = reach - 1;
+  for (const s of [centre - slotHalfAtTip - 1, centre + slotHalfAtTip + 1]) {
+    const [x, y] = frame.toXY(tipR, s);
+    if (!isOpaque(getPx(buf, x, y))) continue;
+    setPx(buf, x, y, accent);
+    clearDitherPlan(plan, x, y);
+  }
+}
+
+/**
+ * The default single emissive accent at the working end — a muzzle, a lens,
+ * an exhaust — so the module reads as powered and gives bloom something to
+ * key on. Used by every archetype that doesn't paint its own accents.
+ */
+function paintCentreAccent(buf: PixBuf, plan: DitherPlan, accent: number, frame: Frame): void {
+  const tipT = 0.86;
+  const r = Math.round((frame.reach - 1) * tipT);
+  const centre = Math.floor(frame.span / 2);
+  const [x, y] = frame.toXY(r, centre);
+  setPx(buf, x, y, accent);
+  clearDitherPlan(plan, x, y);
+}
 
 // The archetype grammar makes every module deterministic from its definition
 // and faction alone, so this build takes no randomness — the parameter stays
@@ -224,17 +431,26 @@ export function buildModule(def: ModuleDef, faction: FactionId, _rng: Rng): Modu
     }
   }
 
-  // One emissive accent at the working end — a muzzle, a lens, an exhaust —
-  // so the module reads as powered and gives bloom something to key on.
-  {
-    const tipT = 0.86;
-    const r = Math.round((reach - 1) * tipT);
-    const rr = flip ? reach - 1 - r : r;
-    const centre = Math.floor(span / 2);
-    const x = lateral ? rr : centre;
-    const y = lateral ? centre : rr;
-    setPx(buf, x, y, accent);
-    clearDitherPlan(plan, x, y);
+  // Archetype-specific structure on top of the base silhouette: lanes and
+  // muzzles for a barrel, segment rings for a pod, a launch slot and deck
+  // line for a dock. These read from the silhouette that has already landed
+  // in `buf`, so they only recolour or clear pixels the fill loop above
+  // already painted — never touch anything outside it.
+  const frame = makeFrame(reach, span, lateral, flip);
+
+  if (def.archetype === 'barrel') {
+    // Multiple muzzle accents, one per lane — replaces the single centred
+    // accent every other archetype gets.
+    paintBarrelLanes(buf, plan, ramp, accent, frame, shape);
+  } else if (def.archetype === 'pod') {
+    paintPodBands(buf, plan, ramp, frame, shape);
+    paintCentreAccent(buf, plan, accent, frame);
+  } else if (def.archetype === 'dock') {
+    // Twin approach lights flanking the slot mouth — replaces the single
+    // centred accent, which would otherwise land inside the open slot.
+    paintFlightDeck(buf, plan, ramp, accent, frame);
+  } else {
+    paintCentreAccent(buf, plan, accent, frame);
   }
 
   // The anchor sits at the hull-side end of the reach, centred across the span.
