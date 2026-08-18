@@ -219,11 +219,20 @@ export function reduceTier(src: PixBuf, divisor: number, allowed: readonly Rgba[
 export function silhouetteTier(
   profile: Profile,
   targetLength: number,
+  allowed: readonly Rgba[],
   hullColor: Rgba,
   lightColor: Rgba,
 ): PixBuf {
   const h = Math.max(TIER_FLOOR, targetLength);
   const scale = profile.length / h;
+
+  // Route both colours through the same lock every other tier is checked
+  // against. reduceTier never writes a raw colour for exactly this reason —
+  // a caller passing a colour outside the target faction's lock is the
+  // mistake that produces off-palette QC failures, and this was the one path
+  // that wrote its inputs straight through instead of defending against it.
+  const hullColorSnapped = snapToPalette(hullColor, allowed);
+  const lightColorSnapped = snapToPalette(lightColor, allowed);
 
   // Width follows the profile's own aspect ratio, floored so the hull has body.
   const w = Math.max(TIER_FLOOR, Math.round(((profile.maxHalfWidth * 2 + 1) / scale)));
@@ -246,16 +255,16 @@ export function silhouetteTier(
     // directly is both simpler and correct.
     const half = Math.min(cx, Math.max(0, Math.round(halfSource / scale)));
     for (let x = cx - half; x <= cx + half; x++) {
-      setPx(out, x, y, hullColor);
+      setPx(out, x, y, hullColorSnapped);
     }
 
     // Guarantee the row is present at all — a resampled hull that vanishes to
     // nothing mid-body would break the silhouette read.
-    if (!isOpaque(getPx(out, cx, y))) setPx(out, cx, y, hullColor);
+    if (!isOpaque(getPx(out, cx, y))) setPx(out, cx, y, hullColorSnapped);
   }
 
   // One light, at the stern, on the centreline.
-  setPx(out, cx, h - 1, lightColor);
+  setPx(out, cx, h - 1, lightColorSnapped);
 
   return out;
 }
@@ -271,6 +280,6 @@ export function buildLodSet(
     src,
     reduceTier(src, LOD_DIVISORS[1], allowed),
     reduceTier(src, LOD_DIVISORS[2], allowed),
-    silhouetteTier(profile, Math.round(src.h / LOD_DIVISORS[3]), hullColor, lightColor),
+    silhouetteTier(profile, Math.round(src.h / LOD_DIVISORS[3]), allowed, hullColor, lightColor),
   ];
 }

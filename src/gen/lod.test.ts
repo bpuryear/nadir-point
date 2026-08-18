@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { makeRng } from '../sim/rng.js';
-import { countOpaque, getPx, isOpaque, type PixBuf } from './pixbuf.js';
+import { countOpaque, fromHex, getPx, isOpaque, type PixBuf } from './pixbuf.js';
 import {
-  EMISSIVE, FACTION_PALETTE, isEmissive, NEUTRAL, type FactionId,
+  EMISSIVE, FACTION_PALETTE, isEmissive, NEUTRAL, snapToPalette, type FactionId,
 } from './palette.js';
 import { checkPalette } from './qc.js';
 import { buildProfile, type SizeClass } from './grammar/profile.js';
@@ -166,24 +166,56 @@ describe('reduction preserves what matters', () => {
 describe('the far tier is generated, not filtered', () => {
   it('draws a hull from the profile at a target length', () => {
     const profile = buildProfile({ faction: 'player', sizeClass: 'cruiser', rng: makeRng('s') });
-    const tiny = silhouetteTier(profile, 4, NEUTRAL[3]!, EMISSIVE.amber);
+    const tiny = silhouetteTier(profile, 4, allowed, NEUTRAL[3]!, EMISSIVE.amber);
     expect(tiny.h).toBe(4);
     expect(countOpaque(tiny)).toBeGreaterThan(0);
   });
 
   it('clamps to the floor when asked for something absurd', () => {
     const profile = buildProfile({ faction: 'player', sizeClass: 'cruiser', rng: makeRng('s') });
-    expect(silhouetteTier(profile, 1, NEUTRAL[3]!, EMISSIVE.amber).h).toBe(TIER_FLOOR);
+    expect(silhouetteTier(profile, 1, allowed, NEUTRAL[3]!, EMISSIVE.amber).h).toBe(TIER_FLOOR);
   });
 
   it('carries one emissive so the speck still has a light', () => {
     const profile = buildProfile({ faction: 'player', sizeClass: 'cruiser', rng: makeRng('s') });
-    const tiny = silhouetteTier(profile, 4, NEUTRAL[3]!, EMISSIVE.amber);
+    const tiny = silhouetteTier(profile, 4, allowed, NEUTRAL[3]!, EMISSIVE.amber);
     let emissives = 0;
     for (let y = 0; y < tiny.h; y++) {
       for (let x = 0; x < tiny.w; x++) if (isEmissive(getPx(tiny, x, y))) emissives++;
     }
     expect(emissives).toBe(1);
+  });
+
+  it('snaps off-palette colour arguments instead of writing them raw', () => {
+    // The gap the reviewer found: silhouetteTier wrote hullColor/lightColor
+    // straight to the buffer, unlike reduceTier which routes every colour
+    // through snapToPalette. Every current call site happens to pass
+    // compliant colours, so pass one that is not — a colour nowhere in the
+    // player lock — and confirm it is snapped rather than passed through.
+    const profile = buildProfile({ faction: 'player', sizeClass: 'cruiser', rng: makeRng('s') });
+    const offPaletteHull = fromHex('#ff00ff');
+    const offPaletteLight = fromHex('#00ff00');
+    expect(allowed).not.toContain(offPaletteHull);
+    expect(allowed).not.toContain(offPaletteLight);
+
+    const tier = silhouetteTier(profile, 4, allowed, offPaletteHull, offPaletteLight);
+
+    const expectedHull = snapToPalette(offPaletteHull, allowed);
+    const expectedLight = snapToPalette(offPaletteLight, allowed);
+    let sawHull = false;
+    let sawLight = false;
+    for (let y = 0; y < tier.h; y++) {
+      for (let x = 0; x < tier.w; x++) {
+        const c = getPx(tier, x, y);
+        if (!isOpaque(c)) continue;
+        expect(c).not.toBe(offPaletteHull);
+        expect(c).not.toBe(offPaletteLight);
+        if (c === expectedHull) sawHull = true;
+        if (c === expectedLight) sawLight = true;
+      }
+    }
+    expect(sawHull || sawLight).toBe(true);
+    expect(checkPalette(tier, allowed)).toEqual([]);
   });
 
   it('keeps a cruiser and a destroyer distinguishable at the far tier', () => {
