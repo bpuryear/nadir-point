@@ -221,4 +221,25 @@ describe('qcSprite', () => {
     expect(() => assertQc(qcSprite('bad', bad))).toThrow(/bad/);
     expect(() => assertQc(qcSprite('good', litBlob()))).not.toThrow();
   });
+
+  it('fails a fully transparent sprite — passing every other check vacuously is not a pass', () => {
+    // Every other check is happy with nothing drawn: no pixels to be
+    // off-palette, none to have partial alpha, and the light check abstains
+    // for lack of edges. Without an explicit emptiness gate this reports PASS,
+    // which is how a generator that silently draws nothing slips through.
+    const report = qcSprite('blank', createBuf(8, 8));
+    expect(report.empty).toBe(true);
+    expect(report.palette).toEqual([]);
+    expect(report.alpha).toEqual([]);
+    expect(report.light).toBeNull();
+    expect(report.pass).toBe(false);
+  });
+
+  it('passes a sprite with a single opaque palette pixel', () => {
+    const b = createBuf(4, 4);
+    setPx(b, 1, 1, NEUTRAL[3]!);
+    const report = qcSprite('speck', b);
+    expect(report.empty).toBe(false);
+    expect(report.pass).toBe(true);
+  });
 });

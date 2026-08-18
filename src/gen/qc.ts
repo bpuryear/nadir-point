@@ -15,7 +15,7 @@
  */
 
 import {
-  alphaOf, getPx, isOpaque, luminance, type PixBuf, type Rgba,
+  alphaOf, countOpaque, getPx, isOpaque, luminance, type PixBuf, type Rgba,
 } from './pixbuf.js';
 import { isEmissive, isInPalette, snapToPalette } from './palette.js';
 
@@ -39,6 +39,8 @@ export interface QcReport {
   palette: PaletteViolation[];
   alpha: PaletteViolation[];
   light: LightReport | null;
+  /** True when the sprite has no opaque pixels at all — nothing was drawn. */
+  empty: boolean;
   pass: boolean;
 }
 
@@ -143,14 +145,23 @@ export function qcSprite(name: string, buf: PixBuf, allowed?: readonly Rgba[]): 
   const alpha = checkBinaryAlpha(buf);
   const light = checkLightDirection(buf);
 
+  // A blank sprite passes every other check vacuously — no pixels to be
+  // off-palette, none to have partial alpha, too few edges for the light check
+  // to do anything but abstain. Deleting the entire contents of two parallax
+  // layers once left the whole suite green. "QC passed" has to mean a sprite
+  // exists.
+  const opaque = countOpaque(buf);
+  const empty = opaque === 0;
+
   return {
     name,
     palette,
     alpha,
     light,
+    empty,
     // An abstaining light check is not a failure — a 3px sprite has nothing to
     // measure, and demanding a verdict there would only produce noise.
-    pass: palette.length === 0 && alpha.length === 0 && (light === null || light.pass),
+    pass: !empty && palette.length === 0 && alpha.length === 0 && (light === null || light.pass),
   };
 }
 
@@ -162,6 +173,10 @@ export function formatQcReport(report: QcReport): string {
   if (report.pass) return `${report.name}: PASS`;
 
   const lines: string[] = [`${report.name}: FAIL`];
+
+  if (report.empty) {
+    lines.push('  sprite is empty: 0 opaque pixels');
+  }
 
   if (report.palette.length > 0) {
     lines.push(`  off-palette pixels: ${report.palette.length}`);

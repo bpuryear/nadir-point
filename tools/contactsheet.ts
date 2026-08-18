@@ -15,7 +15,7 @@ import { dirname, resolve } from 'node:path';
 
 import { makeRng } from '../src/sim/rng.js';
 import {
-  blit, createBuf, fillBuf, type PixBuf,
+  blit, countOpaque, createBuf, fillBuf, type PixBuf,
 } from '../src/gen/pixbuf.js';
 import { encodePng } from '../src/gen/png.js';
 import {
@@ -129,8 +129,9 @@ export function buildContactSheet(seed: string): SheetResult {
   const recordPaletteOnly = (name: string, buf: PixBuf, allowed: readonly number[]) => {
     const palette = checkPalette(buf, allowed);
     const alpha = checkBinaryAlpha(buf);
+    const empty = countOpaque(buf) === 0;
     reports.push({
-      name, palette, alpha, light: null, pass: palette.length === 0 && alpha.length === 0,
+      name, palette, alpha, light: null, empty, pass: !empty && palette.length === 0 && alpha.length === 0,
     });
   };
 
@@ -193,8 +194,28 @@ export function buildContactSheet(seed: string): SheetResult {
     record(`loadout-${name}`, ship.buf, FACTION_PALETTE.player);
   }
 
-  // --- 4. Faction ship classes -------------------------------------------
-  sheet.heading('4. FACTION SHIP CLASSES');
+  // --- 4. Salvaged modules - foreign parts on the player hull ------------
+  sheet.heading('4. SALVAGED MODULES - FOREIGN PARTS ON THE PLAYER HULL');
+
+  const cannonBank = MODULE_CATALOGUE.find((m) => m.id === 'cannon-bank')!;
+  for (const moduleFaction of ['concord', 'coalition', 'derelict'] as FactionId[]) {
+    const sprite = buildModule(cannonBank, moduleFaction, rng.split(`salvage-${moduleFaction}`));
+    const ship = compositeShip(cruiser, { [cannonBank.hardpoint]: sprite } as Loadout);
+    sheet.place(ship.buf, `PLAYER + ${moduleFaction.toUpperCase()} ${cannonBank.name}`);
+
+    // A salvaged part carries its origin faction's colours onto the player
+    // hull — that is the entire point of the art direction. So the lock for a
+    // mixed sprite is the union of the factions that contributed to it, not
+    // the hull's alone. Measured against FACTION_PALETTE.player alone: 284
+    // off-palette pixels for the Concord cannon bank, 284 for Coalition, 41
+    // for Derelict — all correctly explained by the module's own faction ramp
+    // and accent, not a generator defect.
+    const unionLock = [...new Set([...FACTION_PALETTE.player, ...FACTION_PALETTE[moduleFaction]])];
+    record(`salvaged-${moduleFaction}`, ship.buf, unionLock);
+  }
+
+  // --- 5. Faction ship classes -------------------------------------------
+  sheet.heading('5. FACTION SHIP CLASSES');
 
   const classes: SizeClass[] = ['corvette', 'destroyer', 'cruiser'];
   for (const faction of ['concord', 'coalition', 'derelict'] as FactionId[]) {
@@ -206,8 +227,8 @@ export function buildContactSheet(seed: string): SheetResult {
     sheet.newline();
   }
 
-  // --- 5. Damage states ---------------------------------------------------
-  sheet.heading('5. DAMAGE STATES - OUTLINE HOLDS UNTIL CRITICAL');
+  // --- 6. Damage states ---------------------------------------------------
+  sheet.heading('6. DAMAGE STATES - OUTLINE HOLDS UNTIL CRITICAL');
 
   const allowedWithScorch = [...FACTION_PALETTE.player];
   const frames = damageFrames(cruiser.buf, rng.split('damage'), allowedWithScorch);
@@ -216,8 +237,8 @@ export function buildContactSheet(seed: string): SheetResult {
     record(`damage-${state}`, frames[state], allowedWithScorch);
   }
 
-  // --- 6. Rotation bins ---------------------------------------------------
-  sheet.heading(`6. ROTATION - 8 OF ${ROTATION_BINS} BINS`);
+  // --- 7. Rotation bins ---------------------------------------------------
+  sheet.heading(`7. ROTATION - 8 OF ${ROTATION_BINS} BINS`);
 
   const fitted = compositeShip(cruiser, loadouts[1]![1]);
   const bins = bakeRotations(fitted.buf, ROTATION_BINS);
@@ -226,8 +247,8 @@ export function buildContactSheet(seed: string): SheetResult {
     recordPaletteOnly(`rotation-${i}`, bins[i]!, FACTION_PALETTE.player);
   }
 
-  // --- 7. Debris ----------------------------------------------------------
-  sheet.heading('7. DEBRIS SET');
+  // --- 8. Debris ----------------------------------------------------------
+  sheet.heading('8. DEBRIS SET');
 
   for (const faction of ['concord', 'coalition'] as FactionId[]) {
     for (const piece of buildDebrisSet(faction, rng.split(`debris-${faction}`), 3)) {
@@ -237,8 +258,8 @@ export function buildContactSheet(seed: string): SheetResult {
     sheet.newline();
   }
 
-  // --- 8. POI background stacks -------------------------------------------
-  sheet.heading('8. POI BACKGROUND STACKS - LAYERS SHOWN SEPARATELY');
+  // --- 9. POI background stacks -------------------------------------------
+  sheet.heading('9. POI BACKGROUND STACKS - LAYERS SHOWN SEPARATELY');
 
   for (const poi of ['gasgiant', 'graveyard'] as PoiId[]) {
     const stack = buildPoiStack(poi, 220, 130, rng.split(`poi-${poi}`));

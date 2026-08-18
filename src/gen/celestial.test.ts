@@ -169,6 +169,18 @@ describe('POI stacks', () => {
       expect(layer.name.length).toBeGreaterThan(2);
     }
   });
+
+  it('draws something in every layer of every stack — a blank layer is not a layer', () => {
+    for (const poi of ALL_POIS) {
+      const stack = buildPoiStack(poi, 160, 100, makeRng(poi));
+      for (const layer of stack.layers) {
+        expect(countOpaque(layer.buf), `${poi}/${layer.name}`).toBeGreaterThan(0);
+      }
+      if (stack.foreground !== null) {
+        expect(countOpaque(stack.foreground.buf), `${poi}/${stack.foreground.name}`).toBeGreaterThan(0);
+      }
+    }
+  });
 });
 
 describe('determinism', () => {
