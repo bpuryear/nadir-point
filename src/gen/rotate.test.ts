@@ -141,6 +141,48 @@ describe('bake fidelity', () => {
       }
     }
   });
+
+  it('rotates in a pinned direction, not merely some direction', () => {
+    // countOpaque is direction-agnostic, so the quarter-turn test above passes
+    // whichever way the bake turns. Negating the angle left the whole suite
+    // green — a sign error would ship silently and every ship would rotate
+    // backwards. Pin it against an independently computed 90-degree rotation.
+    const src = ell();
+    const bins = bakeRotations(src, 4);
+    const size = bakeSize(src);
+    const ox = Math.floor((size - src.w) / 2);
+    const oy = Math.floor((size - src.h) / 2);
+
+    // Read bin 1's content back into a source-sized grid, then compare against
+    // both possible quarter turns of the source. Exactly one must match.
+    const observed: number[] = [];
+    for (let y = 0; y < src.h; y++) {
+      for (let x = 0; x < src.w; x++) observed.push(getPx(bins[1]!, ox + x, oy + y));
+    }
+
+    // ell() is 4x4 (src.w === src.h), which makes this index arithmetic valid.
+    // A non-square sprite would swap dimensions between the two rotations and
+    // this comparison would need reworking.
+    const cw: number[] = [];
+    for (let y = 0; y < src.h; y++) {
+      for (let x = 0; x < src.w; x++) cw.push(getPx(src, y, src.h - 1 - x));
+    }
+
+    const ccw: number[] = [];
+    for (let y = 0; y < src.h; y++) {
+      for (let x = 0; x < src.w; x++) ccw.push(getPx(src, src.w - 1 - y, x));
+    }
+
+    const matchesCw = observed.every((v, i) => v === cw[i]);
+    const matchesCcw = observed.every((v, i) => v === ccw[i]);
+
+    expect(matchesCw || matchesCcw, 'bin 1 of a 4-bin bake is not a clean quarter turn').toBe(true);
+    // Pinned against the current, verified-correct implementation: bin 1 of a
+    // 4-bin bake matches the clockwise quarter turn, not the counter-clockwise
+    // one. Whichever it is, pin it — this is the assertion that catches a sign flip.
+    const EXPECTED_CCW = false;
+    expect(matchesCcw, 'rotation direction changed').toBe(EXPECTED_CCW);
+  });
 });
 
 describe('determinism', () => {
