@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { makeRng } from '../../sim/rng.js';
 import type { FactionId } from '../palette.js';
 import {
-  buildProfile, isFilled, profileArea, profileWidth, SIZE_LENGTH, type SizeClass,
+  buildProfile, isFilled, minWaistFor, profileArea, profileWidth, SIZE_LENGTH, type SizeClass,
 } from './profile.js';
 
 const build = (faction: FactionId, sizeClass: SizeClass, seed = 'p') =>
@@ -96,7 +96,7 @@ describe('profile shape', () => {
     }
   });
 
-  it('lets derelicts be eroded — bites thin the hull down to a bare bridge', () => {
+  it('lets derelicts be eroded — bites thin the hull down to the waist floor', () => {
     // This used to assert the opposite of what it should: that an interior
     // row could drop clean to zero. `plates.ts` skips any row whose
     // half-width is 0 (`if (half === 0) continue;`), so a zeroed interior row
@@ -104,17 +104,22 @@ describe('profile shape', () => {
     // and below it are not even diagonally adjacent, i.e. the hull renders as
     // two or more disconnected sprites sharing a canvas. That is the exact
     // "witch's hat floating over a barrel hull" defect a rendered contact
-    // sheet caught. Erosion is still allowed to be brutal — thinned rows
-    // should bottom out at the 1px floor, not stay comfortably wide — it just
-    // may never reach 0 on a row with hull on both sides of it. See
-    // 'never splits a hull into disconnected pieces' below for the positive
-    // connectivity guarantee this replaces.
+    // sheet caught. See 'never splits a hull into disconnected pieces' below
+    // for the positive connectivity guarantee this replaces.
+    //
+    // The floor itself used to be a flat 1px. A hardcoded 1px bridge between
+    // two full-mass ends is technically connected and still reads as two
+    // objects sharing a canvas — a "kebab skewer", per review — so the floor
+    // is now scaled to the hull's own peak beam (`minWaistFor`) instead.
+    // Erosion is still allowed to be brutal: it should bottom out there, not
+    // stay comfortably wide.
     const anyFloored = ['a', 'b', 'c', 'd', 'e'].some((seed) => {
       const p = build('derelict', 'cruiser', seed);
+      const floor = minWaistFor(p.maxHalfWidth);
       const filled = Array.from(p.halfWidth);
       const first = filled.findIndex((w) => w > 0);
       const last = filled.length - 1 - [...filled].reverse().findIndex((w) => w > 0);
-      return filled.slice(first, last + 1).some((w) => w === 1);
+      return filled.slice(first, last + 1).some((w) => w === floor);
     });
     expect(anyFloored).toBe(true);
   });
@@ -216,9 +221,18 @@ describe('determinism', () => {
 });
 
 describe('queries', () => {
-  it('reports full width as twice the half-width plus the centreline', () => {
-    const p = build('player', 'cruiser');
+  it('reports full width as left + right + the centreline', () => {
+    // Concord: a faction that keeps both sides equal, so this is exactly the
+    // old "twice the half-width" formula in the symmetric case.
+    const p = build('concord', 'cruiser');
     expect(profileWidth(p, 50)).toBe(p.halfWidth[50]! * 2 + 1);
+  });
+
+  it('reports width from each side independently on an asymmetric hull', () => {
+    const p = build('player', 'cruiser');
+    for (let y = 0; y < p.length; y += 7) {
+      expect(profileWidth(p, y)).toBe(p.leftWidth[y]! + p.rightWidth[y]! + 1);
+    }
   });
 
   it('reports zero width outside the hull', () => {
@@ -227,8 +241,11 @@ describe('queries', () => {
     expect(profileWidth(p, p.length)).toBe(0);
   });
 
-  it('fills symmetrically about the centreline', () => {
-    const p = build('player', 'cruiser');
+  it('fills symmetrically about the centreline for symmetric factions', () => {
+    // Only Concord/Coalition/Derelict make this promise; Player's whole
+    // point is that it does not — see 'is asymmetric about its centreline'
+    // below.
+    const p = build('concord', 'cruiser');
     for (let y = 0; y < p.length; y += 7) {
       for (let x = 0; x <= p.maxHalfWidth; x++) {
         expect(isFilled(p, x, y)).toBe(isFilled(p, -x, y));
@@ -236,11 +253,26 @@ describe('queries', () => {
     }
   });
 
-  it('excludes points beyond the half-width', () => {
+  it('is asymmetric about its centreline for the player hull', () => {
+    // The structural fix for the "chess pawn" defect: a profile that fills
+    // symmetrically about its centreline at every row can only ever describe
+    // a solid of revolution. At least some rows must disagree between +x and
+    // -x, or the representation change bought nothing.
+    const p = build('player', 'cruiser');
+    let asymmetricRows = 0;
+    for (let y = 0; y < p.length; y++) {
+      if (p.leftWidth[y] !== p.rightWidth[y]) asymmetricRows++;
+    }
+    expect(asymmetricRows).toBeGreaterThan(p.length / 2);
+  });
+
+  it('excludes points beyond each side\'s own extent', () => {
     const p = build('player', 'cruiser');
     const y = 40;
-    expect(isFilled(p, p.halfWidth[y]!, y)).toBe(true);
-    expect(isFilled(p, p.halfWidth[y]! + 1, y)).toBe(false);
+    expect(isFilled(p, p.rightWidth[y]!, y)).toBe(true);
+    expect(isFilled(p, p.rightWidth[y]! + 1, y)).toBe(false);
+    expect(isFilled(p, -p.leftWidth[y]!, y)).toBe(true);
+    expect(isFilled(p, -p.leftWidth[y]! - 1, y)).toBe(false);
   });
 
   it('measures area as the sum of row widths', () => {
@@ -327,6 +359,36 @@ describe('connectivity', () => {
           for (let y = first; y <= last; y++) {
             expect(p.halfWidth[y]!, `${faction}/${sizeClass}/conn-${i} row ${y}`).toBeGreaterThan(0);
           }
+        }
+      }
+    }
+  });
+
+  it("keeps a derelict's waist at a minimum connection width, not mere non-zero reachability", () => {
+    // Bare connectivity — every row > 0 — is necessary but not sufficient. A
+    // single 1px bridge between two full-mass ends is technically one
+    // connected component and still reads as two objects sharing a canvas: a
+    // "kebab skewer", per review, not a damaged hulk. What matters is real
+    // plate mass at the hull's thinnest surviving point, scaled to the
+    // hull's own size — see `minWaistFor`.
+    //
+    // Measured over the central fifth of the hull (t in [0.4, 0.6]), which is
+    // far enough from both the bow taper and the stern flare that an
+    // undamaged Concord-family curve never dips anywhere near the waist
+    // floor there — concordCurve's body term is still >= ~0.83 of peak at
+    // the edges of this band. A width that low in this band can only be
+    // erosion, so the floor check is exercised on every sample, not just the
+    // ones where a bite happens to land in the measurement window.
+    const sizes: SizeClass[] = ['corvette', 'destroyer', 'cruiser', 'capital'];
+    for (const sizeClass of sizes) {
+      for (let i = 0; i < 300; i++) {
+        const seed = `waist-${i}`;
+        const p = build('derelict', sizeClass, seed);
+        const lo = Math.floor(p.length * 0.4);
+        const hi = Math.floor(p.length * 0.6);
+        const floor = minWaistFor(p.maxHalfWidth);
+        for (let y = lo; y <= hi; y++) {
+          expect(p.halfWidth[y]!, `${sizeClass}/${seed} row ${y}`).toBeGreaterThanOrEqual(floor);
         }
       }
     }

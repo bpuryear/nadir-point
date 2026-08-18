@@ -69,9 +69,11 @@ describe('plated hull colour', () => {
   it('makes the top-left border brighter than the bottom-right border', () => {
     const { profile, plated } = hull();
     const y = Math.floor(profile.length / 2);
-    const half = profile.halfWidth[y]!;
-    const left = getPx(plated.buf, plated.centreX - half, y);
-    const right = getPx(plated.buf, plated.centreX + half, y);
+    // Each side's own extent — the player hull's two sides can differ, and
+    // centreX - halfWidth (the wider side's reach) is not necessarily on the
+    // hull for the narrower side.
+    const left = getPx(plated.buf, plated.centreX - profile.leftWidth[y]!, y);
+    const right = getPx(plated.buf, plated.centreX + profile.rightWidth[y]!, y);
     expect(luminance(left)).toBeGreaterThan(luminance(right));
   });
 });

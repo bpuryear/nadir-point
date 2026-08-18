@@ -158,12 +158,21 @@ function anchorRow(profile: Profile, fraction: number, claimed: Set<number>): nu
  * A row for the sponsons: broad enough that port and starboard land at least
  * four pixels apart, and as clear of rows already taken as the hull allows.
  *
+ * "Broad" must hold on *both* sides, not just the wider one: port and
+ * starboard each walk inward from their own edge (see `buildHull`), so their
+ * combined separation is bounded by whichever side is narrower. On a
+ * symmetric hull the two are equal and checking the max (as this used to)
+ * was equivalent; on the asymmetric player hull a row with a full-width
+ * bulge on one side and a thin sliver on the other would pass a max-based
+ * check while actually landing port and starboard just a couple of pixels
+ * apart.
+ *
  * Same descending-gap degradation as `anchorRow`, applied to the "broad
  * enough" rows first; only once no broad row exists at any gap does it fall
  * back to distinctness and then to any filled row.
  */
 function sponsonRow(profile: Profile, fraction: number, claimed: Set<number>): number {
-  const broad = (y: number) => profile.halfWidth[y]! >= 3;
+  const broad = (y: number) => Math.min(profile.leftWidth[y]!, profile.rightWidth[y]!) >= 3;
   const filled = (y: number) => profile.halfWidth[y]! >= 1;
 
   for (let gap = MIN_ROW_GAP; gap >= 1; gap--) {
@@ -204,8 +213,11 @@ export function buildHull(spec: HullSpec): Hull {
 
   for (const id of HARDPOINT_IDS) {
     if (id === 'port' || id === 'starboard') {
-      const half = profile.halfWidth[sponsonY]!;
       const dir = id === 'port' ? -1 : 1;
+      // Each side reads its own extent — the two can differ on the player
+      // hull, and starting from the wrong side's (wider) value would walk
+      // past where that side's hull actually ends.
+      const half = dir === -1 ? profile.leftWidth[sponsonY]! : profile.rightWidth[sponsonY]!;
       // Start just inboard of the edge and walk toward the centreline until the
       // pixel is actually hull — erosion can hollow the edge cell while leaving
       // the row nominally filled.

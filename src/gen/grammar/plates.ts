@@ -226,10 +226,11 @@ export function plateHull(spec: PlateSpec): PlatedHull {
   for (let y = 0; y < profile.length; y++) {
     const plate = plateIndexAt(y);
     const offset = plateOffset[plate]!;
-    const half = profile.halfWidth[y]!;
-    if (half === 0) continue;
+    const left = profile.leftWidth[y]!;
+    const right = profile.rightWidth[y]!;
+    if (left === 0 && right === 0) continue;
 
-    for (let x = centreX - half; x <= centreX + half; x++) {
+    for (let x = centreX - left; x <= centreX + right; x++) {
       let step = BASE_STEP + offset;
 
       if (seamRows.has(y)) {

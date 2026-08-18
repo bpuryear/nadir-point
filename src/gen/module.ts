@@ -162,10 +162,22 @@ const SHAPE: Readonly<Record<ModuleArchetype, (t: number) => number>> = {
   },
   // A bolted-on box: square, full width the whole way.
   block: () => 1,
-  // A cluster: bulges in the middle. `paintPodBands` below rings it with two
-  // dark seams so a pair of these mounted port and starboard reads as
-  // segmented hardware, not a matched pair of plain circles.
-  pod: (t) => 0.55 + 0.45 * Math.sin(Math.PI * Math.min(1, Math.max(0, t))),
+  // An ordnance rack: a flat-topped hexagon — chamfered shoulders at the
+  // mount and the muzzle, full width for the run between. The previous shape
+  // was a smooth lens (0.55 + 0.45*sin(pi*t)), and a pair of those mounted
+  // port and starboard read as matched round discs — porthole or coin
+  // shapes, "Mickey-Mouse-adjacent", per review — even after `paintPodBands`
+  // below rings the bulge with dark seams; a round outline reads round no
+  // matter what is painted inside it. Ordnance needs corners: chamfered
+  // shoulders, not a curve, so the silhouette itself reads as a canister of
+  // launch cells rather than a ball.
+  pod: (t) => {
+    const CHAMFER = 0.22;
+    const SHOULDER = 0.58;
+    if (t < CHAMFER) return SHOULDER + (1 - SHOULDER) * (t / CHAMFER);
+    if (t > 1 - CHAMFER) return SHOULDER + (1 - SHOULDER) * ((1 - t) / CHAMFER);
+    return 1;
+  },
   // An exhaust bell: narrow throat flaring to a wide mouth.
   nozzle: (t) => 0.45 + 0.55 * t,
   // A flat panel bank: full width, squared off, shallow.

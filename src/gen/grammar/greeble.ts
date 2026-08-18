@@ -119,7 +119,13 @@ export function runningLightRows(profile: Profile): number[] {
   const rows: number[] = [];
   const first = RUNNING_LIGHT_SPACING;
   for (let y = first; y < profile.length - 2; y += RUNNING_LIGHT_SPACING) {
-    if (profile.halfWidth[y]! >= 2) rows.push(y);
+    // Both sides, not just the wider one: a light seats one pixel inboard of
+    // each edge (see `applyRunningLights`), so a row only qualifies if both
+    // edges actually have that pixel to give. For a symmetric hull this is
+    // the same test as before; on an asymmetric player hull the wider side
+    // alone would let a light's inboard offset from the *narrow* side land
+    // off the hull entirely.
+    if (profile.leftWidth[y]! >= 2 && profile.rightWidth[y]! >= 2) rows.push(y);
   }
   return rows;
 }
@@ -133,10 +139,12 @@ export function applyRunningLights(
   let placed = 0;
 
   for (const y of runningLightRows(profile)) {
-    const half = profile.halfWidth[y]!;
     // One inboard of each edge, so the light sits on the hull rather than
-    // extending it — the silhouette must not change.
-    for (const x of [cx - half + 1, cx + half - 1]) {
+    // extending it — the silhouette must not change. Each side reads its own
+    // extent, since the two can differ on the player hull.
+    const left = profile.leftWidth[y]!;
+    const right = profile.rightWidth[y]!;
+    for (const x of [cx - left + 1, cx + right - 1]) {
       if (isOpaque(getPx(hull.buf, x, y))) {
         setPx(hull.buf, x, y, color);
         clearDitherPlan(hull.plan, x, y);
