@@ -19,7 +19,7 @@ import {
 } from '../src/gen/pixbuf.js';
 import { encodePng } from '../src/gen/png.js';
 import {
-  EMISSIVE, FACTION_PALETTE, NEUTRAL, POI_PALETTE, SPACE, UI, type FactionId, type PoiId,
+  EMISSIVE, FACTION_PALETTE, NEUTRAL, POI_PALETTE, SPACE, UI, WARM, type FactionId, type PoiId,
 } from '../src/gen/palette.js';
 import { drawText, GLYPH_H } from '../src/gen/font.js';
 import {
@@ -230,8 +230,14 @@ export function buildContactSheet(seed: string): SheetResult {
   // --- 6. Damage states ---------------------------------------------------
   sheet.heading('6. DAMAGE STATES - OUTLINE HOLDS UNTIL CRITICAL');
 
-  const allowedWithScorch = [...FACTION_PALETTE.player];
-  const frames = damageFrames(cruiser.buf, rng.split('damage'), allowedWithScorch);
+  // Full WARM ramp, not just the accent shades FACTION_PALETTE.player already
+  // carries: snapToPalette picks nearest by RGB distance, and WARM[1] (the
+  // scorch-dark colour) is numerically closer to a NEUTRAL steel shade than
+  // to any WARM tone FACTION_PALETTE.player includes on its own — without
+  // the rest of the ramp here, scorch quietly snaps to hull-coloured grey
+  // instead of reading as damage.
+  const allowedWithScorch = [...FACTION_PALETTE.player, ...WARM];
+  const frames = damageFrames(cruiser.buf, rng.split('damage'), allowedWithScorch, cruiser.plates);
   for (const state of DAMAGE_STATES) {
     sheet.place(frames[state], state.toUpperCase());
     record(`damage-${state}`, frames[state], allowedWithScorch);

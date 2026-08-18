@@ -25,11 +25,19 @@ export interface PlateSpec {
   rng: Rng;
 }
 
+/** A single plate band: the inclusive row range it spans. */
+export interface PlateBand {
+  y0: number;
+  y1: number;
+}
+
 export interface PlatedHull {
   buf: PixBuf;
   /** x coordinate of the hull centreline inside `buf`. */
   centreX: number;
   plateCount: number;
+  /** The row range each plate band spans, bow to stern. */
+  plates: readonly PlateBand[];
 }
 
 /** Mid-ramp index that unlit interior plate sits at. */
@@ -145,5 +153,18 @@ export function plateHull(spec: PlateSpec): PlatedHull {
     }
   }
 
-  return { buf, centreX, plateCount };
+  // Bands from the same `boundaries` array the shading pass already computed.
+  // Band 0 runs 0..boundaries[0]-1, the next boundaries[0]..boundaries[1]-1,
+  // and so on, with the last band closing out at the hull's final row.
+  const plates: PlateBand[] = [];
+  {
+    let y0 = 0;
+    for (const b of boundaries) {
+      plates.push({ y0, y1: b - 1 });
+      y0 = b;
+    }
+    plates.push({ y0, y1: profile.length - 1 });
+  }
+
+  return { buf, centreX, plateCount, plates };
 }

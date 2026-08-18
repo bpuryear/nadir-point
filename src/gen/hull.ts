@@ -14,7 +14,7 @@ import { type PixBuf } from './pixbuf.js';
 import { EMISSIVE, FACTION_PALETTE, rampOf, type FactionId } from './palette.js';
 import { assertQc, qcSprite } from './qc.js';
 import { buildProfile, isFilled, type Profile, type SizeClass } from './grammar/profile.js';
-import { plateHull } from './grammar/plates.js';
+import { plateHull, type PlateBand } from './grammar/plates.js';
 import { applyGreebles, applyRunningLights } from './grammar/greeble.js';
 
 export type HardpointId = 'bow' | 'dorsal' | 'ventral' | 'port' | 'starboard' | 'engine';
@@ -47,6 +47,8 @@ export interface Hull {
   hardpoints: Readonly<Record<HardpointId, Hardpoint>>;
   faction: FactionId;
   sizeClass: SizeClass;
+  /** Plate bands, bow to stern — the structure damage uses for blown plating. */
+  plates: readonly PlateBand[];
 }
 
 export interface HullSpec {
@@ -229,5 +231,6 @@ export function buildHull(spec: HullSpec): Hull {
     hardpoints,
     faction,
     sizeClass,
+    plates: plated.plates,
   };
 }

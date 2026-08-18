@@ -7,10 +7,16 @@ import { buildHull } from './hull.js';
 import { applyDamage, DAMAGE_STATES, damageFrames, type DamageState } from './damage.js';
 
 const allowed = [...FACTION_PALETTE.player, ...WARM];
-const source = () => buildHull({ faction: 'player', sizeClass: 'cruiser', rng: makeRng('d') }).buf;
+const buildCruiser = () => buildHull({ faction: 'player', sizeClass: 'cruiser', rng: makeRng('d') });
+const source = () => buildCruiser().buf;
 
-const frame = (state: DamageState, seed = 'x') =>
-  applyDamage(source(), { state, rng: makeRng(seed), allowed });
+// Exercises the real hull path — plate bands included — so the outline-rule
+// and appearance assertions below cover the blown-plating mechanism, not just
+// the plate-less fallback.
+const frame = (state: DamageState, seed = 'x') => {
+  const hull = buildCruiser();
+  return applyDamage(hull.buf, { state, rng: makeRng(seed), allowed, plates: hull.plates });
+};
 
 const emissiveCount = (buf: ReturnType<typeof source>) => {
   let n = 0;
