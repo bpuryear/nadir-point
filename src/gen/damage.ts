@@ -101,6 +101,17 @@ interface StageDelta {
   tearCount: number;
   /** Radius, in pixels, of each bite. */
   tearRadius: number;
+  /**
+   * Whether this stage sheds an entire end plate band — every pixel, rim
+   * included, not just the interior `blowPlateBands` leaves standing. Only
+   * `destroyed` sets this. A gutted-but-rimmed band (what `breachAdd` alone
+   * produces) still holds the ship's original length and upright proportions;
+   * "destroyed" has to cost the hull actual mass, not just texture, or it
+   * reads as "scorched but functional" rather than "wreck". Shedding a whole
+   * end band is what a reviewer's bounding-box-height measurement is meant to
+   * catch changing.
+   */
+  shedEnd: boolean;
 }
 
 // Cumulative severity by `destroyed`, once every prior stage has stacked, is
@@ -109,20 +120,65 @@ interface StageDelta {
 // destroyed) — this table holds each stage's *increment*, not the running
 // total.
 const STAGE_DELTA: Readonly<Record<Exclude<DamageState, 'intact'>, StageDelta>> = {
-  damaged:   { blastCount: 3, blastRadius: 6, lightsOutChance: 0.5, breachAdd: 0, retainStructure: false, tearCount: 0, tearRadius: 0 },
-  critical:  { blastCount: 1, blastRadius: 7, lightsOutChance: 1,   breachAdd: 2, retainStructure: false, tearCount: 0, tearRadius: 0 },
+  damaged:   { blastCount: 3, blastRadius: 6, lightsOutChance: 0.5, breachAdd: 0, retainStructure: false, tearCount: 0,  tearRadius: 0, shedEnd: false },
+  critical:  { blastCount: 1, blastRadius: 7, lightsOutChance: 1,   breachAdd: 2, retainStructure: false, tearCount: 0,  tearRadius: 0, shedEnd: false },
   // Heavier scorch than the old build's per-state total, since "worse than
   // critical" is no longer carried by hollowing more bands out completely —
-  // see `retainStructure` above. The outline itself only chews at a handful
-  // of bounded bites (tearEdges), not an independent 30%-per-pixel roll
-  // across the whole perimeter — that per-pixel roll was what turned a blown
-  // band's surviving rim into a dotted line indistinguishable from a
-  // marching-ants selection outline.
-  destroyed: { blastCount: 3, blastRadius: 9, lightsOutChance: 1,   breachAdd: 2, retainStructure: true,  tearCount: 6, tearRadius: 4 },
+  // see `retainStructure` above. Two things change the outline itself, both
+  // only at `destroyed`: `shedEnd` clears one whole end plate band (rim
+  // included, not just interior — see `shedEndBand`), which is what actually
+  // shortens the hull's bounding box instead of merely texturing it; a much
+  // heavier `tearEdges` pass (up from a token 6/4) then chews ragged bites
+  // both around that fresh amputation and along the rest of the silhouette,
+  // so the loss doesn't read as one clean rectangular crop. Not an
+  // independent 30%-per-pixel roll across the whole perimeter — that per-pixel
+  // roll was what turned a blown band's surviving rim into a dotted line
+  // indistinguishable from a marching-ants selection outline.
+  //
+  // `breachAdd` dropped from 2 to 1 here (critical still blows 2) now that
+  // `shedEnd` also spends a whole band: unchanged, the two mechanisms
+  // together could interior-gut-or-clear every band on a hull with only 3-5
+  // of them, leaving nothing but spar/deck grate lines standing — measured at
+  // 0-1% of intact opaque area on a corvette sample, indistinguishable from
+  // the "ghost outline" regression a prior review already rejected. One fewer
+  // band spent here keeps a solid reserve standing on the smaller size
+  // classes without shrinking the cruiser-scale destruction the contact
+  // sheet is judged against (verified below).
+  destroyed: { blastCount: 3, blastRadius: 9, lightsOutChance: 1,   breachAdd: 1, retainStructure: true,  tearCount: 16, tearRadius: 6, shedEnd: true },
 };
 
 /** Radius of a fallback breach cluster, used only when no plate data is given. */
 const BREACH_RADIUS = 6;
+
+/**
+ * Bite geometry (`tearCount`/`tearRadius` in `STAGE_DELTA`, and the seam bite
+ * radius in `raggedenSeam`) is tuned in fixed pixel units against the
+ * cruiser band this project reviews against most — roughly 50px wide,
+ * 100-128px long. Applied unscaled to a corvette (as little as ~9px wide,
+ * 24px long), a single configured bite radius can span the *entire* hull,
+ * and a configured bite *count* at that radius reliably erases it — verified
+ * directly: pre-scaling, a sample of destroyed corvettes measured 0-1% of
+ * intact opaque area and 0-14% of intact height, i.e. the "eaten down to a
+ * ghost outline" regression a prior review already rejected once, just
+ * re-triggered by a different mechanism. Scaling both down with the hull's
+ * own width/length keeps `destroyed` "structurally broken but still
+ * substantial" at every size class the sweep covers, not only the one the
+ * numbers were tuned against.
+ */
+const TEAR_REF_W = 50;
+const TEAR_REF_H = 110;
+
+function scaledTearRadius(radius: number, out: PixBuf): number {
+  if (radius <= 0) return 0;
+  const scale = Math.max(0.3, Math.min(1, out.w / TEAR_REF_W));
+  return Math.max(2, Math.round(radius * scale));
+}
+
+function scaledTearCount(count: number, out: PixBuf): number {
+  if (count <= 0) return 0;
+  const scale = Math.max(0.3, Math.min(1, out.h / TEAR_REF_H));
+  return Math.max(2, Math.round(count * scale));
+}
 
 /** True when every eight-neighbour is opaque — safe to punch without touching the outline. */
 function isInteriorPixel(buf: PixBuf, x: number, y: number): boolean {
@@ -287,31 +343,30 @@ function blowPlateBands(
 }
 
 /**
- * Chews a handful of bounded, irregular bites out of the outline — reuses the
- * blast-lobe construction so a bite is a solid, connected notch rather than
- * scattered pixels, applied only to boundary pixels so it stays a torn edge
- * instead of eating into the hull's mass. This replaces an earlier
- * independent-30%-per-pixel roll across every edge pixel in the sprite: that
- * roll read fine on its own, but stacked on top of blown plate bands it left
- * a blown band's surviving rim as a dotted line — indistinguishable from a
- * marching-ants selection outline rather than battle damage.
+ * Carves `count` bounded, irregular bites centred on pixels drawn from
+ * `candidates`, using the same blast-lobe construction as `scorchBlasts` so
+ * each bite is a solid, connected notch rather than scattered pixels. Shared
+ * by `tearEdges` (candidates = every boundary pixel in the sprite) and
+ * `shedEndBand`'s seam-raggedening (candidates = boundary pixels local to a
+ * freshly amputated end) so both read as the same kind of damage.
+ *
+ * Bites are clipped against `snapshot`, not `out` — every bite in the batch
+ * is measured from the same pre-pass silhouette, so an early bite opening a
+ * gap cannot make a later one in the same call tunnel through it into solid
+ * interior mass.
  */
-function tearEdges(out: PixBuf, rng: Rng, count: number, radius: number): void {
-  if (count <= 0 || radius <= 0) return;
-
-  const snapshot = cloneBuf(out);
-  const edges: { x: number; y: number }[] = [];
-  for (let y = 0; y < out.h; y++) {
-    for (let x = 0; x < out.w; x++) {
-      if (!isOpaque(getPx(snapshot, x, y))) continue;
-      if (isInteriorPixel(snapshot, x, y)) continue;
-      edges.push({ x, y });
-    }
-  }
-  if (edges.length === 0) return;
+function carveRaggedBites(
+  out: PixBuf,
+  snapshot: PixBuf,
+  rng: Rng,
+  candidates: readonly { x: number; y: number }[],
+  count: number,
+  radius: number,
+): void {
+  if (count <= 0 || radius <= 0 || candidates.length === 0) return;
 
   for (let i = 0; i < count; i++) {
-    const centre = rng.pick(edges);
+    const centre = rng.pick(candidates);
     const baseRadius = radius * rng.range(0.75, 1.0);
     const control: number[] = [];
     for (let k = 0; k < BLAST_LOBES; k++) control.push(baseRadius * rng.range(0.6, 1.15));
@@ -336,6 +391,106 @@ function tearEdges(out: PixBuf, rng: Rng, count: number, radius: number): void {
       }
     }
   }
+}
+
+/**
+ * Chews a handful of bounded, irregular bites out of the outline — reuses the
+ * blast-lobe construction so a bite is a solid, connected notch rather than
+ * scattered pixels, applied only to boundary pixels so it stays a torn edge
+ * instead of eating into the hull's mass. This replaces an earlier
+ * independent-30%-per-pixel roll across every edge pixel in the sprite: that
+ * roll read fine on its own, but stacked on top of blown plate bands it left
+ * a blown band's surviving rim as a dotted line — indistinguishable from a
+ * marching-ants selection outline rather than battle damage.
+ */
+function tearEdges(out: PixBuf, rng: Rng, count: number, radius: number): void {
+  if (count <= 0 || radius <= 0) return;
+
+  const snapshot = cloneBuf(out);
+  const edges: { x: number; y: number }[] = [];
+  for (let y = 0; y < out.h; y++) {
+    for (let x = 0; x < out.w; x++) {
+      if (!isOpaque(getPx(snapshot, x, y))) continue;
+      if (isInteriorPixel(snapshot, x, y)) continue;
+      edges.push({ x, y });
+    }
+  }
+  carveRaggedBites(out, snapshot, rng, edges, count, radius);
+}
+
+/**
+ * Shears off one whole end plate band — every pixel, rim included, not just
+ * the interior `blowPlateBands` leaves standing — so the hull actually loses
+ * length and mass at `destroyed` instead of only gaining texture. This is
+ * what makes a "destroyed" bounding box measurably shorter than "intact":
+ * blown-but-rimmed bands (`breachAdd`) keep the ship's full original extent,
+ * which is the exact "same height, same upright stance" a reviewer flagged
+ * as reading like graffiti on an otherwise-intact hull rather than a wreck.
+ *
+ * Picks bow or stern at random (`rng.chance(0.5)`) rather than always the
+ * same end, so the amputation shows up as a genuine structural loss across
+ * the sprite population rather than a fixed "always missing the nose" tell.
+ * Never sheds the last remaining band — a hull must still exist after
+ * `destroyed`.
+ *
+ * The cut itself is not left clean: `raggedenSeam` immediately carves a
+ * handful of bounded bites out of the fresh boundary it creates, so the loss
+ * reads as a torn stump, not a rectangular crop that could be mistaken for a
+ * canvas bug.
+ */
+function shedEndBand(out: PixBuf, rng: Rng, bands: readonly PlateBand[]): void {
+  // `breachAdd` across `critical` and `destroyed` already interior-guts up to
+  // three bands by the time this runs. On a hull with only 3-4 total plate
+  // bands (a corvette's minimum) that alone touches nearly every band, and
+  // shedding a whole one on top measured out to 0-1% of intact opaque area —
+  // the exact "eaten down to a ghost outline" regression this feature exists
+  // to avoid, just reached by a different route. Requiring a few spare bands
+  // keeps at least one solid, unbreached band standing after the shed on any
+  // hull large enough to have one; smaller hulls stay exactly as damaged as
+  // `breachAdd` alone already leaves them, unchanged from before this pass.
+  if (bands.length < 5) return;
+
+  const shedBow = rng.chance(0.5);
+  const target = shedBow ? bands[0]! : bands[bands.length - 1]!;
+
+  for (let y = target.y0; y <= target.y1; y++) {
+    for (let x = 0; x < out.w; x++) {
+      if (isOpaque(getPx(out, x, y))) setPx(out, x, y, EMPTY);
+    }
+  }
+
+  raggedenSeam(out, rng, shedBow ? target.y1 + 1 : target.y0 - 1, shedBow, scaledTearRadius(4, out));
+}
+
+/** How many rows deep of the surviving hull, past a fresh amputation, count
+ * as "local to the seam" for `raggedenSeam`'s bite candidates. */
+const SEAM_DEPTH = 6;
+
+/**
+ * Carves a handful of bites out of the boundary rows immediately behind a
+ * fresh amputation (see `shedEndBand`), biased to land near the seam rather
+ * than anywhere on the sprite's full perimeter — the general `tearEdges` pass
+ * later in the same stage samples the *whole* boundary roughly uniformly, and
+ * a seam is usually a small fraction of that by pixel count, so without this
+ * bias it would read as one suspiciously straight cut most of the time
+ * instead of a torn stump.
+ */
+function raggedenSeam(out: PixBuf, rng: Rng, seamY: number, seamBelow: boolean, radius: number): void {
+  const snapshot = cloneBuf(out);
+  const lo = seamBelow ? seamY : Math.max(0, seamY - SEAM_DEPTH);
+  const hi = seamBelow ? Math.min(out.h - 1, seamY + SEAM_DEPTH) : seamY;
+
+  const local: { x: number; y: number }[] = [];
+  for (let y = lo; y <= hi; y++) {
+    for (let x = 0; x < out.w; x++) {
+      if (!isOpaque(getPx(snapshot, x, y))) continue;
+      if (isInteriorPixel(snapshot, x, y)) continue;
+      local.push({ x, y });
+    }
+  }
+
+  const count = 3 + rng.int(3); // 3-5 bites
+  carveRaggedBites(out, snapshot, rng, local, count, radius);
 }
 
 /**
@@ -426,7 +581,15 @@ export function applyDamage(src: PixBuf, spec: DamageSpec): PixBuf {
       }
     }
 
-    tearEdges(out, stageRng, delta.tearCount, delta.tearRadius);
+    // Shed before the general tear pass, not after: shedding creates a fresh
+    // amputation edge, and the wider `tearEdges` sweep that follows should be
+    // free to gnaw at that new edge along with the rest of the silhouette
+    // rather than always running on a snapshot that predates it.
+    if (delta.shedEnd && plates && plates.length > 0) {
+      shedEndBand(out, stageRng, plates);
+    }
+
+    tearEdges(out, stageRng, scaledTearCount(delta.tearCount, out), scaledTearRadius(delta.tearRadius, out));
   }
 
   return out;

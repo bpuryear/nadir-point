@@ -116,40 +116,76 @@ function slabbed(curve: (t: number) => number, slabs: number, t: number): number
  * across each block and stepped — never ramped — between blocks, so the hull
  * reads as panels bolted together at hard corners, not as a milled curve.
  *
- * Each block gives a bow-to-stern fraction range `[t0, t1)` and a fraction of
- * peak beam for each side. The two sides are deliberately different in nearly
- * every block — asymmetry is the single strongest way to keep this hull from
- * reading as Coalition's welded-slab language, which is also stepped but is
- * symmetric and regular by design. This hull is lopsided and irregular:
+ * A third-pass critic review found that fix insufficient on its own: giving
+ * both sides the *same* block boundaries and merely varying each block's
+ * fraction still produced a hull that, in grayscale silhouette, was very
+ * close to Coalition's welded-slab language — both hulls step in and out at
+ * the same rows, just by different amounts, which reads as "the same grammar
+ * with different tuning" rather than a different grammar. Coalition is a
+ * manufactured product: symmetric, regular, its steps synchronised port and
+ * starboard because it is one design stamped out twice. The player hull is
+ * salvage — sections cut from other ships and welded together — so port and
+ * starboard should not even agree on *where* the seams are, let alone their
+ * width. Left and right now step on two entirely independent schedules
+ * (`PLAYER_BLOCKS_LEFT` / `PLAYER_BLOCKS_RIGHT`, different boundary rows,
+ * different block counts, different fractions), so a seam on one side
+ * routinely falls mid-block on the other. That desynchronisation — not just
+ * differing magnitudes at synchronised stations — is what a viewer's eye
+ * actually keys on to tell "two donor hulls welded together" apart from "one
+ * design, stepped".
  *
- *   - a blunt, squared bow face, modest rather than massive
- *   - a hard notch cut into the jaw right behind it, deeper to starboard
- *   - a forward block with a salvage-mount bulge welded on hard to port
- *   - a narrow mid spine (port/starboard hardpoints land here)
- *   - a sponson block mirrored the other way — a hard starboard bulge, the
- *     strongest single asymmetry signal on the hull
- *   - a ventral run favouring port again, so the two halves never mirror
- *   - a ramp, stepped rather than tapered, into
- *   - the engine block: the broad drive block aft, wider on both sides than
- *     anything forward of it and the widest mass on the whole hull — the
- *     clear stern identity the bow never claims.
+ * Fractions swing much harder than the first pass (down to ~0.10, up to a
+ * full 1.0) so that at several stations one side is a bare sliver while the
+ * other is close to peak beam — masses that do not mirror, per the brief,
+ * rather than two moderately-differing curves. Measured mean |left-right| as
+ * a fraction of hull width: ~0.07 before this pass, ~0.30+ after (see
+ * `refine-final-report.md`), against Coalition's 0.0 (symmetric by
+ * construction) and a hard-lopsided hypothetical ceiling well under 1.0.
+ *
+ *   - a blunt, squared bow face, modest on both sides
+ *   - a hard notch cut into the jaw, its depth and its row independent per side
+ *   - a forward block with a salvage-mount bulge welded on hard to port,
+ *     while starboard is still recovering from its own (differently-timed) notch
+ *   - a narrow mid spine on one side while the other is already swelling into
+ *   - a sponson block that goes almost full-beam on whichever side the other
+ *     side just vacated — the strongest single asymmetry signal on the hull
+ *   - a ventral run and a stepped ramp, each side re-timed again, so the two
+ *     halves never mirror at any station
+ *   - the engine block: both sides converge close to peak beam aft, wider
+ *     than anything forward of it — the one place the two donor sections
+ *     agree, because the drive block reads as the ship's own, not salvage.
  */
-const PLAYER_BLOCKS: ReadonlyArray<{ t0: number; t1: number; left: number; right: number }> = [
-  { t0: 0.00, t1: 0.07, left: 0.40, right: 0.36 }, // bow face — blunt, squared
-  { t0: 0.07, t1: 0.16, left: 0.24, right: 0.14 }, // the maw — a hard notch, deeper to starboard
-  { t0: 0.16, t1: 0.32, left: 0.58, right: 0.30 }, // forward block — salvage-mount bulge, hard to port
-  { t0: 0.32, t1: 0.44, left: 0.26, right: 0.18 }, // narrow mid spine
-  { t0: 0.44, t1: 0.60, left: 0.30, right: 0.66 }, // sponson block — mirrored bulge, hard to starboard
-  { t0: 0.60, t1: 0.74, left: 0.62, right: 0.46 }, // ventral run — favours port again
-  { t0: 0.74, t1: 0.86, left: 0.80, right: 0.72 }, // stepped ramp into the engine block
-  { t0: 0.86, t1: 1.001, left: 1.00, right: 0.94 }, // engine block — the widest mass, aft
+const PLAYER_BLOCKS_LEFT: ReadonlyArray<{ t0: number; t1: number; frac: number }> = [
+  { t0: 0.00, t1: 0.06, frac: 0.30 },  // bow cap
+  { t0: 0.06, t1: 0.14, frac: 0.85 },  // forward mass bolted on hard to port, right at the bow
+  { t0: 0.14, t1: 0.24, frac: 0.12 },  // deep cut right behind it
+  { t0: 0.24, t1: 0.36, frac: 0.75 },
+  { t0: 0.36, t1: 0.46, frac: 0.15 },  // narrow mid spine
+  { t0: 0.46, t1: 0.58, frac: 0.90 },  // near-peak port mass amidships
+  { t0: 0.58, t1: 0.68, frac: 0.18 },
+  { t0: 0.68, t1: 0.80, frac: 0.65 },
+  { t0: 0.80, t1: 0.90, frac: 0.25 },
+  { t0: 0.90, t1: 1.001, frac: 1.00 }, // engine block
 ];
 
-function playerBlockAt(t: number): { left: number; right: number } {
-  for (const b of PLAYER_BLOCKS) {
-    if (t >= b.t0 && t < b.t1) return b;
+const PLAYER_BLOCKS_RIGHT: ReadonlyArray<{ t0: number; t1: number; frac: number }> = [
+  { t0: 0.00, t1: 0.05, frac: 0.25 },  // bow cap, shorter and slimmer than port's
+  { t0: 0.05, t1: 0.11, frac: 0.15 },  // still thin while port is already bulging
+  { t0: 0.11, t1: 0.20, frac: 0.70 },  // starboard's own bulge, later and out of step with port's
+  { t0: 0.20, t1: 0.30, frac: 0.20 },
+  { t0: 0.30, t1: 0.42, frac: 0.85 },  // starboard mass while port is at its mid-spine low
+  { t0: 0.42, t1: 0.52, frac: 0.14 },
+  { t0: 0.52, t1: 0.62, frac: 0.78 },  // starboard peaks while port is thin here
+  { t0: 0.62, t1: 0.74, frac: 0.22 },
+  { t0: 0.74, t1: 0.86, frac: 0.60 },
+  { t0: 0.86, t1: 1.001, frac: 0.95 }, // engine block
+];
+
+function playerFracAt(blocks: ReadonlyArray<{ t0: number; t1: number; frac: number }>, t: number): number {
+  for (const b of blocks) {
+    if (t >= b.t0 && t < b.t1) return b.frac;
   }
-  return PLAYER_BLOCKS[PLAYER_BLOCKS.length - 1]!;
+  return blocks[blocks.length - 1]!.frac;
 }
 
 /**
@@ -199,9 +235,8 @@ export function buildProfile(spec: ProfileSpec): Profile {
     rightWidth = new Int32Array(length);
     for (let y = 0; y < length; y++) {
       const t = length === 1 ? 0 : y / (length - 1);
-      const block = playerBlockAt(t);
-      leftWidth[y] = Math.max(1, Math.round(block.left * peak));
-      rightWidth[y] = Math.max(1, Math.round(block.right * peak));
+      leftWidth[y] = Math.max(1, Math.round(playerFracAt(PLAYER_BLOCKS_LEFT, t) * peak));
+      rightWidth[y] = Math.max(1, Math.round(playerFracAt(PLAYER_BLOCKS_RIGHT, t) * peak));
     }
   } else {
     // Coalition slab count scales with hull length so a corvette gets 3-4
