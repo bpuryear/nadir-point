@@ -1,13 +1,53 @@
 import { describe, expect, it } from 'vitest';
+import type { Rng } from '../sim/rng.js';
 import { makeRng } from '../sim/rng.js';
 import { countOpaque, getPx, isOpaque, luminance } from './pixbuf.js';
-import { POI_PALETTE, type PoiId } from './palette.js';
+import { POI_PALETTE, SPACE, type PoiId } from './palette.js';
 import { checkBinaryAlpha, checkPalette } from './qc.js';
 import {
   buildGasGiant, buildNebula, buildPoiStack, buildStarfield, STAR_DENSITY,
 } from './celestial.js';
 
 const ALL_POIS = Object.keys(POI_PALETTE) as PoiId[];
+
+/** Luminance of the exact colour every POI frame is filled with. */
+const VOID_LUMINANCE = luminance(SPACE[0]!);
+
+/**
+ * Forces every `range()` draw to its lower bound. For `buildNebula` that
+ * means all three blobs land at the same corner with the smallest allowed
+ * base radius — the least-covered, least-contrasted nebula the generator can
+ * produce. Deterministic, so it exercises the true worst case on every run
+ * instead of hoping a handful of random seeds stumbles into it: mutating
+ * `NEBULA_MIN_COVERAGE` from 0.25 to 0.01 used to survive the whole suite,
+ * because the coverage test sampled 40 seeds against a failure tail that
+ * only fires on about 0.4% of random draws.
+ */
+function makeWorstCaseRng(): Rng {
+  return {
+    next: () => 0,
+    int: () => 0,
+    range: (lo: number) => lo,
+    pick: (items) => items[0]!,
+    chance: () => false,
+    split: () => makeWorstCaseRng(),
+  };
+}
+
+/** Mean luminance over a buffer's opaque pixels only, 0 if none are opaque. */
+function meanPaintedLuminance(buf: ReturnType<typeof buildNebula>): number {
+  let sum = 0;
+  let count = 0;
+  for (let y = 0; y < buf.h; y++) {
+    for (let x = 0; x < buf.w; x++) {
+      const c = getPx(buf, x, y);
+      if (!isOpaque(c)) continue;
+      sum += luminance(c);
+      count++;
+    }
+  }
+  return count > 0 ? sum / count : 0;
+}
 
 describe('starfield', () => {
   it('places stars at a bounded density', () => {
@@ -32,25 +72,56 @@ describe('starfield', () => {
 });
 
 describe('nebula', () => {
-  it('covers a large fraction of the frame, across every POI', () => {
-    // A nebula is a wash, not a scatter. The generator now grows its blobs
-    // until the frame is actually covered, so this asserts the design floor
-    // rather than the deepest point a sweep happened to reach — an earlier
-    // version of this test asserted 0.2 and held only because it sampled one
-    // seed; the real distribution reached 0.11.
-    let worst = 1;
+  it('covers a large fraction of the frame, even in the worst-case geometry', () => {
+    // Deterministic instead of sampled — see makeWorstCaseRng's comment for
+    // why a stochastic sweep missed a real regression here before.
+    for (const poi of ALL_POIS) {
+      const neb = buildNebula(220, 130, poi, makeWorstCaseRng());
+      const coverage = countOpaque(neb) / (220 * 130);
+      expect(coverage, poi).toBeGreaterThanOrEqual(0.29);
+    }
+  });
+
+  it('never paints a pixel at or below the void colour, even in the worst-case geometry', () => {
+    // The actual defect this generator shipped with: darkest(poi, 4) could
+    // return SPACE[0], the frame's own fill colour, as the nebula's lowest
+    // band. Measured before the fix: 26-38% of a nebula's opaque pixels were
+    // literally the same colour as empty space. The worst-case geometry
+    // guarantees the lowest density band — the weakest link — is actually
+    // exercised, so this is a hard guarantee rather than a statistical one.
+    for (const poi of ALL_POIS) {
+      const neb = buildNebula(220, 130, poi, makeWorstCaseRng());
+      let minLum = Infinity;
+      for (let y = 0; y < neb.h; y++) {
+        for (let x = 0; x < neb.w; x++) {
+          const c = getPx(neb, x, y);
+          if (!isOpaque(c)) continue;
+          minLum = Math.min(minLum, luminance(c));
+        }
+      }
+      expect(minLum - VOID_LUMINANCE, poi).toBeGreaterThanOrEqual(10);
+    }
+  });
+
+  it('paints with mean luminance well above the void, across every POI and many seeds', () => {
+    // Coverage was the wrong proxy for "the nebula is visible" — a frame can
+    // be 85% covered in a colour indistinguishable from the void. This is
+    // the property that actually matters: swept across real (non-degenerate)
+    // seeds, does the painted area read as brighter than empty space by a
+    // real margin.
+    let worst = Infinity;
     let worstAt = '';
     for (const poi of ALL_POIS) {
-      for (let i = 0; i < 40; i++) {
+      for (let i = 0; i < 60; i++) {
         const neb = buildNebula(160, 100, poi, makeRng(`neb-${i}`));
-        const coverage = countOpaque(neb) / (160 * 100);
-        if (coverage < worst) {
-          worst = coverage;
+        const contrast = meanPaintedLuminance(neb) - VOID_LUMINANCE;
+        if (contrast < worst) {
+          worst = contrast;
           worstAt = `${poi}/neb-${i}`;
         }
       }
     }
-    expect(worst, `thinnest nebula was ${worst.toFixed(3)} at ${worstAt}`).toBeGreaterThanOrEqual(0.24);
+    expect(worst, `weakest contrast was ${worst.toFixed(1)} at ${worstAt}`).toBeGreaterThanOrEqual(13);
   });
 
   it('stays on the POI palette', () => {
@@ -178,6 +249,60 @@ describe('POI stacks', () => {
       }
       if (stack.foreground !== null) {
         expect(countOpaque(stack.foreground.buf), `${poi}/${stack.foreground.name}`).toBeGreaterThan(0);
+      }
+    }
+  });
+});
+
+describe('debris layers', () => {
+  const DEBRIS_LAYER_NAMES = new Set(['near-debris', 'distant-wrecks', 'foreground-debris']);
+
+  it('near-debris and distant-wrecks read as populated fields, not a rounding error', () => {
+    // Measured before the density fix: fixed counts of 14 and 26 blobs
+    // (regardless of canvas size) produced 60-116 opaque pixels total on a
+    // 220x130 frame — 0.2-0.4% coverage, not a layer. Density is now
+    // area-scaled (FAR_DEBRIS_DENSITY / NEAR_DEBRIS_DENSITY), targeting
+    // roughly 2-6% coverage.
+    const w = 220, h = 130;
+    let worst = Infinity;
+    let worstAt = '';
+    for (const poi of ALL_POIS) {
+      for (let i = 0; i < 40; i++) {
+        const stack = buildPoiStack(poi, w, h, makeRng(`debris-${i}`));
+        for (const layer of stack.layers) {
+          if (layer.name !== 'near-debris' && layer.name !== 'distant-wrecks') continue;
+          const coverage = countOpaque(layer.buf) / (w * h);
+          expect(coverage, `${poi}/${layer.name}/${i}`).toBeLessThanOrEqual(0.08);
+          if (coverage < worst) {
+            worst = coverage;
+            worstAt = `${poi}/${layer.name}/${i}`;
+          }
+        }
+      }
+    }
+    expect(worst, `sparsest debris layer was ${worst.toFixed(4)} at ${worstAt}`).toBeGreaterThanOrEqual(0.015);
+  });
+
+  it('paints debris well above the void, not at the palette floor', () => {
+    // A silhouette painted exactly at BACKGROUND_LUMINANCE_FLOOR still clears
+    // the void, but with only a handful of opaque pixels per blob it reads
+    // thin. debrisColor() picks one step up from the darkest usable tone —
+    // check that every debris layer actually uses it.
+    for (const poi of ALL_POIS) {
+      const stack = buildPoiStack(poi, 220, 130, makeRng(poi));
+      const allLayers = [...stack.layers, ...(stack.foreground ? [stack.foreground] : [])];
+      for (const layer of allLayers) {
+        if (!DEBRIS_LAYER_NAMES.has(layer.name)) continue;
+        let found = false;
+        for (let y = 0; y < layer.buf.h; y++) {
+          for (let x = 0; x < layer.buf.w; x++) {
+            const c = getPx(layer.buf, x, y);
+            if (!isOpaque(c)) continue;
+            found = true;
+            expect(luminance(c) - VOID_LUMINANCE, `${poi}/${layer.name}`).toBeGreaterThanOrEqual(10);
+          }
+        }
+        expect(found, `${poi}/${layer.name}`).toBe(true);
       }
     }
   });

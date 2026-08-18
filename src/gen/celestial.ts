@@ -17,7 +17,9 @@ import type { Rng } from '../sim/rng.js';
 import {
   countOpaque, createBuf, luminance, setPx, type PixBuf, type Rgba,
 } from './pixbuf.js';
-import { POI_PALETTE, snapToPalette, type PoiId } from './palette.js';
+import {
+  POI_PALETTE, SPACE, snapToPalette, type PoiId,
+} from './palette.js';
 import { ditherMask } from './grammar/plates.js';
 
 export interface Layer {
@@ -36,18 +38,48 @@ export interface PoiStack {
 /** Stars per 1000 square pixels. Bounded so a starfield never becomes a texture. */
 export const STAR_DENSITY = 6;
 
+/**
+ * Luminance of SPACE[0] — the exact colour every POI frame is filled with
+ * before any layer is drawn (see tools/contactsheet.ts's `fillBuf(buf,
+ * SPACE[0])`). A background pixel painted at or below this value is not dim,
+ * it is invisible: identical to "nothing was drawn here."
+ */
+const VOID_LUMINANCE = luminance(SPACE[0]!);
+
+/**
+ * How far above the void a background tone must sit to read as present
+ * rather than merge into the frame fill. This is the number both
+ * `darkest()`'s palette floor and the nebula's contrast floor (see
+ * `buildNebula`) are built to satisfy — coverage was the wrong proxy for
+ * either: a background layer can be 85% painted and still be 0% visible if
+ * the paint is the same colour as the void. Picked so the resulting floor
+ * (~15) lands at the bottom of the project's documented background band
+ * (roughly 15-45; hulls run 40-140, running lights 80-200).
+ */
+const BACKGROUND_CONTRAST_MARGIN = 10;
+
+/** The darkest a background colour may be and still count as usable. */
+const BACKGROUND_LUMINANCE_FLOOR = VOID_LUMINANCE + BACKGROUND_CONTRAST_MARGIN;
+
 /** Picks the n brightest colours in a POI's lock — used for stars and highlights. */
 function brightest(poi: PoiId, n: number): Rgba[] {
-  const lum = (c: Rgba) =>
-    0.299 * ((c >>> 24) & 255) + 0.587 * ((c >>> 16) & 255) + 0.114 * ((c >>> 8) & 255);
-  return [...POI_PALETTE[poi]].sort((a, b) => lum(b) - lum(a)).slice(0, n);
+  return [...POI_PALETTE[poi]].sort((a, b) => luminance(b) - luminance(a)).slice(0, n);
 }
 
-/** Picks the n darkest colours — used for deep-space grounds and near debris. */
+/**
+ * Picks the n darkest *usable* colours — used for deep-space grounds and
+ * debris. "Usable" excludes anything at or below BACKGROUND_LUMINANCE_FLOOR:
+ * for 5 of 8 POIs the literal darkest entry in the lock is SPACE[0], the
+ * void colour itself, and picking it here painted background layers in the
+ * exact colour they sit on top of — measured at 26-38% of a nebula's pixels
+ * being indistinguishable from empty space. Every POI lock has entries above
+ * the floor (checked against all 8), so the fallback below only guards a
+ * hypothetical future lock that doesn't.
+ */
 function darkest(poi: PoiId, n: number): Rgba[] {
-  const lum = (c: Rgba) =>
-    0.299 * ((c >>> 24) & 255) + 0.587 * ((c >>> 16) & 255) + 0.114 * ((c >>> 8) & 255);
-  return [...POI_PALETTE[poi]].sort((a, b) => lum(a) - lum(b)).slice(0, n);
+  const usable = POI_PALETTE[poi].filter((c) => luminance(c) > BACKGROUND_LUMINANCE_FLOOR);
+  const pool = usable.length > 0 ? usable : POI_PALETTE[poi];
+  return [...pool].sort((a, b) => luminance(a) - luminance(b)).slice(0, n);
 }
 
 export function buildStarfield(w: number, h: number, poi: PoiId, rng: Rng): PixBuf {
@@ -81,14 +113,45 @@ interface NebulaBlob {
  * 11% coverage in 1 draw in 14,000. Chasing that with a lower assertion just
  * records how hard anyone has looked; the geometry is what needs fixing.
  *
- * So the blob set is a candidate: draw it, measure, and grow the radii until the
- * wash actually covers the frame. Growth is monotonic, so this always
+ * So the blob set is a candidate: draw it, measure, and grow the radii until
+ * the wash actually reads as a nebula. Growth is monotonic, so this always
  * terminates, and the fallback at full growth is a nebula that covers almost
  * everything — which is a far better failure than a near-empty sky.
+ *
+ * "Reads as a nebula" used to mean coverage alone: grow until 25% of the
+ * frame is opaque. That is the wrong proxy — coverage says nothing about
+ * whether the paint can be told apart from the void it sits on. Measured
+ * against the un-floored palette, gasgiant's nebula hit 85% coverage while
+ * 38% of its pixels were SPACE[0], the exact background fill: fully "covered"
+ * and largely invisible at once. `darkest()` now keeps SPACE[0] (and anything
+ * as dark) out of the palette entirely, so this loop's real job is contrast:
+ * keep growing until the *mean luminance of the painted pixels* clears the
+ * void by BACKGROUND_CONTRAST_MARGIN. Coverage is kept as a secondary floor —
+ * a nebula should still be a wash, not a fleck — but contrast is what the
+ * loop is judged on.
  */
 const NEBULA_MIN_COVERAGE = 0.25;
 const NEBULA_MAX_GROWTH_STEPS = 8;
 const NEBULA_GROWTH = 1.25;
+
+/** Mean Rec. 601 luminance over a buffer's opaque pixels only. 0 if none. */
+function meanPaintedLuminance(buf: PixBuf): number {
+  let sum = 0;
+  let count = 0;
+  const { data } = buf;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 0) continue;
+    sum += 0.299 * data[i]! + 0.587 * data[i + 1]! + 0.114 * data[i + 2]!;
+    count++;
+  }
+  return count > 0 ? sum / count : 0;
+}
+
+/** True once a nebula draw clears both the coverage and contrast floors. */
+function nebulaMeetsFloor(buf: PixBuf, w: number, h: number): boolean {
+  if (countOpaque(buf) / (w * h) < NEBULA_MIN_COVERAGE) return false;
+  return meanPaintedLuminance(buf) - VOID_LUMINANCE >= BACKGROUND_CONTRAST_MARGIN;
+}
 
 function renderNebula(
   w: number, h: number, poi: PoiId, palette: readonly Rgba[], blobs: readonly NebulaBlob[],
@@ -136,7 +199,7 @@ export function buildNebula(w: number, h: number, poi: PoiId, rng: Rng): PixBuf 
   let buf = renderNebula(w, h, poi, palette, baseBlobs);
 
   for (let step = 1; step < NEBULA_MAX_GROWTH_STEPS; step++) {
-    if (countOpaque(buf) / (w * h) >= NEBULA_MIN_COVERAGE) break;
+    if (nebulaMeetsFloor(buf, w, h)) break;
 
     // Growth scales radii only; centres stay put so the composition thickens
     // instead of rearranging.
@@ -209,12 +272,35 @@ export function buildGasGiant(diameter: number, poi: PoiId, rng: Rng): PixBuf {
   return buf;
 }
 
-/** Sparse silhouettes for the near-debris and foreground layers. */
+/**
+ * Blobs per 1000 square pixels for the two scaled debris layers, tuned so
+ * each paints roughly 2-6% of the frame. The previous fixed counts (14 and
+ * 26, regardless of canvas size) measured 0.2-0.4% coverage on a 220x130
+ * frame — 60 to 116 opaque pixels total, not a layer. Scaling by area also
+ * makes coverage resolution-independent, matching STAR_DENSITY's approach.
+ */
+const FAR_DEBRIS_DENSITY = 5.5;
+const NEAR_DEBRIS_DENSITY = 12;
+
+/**
+ * Picks a background tone for debris silhouettes: dim, but one step up from
+ * the single darkest usable colour. `darkest(poi, 1)` sits right at
+ * BACKGROUND_LUMINANCE_FLOOR, which is enough to clear the void but leaves
+ * no headroom of its own — with only a few opaque pixels per blob, a layer
+ * painted exactly at the floor still reads thin. The occlusion job (blocking
+ * the starfield, implying depth) only works if the eye can find the shape.
+ */
+function debrisColor(poi: PoiId): Rgba {
+  const usable = darkest(poi, 3);
+  return usable[Math.min(usable.length - 1, 1)]!;
+}
+
+/** Sparse silhouettes for the near-debris, distant-wrecks, and foreground layers. */
 function buildDebrisLayer(
   w: number, h: number, poi: PoiId, rng: Rng, count: number, maxSize: number,
 ): PixBuf {
   const buf = createBuf(w, h);
-  const color = darkest(poi, 1)[0]!;
+  const color = debrisColor(poi);
 
   for (let i = 0; i < count; i++) {
     const bw = 1 + rng.int(maxSize);
@@ -237,6 +323,12 @@ export function buildPoiStack(poi: PoiId, w: number, h: number, rng: Rng): PoiSt
     { buf: buildNebula(w, h, poi, rng.split('nebula')), parallax: 0.10, name: 'nebula' },
   ];
 
+  // Blob counts for the two scaled layers are derived from frame area so
+  // coverage stays ~2-6% regardless of canvas size — see FAR_DEBRIS_DENSITY.
+  const area = w * h;
+  const farDebrisCount = Math.max(1, Math.round((area / 1000) * FAR_DEBRIS_DENSITY));
+  const nearDebrisCount = Math.max(1, Math.round((area / 1000) * NEAR_DEBRIS_DENSITY));
+
   // The celestial layer: a gas giant where the POI has one, otherwise a
   // distant wreck field. Either way it is the thing that dwarfs everything.
   if (poi === 'gasgiant' || poi === 'star') {
@@ -248,14 +340,14 @@ export function buildPoiStack(poi: PoiId, w: number, h: number, rng: Rng): PoiSt
     });
   } else {
     layers.push({
-      buf: buildDebrisLayer(w, h, poi, rng.split('far-wrecks'), 14, 5),
+      buf: buildDebrisLayer(w, h, poi, rng.split('far-wrecks'), farDebrisCount, 5),
       parallax: 0.18,
       name: 'distant-wrecks',
     });
   }
 
   layers.push({
-    buf: buildDebrisLayer(w, h, poi, rng.split('near-debris'), 26, 3),
+    buf: buildDebrisLayer(w, h, poi, rng.split('near-debris'), nearDebrisCount, 3),
     parallax: 0.45,
     name: 'near-debris',
   });
