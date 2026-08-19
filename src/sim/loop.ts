@@ -48,7 +48,17 @@ export function makeLoop(tickSeconds: number = TICK_SECONDS): Loop {
         return 0;
       }
 
-      accumulator += realSeconds * this.scale;
+      // Floor real time at zero before it ever reaches the accumulator. A
+      // clock correction, a rewound or stale timestamp, or an upstream bug
+      // can hand this a negative delta; folding that straight into the
+      // accumulator (or only clamping the return value afterward) would
+      // leave the accumulator holding a wrong value that a later frame's
+      // arithmetic would silently inherit. Clamping the input instead means
+      // a negative frame contributes nothing at all, which is the same as
+      // not having happened.
+      const dt = Math.max(0, realSeconds);
+
+      accumulator += dt * this.scale;
 
       let ticks = Math.floor(accumulator / tickSeconds);
       accumulator -= ticks * tickSeconds;

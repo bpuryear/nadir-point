@@ -90,3 +90,37 @@ describe('reset', () => {
     expect(loop.ticksFor(TICK_SECONDS * 0.5)).toBe(0);
   });
 });
+
+describe('negative real time', () => {
+  // A clock correction, a rewound or stale timestamp, or an upstream bug can
+  // hand ticksFor a negative delta. The cap guards runaway positive input;
+  // this guards the symmetric case, which is just as capable of breaking the
+  // "ticksFor returns a count" contract if left unchecked.
+
+  it('returns zero ticks for a negative delta', () => {
+    const loop = makeLoop();
+    expect(loop.ticksFor(-5)).toBe(0);
+  });
+
+  it('does not corrupt the accumulator — a negative frame leaves the next normal frame unaffected', () => {
+    // The dangerous version of this bug is a clamp applied only to the return
+    // value, after the negative delta has already been folded into the
+    // accumulator. That would still leave the accumulator wrong and would
+    // only show up once a later frame's remainder crosses a tick boundary
+    // differently than it should — exactly the kind of latent corruption an
+    // assertion on the very next call's raw tick count could still miss by
+    // coincidence. -2.5 * TICK_SECONDS is not a whole multiple of
+    // tickSeconds, so an unclamped implementation leaves a 0.5-tick remainder
+    // banked; following up with a 0.6-tick frame (0.5 + 0.6 = 1.1 -> 1 tick)
+    // would then diverge from a clean loop fed the same 0.6-tick frame
+    // (0 + 0.6 -> 0 ticks), which is what this test checks for.
+    const withNegativeFrame = makeLoop();
+    withNegativeFrame.ticksFor(-2.5 * TICK_SECONDS);
+    const afterNegative = withNegativeFrame.ticksFor(0.6 * TICK_SECONDS);
+
+    const clean = makeLoop();
+    const withoutNegativeFrame = clean.ticksFor(0.6 * TICK_SECONDS);
+
+    expect(afterNegative).toBe(withoutNegativeFrame);
+  });
+});
