@@ -153,8 +153,11 @@ describe('checkPurity follows the import graph transitively', () => {
       rmSync(f, { force: true });
     }
     // Clean up any directories the test created that are now empty (best
-    // effort — leaves the tree exactly as it was found).
-    for (const dir of ['src/gen/__purity_probe__', 'src/render']) {
+    // effort — leaves the tree exactly as it was found). Scoped to
+    // __purity_probe__ subdirectories only: src/render holds real,
+    // committed renderer source from Wave 2 onward, and a bare 'src/render'
+    // here would delete it out from under every other task.
+    for (const dir of ['src/gen/__purity_probe__', 'src/render/__purity_probe__']) {
       try {
         rmSync(dir, { recursive: true, force: true });
       } catch {
@@ -164,13 +167,19 @@ describe('checkPurity follows the import graph transitively', () => {
   });
 
   it('reports a violation the file-local scan cannot see, naming the chain', () => {
-    // The reviewer's exact probe: src/render/atlas.ts imports pixi.js, and a
-    // pure src/gen file imports atlas.ts. scanSource on the gen file alone
-    // cannot see the pixi.js import; checkPurity's graph walk must.
-    write('src/render/atlas.ts', `import { Sprite } from 'pixi.js';\nexport const s = new Sprite();\n`);
+    // The reviewer's exact probe: a render file imports pixi.js, and a pure
+    // src/gen file imports it. scanSource on the gen file alone cannot see
+    // the pixi.js import; checkPurity's graph walk must. The probe file
+    // lives under src/render/__purity_probe__ rather than directly in
+    // src/render, which holds real, committed renderer source from Wave 2
+    // onward.
+    write(
+      'src/render/__purity_probe__/atlas.ts',
+      `import { Sprite } from 'pixi.js';\nexport const s = new Sprite();\n`,
+    );
     write(
       'src/gen/__purity_probe__/entry.ts',
-      `import { s } from '../../render/atlas.js';\nexport const probe = s;\n`,
+      `import { s } from '../../render/__purity_probe__/atlas.js';\nexport const probe = s;\n`,
     );
 
     const violations = checkPurity();
@@ -179,7 +188,7 @@ describe('checkPurity follows the import graph transitively', () => {
     expect(transitive!.file).toBe('src/gen/__purity_probe__/entry.ts');
     expect(transitive!.detail).toContain('pixi.js');
     expect(transitive!.detail).toContain(
-      'src/gen/__purity_probe__/entry.ts -> src/render/atlas.ts -> pixi.js',
+      'src/gen/__purity_probe__/entry.ts -> src/render/__purity_probe__/atlas.ts -> pixi.js',
     );
 
     // The direct escape is also caught, independently, by gen-escapes-tree —
