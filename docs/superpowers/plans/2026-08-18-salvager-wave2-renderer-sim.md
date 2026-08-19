@@ -773,6 +773,9 @@ The simulation advances in fixed increments regardless of frame rate. Time contr
 
 - [ ] **Step 1: Write the failing test**
 
+
+> **Amended during execution.** This test originally used a frame of `TICK_SECONDS * 3`. At 4x that demands 12 ticks, which `MAX_TICKS_PER_FRAME = 8` clamps to 8 — making the assertion `four === one * 4` (8 === 12) unsatisfiable by any correct implementation honouring the cap. The frame is `TICK_SECONDS` so that this test isolates scale-proportionality from the death-spiral cap, which is tested separately.
+
 ```ts
 import { describe, expect, it } from 'vitest';
 import { TICK_SECONDS } from './integrate.js';
