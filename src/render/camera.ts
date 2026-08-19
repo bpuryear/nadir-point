@@ -43,8 +43,13 @@ export function followBody(cam: Camera, body: Body, dt: number): void {
 
   sub(_gap, _desired, cam.position);
 
-  // Exponential approach, frame-rate independent.
-  const t = 1 - Math.exp(-cam.lag * dt);
+  // Floor dt at zero before it reaches the exponent. A negative dt (a clock
+  // correction, a rewound or stale timestamp) flips the sign inside exp(),
+  // pushing t negative and unbounded — addScaled would then drive the camera
+  // away from the desired point instead of toward it, worse the larger
+  // |dt| is. Clamping the input means a negative frame contributes nothing,
+  // same as src/sim/loop.ts does for the tick accumulator.
+  const t = 1 - Math.exp(-cam.lag * Math.max(0, dt));
   addScaled(cam.position, cam.position, _gap, t);
 }
 

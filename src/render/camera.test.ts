@@ -21,6 +21,19 @@ describe('following', () => {
     expect(cam.position.x).toBeLessThan(500);
   });
 
+  it('does not move away from the target on a negative dt', () => {
+    // A stale or rewound timestamp can hand followBody a negative dt. Without
+    // a floor, exp(-lag * dt) exceeds 1, t goes negative, and addScaled drives
+    // the camera away from the desired point instead of toward it — the same
+    // failure shape as an unclamped tick accumulator, just for the camera.
+    const cam = makeCamera(vec2(0, 0));
+    const b = makeBody({ ...CRUISER_BODY, position: vec2(1000, 0) });
+    const before = distance(cam.position, b.position);
+    followBody(cam, b, -1);
+    const after = distance(cam.position, b.position);
+    expect(after).toBeLessThanOrEqual(before);
+  });
+
   it('leads in the direction of travel', () => {
     // Looking where you are going is what keeps the player from fighting the
     // camera, which the spec forbids outright.
