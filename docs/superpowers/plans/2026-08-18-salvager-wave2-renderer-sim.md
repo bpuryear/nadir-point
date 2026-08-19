@@ -2084,6 +2084,14 @@ The spec requires PixiJS v8's WebGPU path *with its automatic WebGL2 fallback ve
   - `async function createDevice(host: HTMLElement, preference?: 'webgpu' | 'webgl'): Promise<Device>`
   - `function resizeDevice(device: Device, displayWidth: number, displayHeight: number): void`
 
+
+> **Amended during execution.** This task's `detectBackend` originally compared
+> `renderer.type` against the string `'webgpu'`. In PixiJS v8 `RendererType` is a
+> *numeric* enum (`WEBGL = 1`, `WEBGPU = 2`, `BOTH = 3`), so that comparison is
+> always false and the function would report `webgl` no matter which backend was
+> selected — silently making the spec's "verified WebGL2 fallback" criterion
+> impossible to verify while appearing to pass. Compare against `RendererType.WEBGPU`.
+
 - [ ] **Step 1: Write the implementation**
 
 ```ts
