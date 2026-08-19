@@ -2253,6 +2253,17 @@ upscale and undoes every pixel guarantee upstream at the last step."
   - `function setLayerSprite(sprite: Sprite, placement: LayerPlacement): void`
   - `const LAYER_Z: Readonly<Record<'background' | 'play' | 'foreground', number>>`
 
+
+> **Amended during execution.** This task originally built textures with
+> `new TextureSource({ resource: <Uint8Array>, ... })`. That leaves
+> `uploadMethodId` at its default `'unknown'`, and both the GL and GPU upload
+> systems dispatch through `this._uploads[source.uploadMethodId]` — for which no
+> `'unknown'` handler exists. The upload is silently skipped: the sprite is
+> `visible` and `renderable` and draws nothing at all. No unit test can see this.
+> Use `BufferImageSource` (`uploadMethodId = 'buffer'`), and pass
+> `format: 'rgba8unorm'` explicitly — its own default for a typed array is
+> `'bgra8unorm'`, which swaps red and blue.
+
 - [ ] **Step 1: Write the implementation for `textures.ts`**
 
 ```ts
