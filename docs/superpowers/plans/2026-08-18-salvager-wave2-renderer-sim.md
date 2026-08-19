@@ -2444,6 +2444,15 @@ The spec fixes the chain and its order, and forbids everything else. No CRT curv
   - `const BLOOM_THRESHOLD: number`
   - `function makePostChain(target: Container, settings?: Partial<PostSettings>): PostChain`
 
+
+> **Amended during execution.** These filters originally supplied only a
+> `glProgram`. Pixi derives `Shader.compatibleRenderers` from which programs are
+> present (`Shader.js:36-41`), so GL-only yields `WEBGL` alone; `FilterSystem`
+> then tests `filter.compatibleRenderers & renderer.type` (`FilterSystem.js:569`)
+> and under WebGPU — this project's default backend — `1 & 2 === 0`, so every
+> stage is **skipped entirely**. The whole chain would have been inert with no
+> error. Each filter needs a `gpuProgram` (WGSL) alongside the GLSL.
+
 - [ ] **Step 1: Write the implementation**
 
 ```ts
