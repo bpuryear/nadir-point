@@ -550,7 +550,7 @@ Right-click issues a move order; the ship plots and executes it with real turnin
 - Test: `src/sim/order.test.ts`
 
 **Interfaces:**
-- Consumes: `Body`, `speed` from `./body.js`; `Control`, `stoppingDistance`, `NEUTRAL` from `./integrate.js`; `Vec2`, `vec2`, `angleOf`, `angleDelta`, `distance`, `sub` from `./math/vec2.js`
+- Consumes: `Body`, `speed` from `./body.js`; `Control`, `stoppingDistance` from `./integrate.js` (deliberately not `NEUTRAL` — `steer` returns a fresh literal, since `NEUTRAL` is `Readonly` at compile time only and a caller writing to a returned `Control` would corrupt the shared constant); `Vec2`, `vec2`, `angleOf`, `angleDelta`, `distance`, `sub` from `./math/vec2.js`
 - Produces:
   - `interface MoveOrder { target: Vec2; arriveRadius: number }`
   - `function makeMoveOrder(target: Vec2, arriveRadius?: number): MoveOrder`
