@@ -32,7 +32,7 @@ import { makeMoveOrder, steer, type MoveOrder } from '../sim/order.js';
 import { makeLoop } from '../sim/loop.js';
 import { makeRng } from '../sim/rng.js';
 import { vec2 } from '../sim/math/vec2.js';
-import { createDevice, resizeDevice, type Device } from '../render/device.js';
+import { createDevice, presentDevice, resizeDevice, type Device } from '../render/device.js';
 import { makeScene, setLayerSprite } from '../render/scene.js';
 import { atlasFromBins, textureFromPixBuf, type BinAtlas } from '../render/textures.js';
 import { makeCamera, followBody, snappedCentre } from '../render/camera.js';
@@ -238,6 +238,12 @@ export async function boot(): Promise<Game> {
       placeLayer(placement, layers[i]!, centre, upp);
       setLayerSprite(layerSprites[i]!, placement);
     }
+
+    // Draw the virtual canvas into its fixed-size framebuffer. Everything
+    // above wrote to sprites; this is the one call that turns them into
+    // pixels, and it has to happen at the virtual size so the post chain runs
+    // there rather than over the already-upscaled image (see render/device.ts).
+    presentDevice(device);
   };
 
   device.app.ticker.add(onFrame);
