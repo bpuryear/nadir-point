@@ -14,7 +14,18 @@ import type { ZoomLevel } from '../render/zoom.js';
 export interface InputState {
   moveTarget: Vec2 | null;
   zoomRequest: ZoomLevel | null;
-  /** Accumulated wheel steps since the last drain. */
+  /**
+   * Wheel steps accumulated since the last drain, signed.
+   *
+   * Deliberately *not* a level delta. `stepZoom` applies `Math.sign` to
+   * whatever it is given, so one drained frame moves the zoom by exactly one
+   * level however many notches the wheel turned in it. That is the intent: with
+   * only four levels and an 80ms crossfade per change, a flick of a
+   * high-resolution trackpad would otherwise skip from Close to Wide and back
+   * before the player saw either. The accumulator exists to carry the *sign*
+   * across a frame boundary and to let a reversal within one frame cancel out,
+   * not to count notches.
+   */
   zoomStep: number;
   timeScale: TimeScale | null;
 }

@@ -42,7 +42,12 @@ export function steer(body: Body, order: MoveOrder | null): Control {
   const range = Math.hypot(_toTarget.x, _toTarget.y);
 
   // Arrived: kill remaining drift rather than nudging around the waypoint.
-  if (range <= order.arriveRadius) {
+  // The predicate is `hasArrived` rather than an inline comparison so there is
+  // exactly one definition of "arrived" in the codebase — the one the UI will
+  // draw an order marker from has to agree with the one the ship acts on, and
+  // two copies of `range <= arriveRadius` are two things to drift apart. The
+  // repeated hypot is one per tick for one ship; correctness wins that trade.
+  if (hasArrived(body, order)) {
     return { thrust: speed(body) > 0.5 ? -1 : 0, turn: 0 };
   }
 

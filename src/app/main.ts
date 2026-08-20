@@ -18,7 +18,7 @@
  * via `crossfadeAlpha` — that alpha was otherwise computed and unused.
  */
 
-import { Sprite } from 'pixi.js';
+import { Sprite, type Ticker } from 'pixi.js';
 import { buildHull } from '../gen/hull.js';
 import { buildModule, MODULE_CATALOGUE } from '../gen/module.js';
 import { compositeShip, type Loadout } from '../gen/composite.js';
@@ -27,13 +27,13 @@ import { buildLodSet } from '../gen/lod.js';
 import { buildPoiStack } from '../gen/celestial.js';
 import { EMISSIVE, FACTION_PALETTE, NEUTRAL } from '../gen/palette.js';
 import { CRUISER_BODY, makeBody } from '../sim/body.js';
-import { integrate, TICK_SECONDS } from '../sim/integrate.js';
+import { integrate } from '../sim/integrate.js';
 import { makeMoveOrder, steer, type MoveOrder } from '../sim/order.js';
 import { makeLoop } from '../sim/loop.js';
 import { makeRng } from '../sim/rng.js';
 import { vec2 } from '../sim/math/vec2.js';
-import { createDevice, resizeDevice } from '../render/device.js';
-import { makeScene } from '../render/scene.js';
+import { createDevice, resizeDevice, type Device } from '../render/device.js';
+import { makeScene, setLayerSprite } from '../render/scene.js';
 import { atlasFromBins, textureFromPixBuf, type BinAtlas } from '../render/textures.js';
 import { makeCamera, followBody, snappedCentre } from '../render/camera.js';
 import { makePlacement, placeLayer, sortedLayers } from '../render/parallax.js';
@@ -41,19 +41,35 @@ import { pivotOffset, tierCorrection } from '../render/lodpivot.js';
 import {
   advanceZoom, crossfadeAlpha, lodTierFor, makeZoom, setZoom, stepZoom, unitsPerPixel,
 } from '../render/zoom.js';
-import { screenToWorld } from '../render/viewport.js';
-import { makePostChain } from '../render/post.js';
+import {
+  screenToWorld, VIRTUAL_HEIGHT, VIRTUAL_WIDTH, worldToScreen,
+} from '../render/viewport.js';
+import { makePostChain, type PostChain } from '../render/post.js';
 import { attachInput, drainInput, makeInput } from './input.js';
 
 const SEED = 'wave2';
 
-export async function boot(): Promise<void> {
+/**
+ * What `boot` hands back.
+ *
+ * `post` is here because `setEnabled` is the only way to toggle a stage of the
+ * post chain, and a chain whose return value is discarded can never be toggled
+ * by anything. `stop` exists so a caller that booted the game can also take it
+ * down — without it the ticker and the window listeners outlive their host.
+ */
+export interface Game {
+  device: Device;
+  post: PostChain;
+  stop(): void;
+}
+
+export async function boot(): Promise<Game> {
   const host = document.getElementById('app');
   if (host === null) throw new Error('missing #app host element');
 
   const device = await createDevice(host);
   const scene = makeScene(device.stage);
-  makePostChain(scene.root);
+  const post = makePostChain(scene.root);
 
   const rng = makeRng(SEED);
 
@@ -100,7 +116,7 @@ export async function boot(): Promise<void> {
   scene.play.addChild(shipPrevious);
 
   // The place: one POI's parallax stack.
-  const stack = buildPoiStack('graveyard', 480, 270, rng.split('poi'));
+  const stack = buildPoiStack('graveyard', VIRTUAL_WIDTH, VIRTUAL_HEIGHT, rng.split('poi'));
   const layers = sortedLayers(stack);
   const layerSprites = layers.map((layer) => {
     const sprite = new Sprite(textureFromPixBuf(layer.buf));
@@ -120,6 +136,7 @@ export async function boot(): Promise<void> {
   const centre = vec2();
   const screenPoint = vec2();
   const worldPoint = vec2();
+  const shipScreen = vec2();
 
   const detach = attachInput(input, host, (sx, sy) => {
     // Screen pixels to virtual-canvas pixels, then to world.
@@ -129,11 +146,12 @@ export async function boot(): Promise<void> {
     return screenToWorld(worldPoint, screenPoint, centre, unitsPerPixel(zoom.level), device.viewport);
   });
 
-  globalThis.addEventListener('resize', () => {
+  const onResize = (): void => {
     resizeDevice(device, host.clientWidth, host.clientHeight);
-  });
+  };
+  globalThis.addEventListener('resize', onResize);
 
-  device.app.ticker.add((ticker) => {
+  const onFrame = (ticker: Ticker): void => {
     const dt = ticker.deltaMS / 1000;
 
     const pending = drainInput(input);
@@ -143,9 +161,15 @@ export async function boot(): Promise<void> {
     if (pending.timeScale !== null) loop.scale = pending.timeScale;
 
     // Simulation: fixed ticks only.
+    // `loop.tickSeconds`, not the TICK_SECONDS constant: the loop is the thing
+    // that decided how many ticks to run, so it has to be the thing that says
+    // how long one is. Two sources of truth for the fixed timestep is exactly
+    // how a "fixed" timestep stops being fixed. `makeLoop()` defaults it to
+    // TICK_SECONDS, so this is that value — by derivation rather than by
+    // coincidence.
     const ticks = loop.ticksFor(dt);
     for (let i = 0; i < ticks; i++) {
-      integrate(body, steer(body, order), TICK_SECONDS);
+      integrate(body, steer(body, order), loop.tickSeconds);
     }
 
     // Render: reads the sim, writes nothing back to it.
@@ -159,8 +183,14 @@ export async function boot(): Promise<void> {
     // 0 points along +x. Hence the quarter turn. If the ship renders a quarter
     // turn off, this sign is the first thing to check.
     const bin = binForHeading(body.heading + Math.PI / 2);
-    const screenX = Math.round((body.position.x - centre.x) / upp + device.viewport.virtualWidth / 2);
-    const screenY = Math.round((body.position.y - centre.y) / upp + device.viewport.virtualHeight / 2);
+    // The shared transform, not a copy of its arithmetic: viewport.test.ts
+    // establishes that worldToScreen and screenToWorld round-trip at all four
+    // zoom divisors, and the input path above already uses screenToWorld. An
+    // inlined forward transform here would leave that round-trip property
+    // half-honoured in production, which is where it matters.
+    worldToScreen(shipScreen, body.position, centre, upp, device.viewport);
+    const screenX = Math.round(shipScreen.x);
+    const screenY = Math.round(shipScreen.y);
 
     // Tier 3's frame is centred on a different physical point of the ship
     // than tiers 0-2 (see render/lodpivot.ts); only nudge the sprite that is
@@ -195,11 +225,19 @@ export async function boot(): Promise<void> {
 
     for (let i = 0; i < layers.length; i++) {
       placeLayer(placement, layers[i]!, centre, upp);
-      layerSprites[i]!.position.set(placement.offsetX, placement.offsetY);
+      setLayerSprite(layerSprites[i]!, placement);
     }
-  });
+  };
 
-  globalThis.addEventListener('beforeunload', detach);
+  device.app.ticker.add(onFrame);
+
+  const stop = (): void => {
+    device.app.ticker.remove(onFrame);
+    globalThis.removeEventListener('resize', onResize);
+    globalThis.removeEventListener('beforeunload', stop);
+    detach();
+  };
+  globalThis.addEventListener('beforeunload', stop);
+
+  return { device, post, stop };
 }
-
-void boot();

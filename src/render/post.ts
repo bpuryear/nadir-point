@@ -6,10 +6,10 @@
  * fringing. This is meant to read as clean pixel art under a disciplined
  * grade, not as nostalgia filtering.
  *
- * The bloom threshold is high on purpose. Emissives are the only colours
- * permitted to bloom, and the palette was built so every emissive sits above
- * every hull value precisely so a threshold can separate them. A lower
- * threshold would haze the plating and turn the ships into blobs.
+ * The bloom threshold is high on purpose, but see BLOOM_THRESHOLD below: a
+ * luminance threshold cannot actually separate emissives from hull values in
+ * this palette, because the two ranges overlap. What the current number buys
+ * is a compromise, not a clean separation.
  */
 
 import { Filter, GlProgram, GpuProgram, type Container } from 'pixi.js';
@@ -31,9 +31,33 @@ export const DEFAULT_POST: Readonly<PostSettings> = {
 /**
  * Luminance above which a pixel blooms, in 0..1.
  *
- * The dimmest emissive in the palette sits well above the brightest hull value;
- * this threshold lives in the gap. If hulls start hazing, the palette's
- * emissive-brightness invariant has regressed — fix that, not this number.
+ * **There is no gap for this number to live in.** The emissive and hull
+ * luminance ranges overlap completely, so no threshold — not this one, not any
+ * other — separates them. Measured with `luminance(c) / 255` over
+ * `src/gen/palette.ts`:
+ *
+ *   - dimmest emissive: `EMISSIVE.red` at 0.495
+ *   - brightest non-emissive: `NEUTRAL[7]` at 0.895
+ *
+ * At the shipped 0.72, five palette entries that are not emissive haze anyway
+ * (`NEUTRAL[6]` 0.759, `NEUTRAL[7]` 0.895, `CONCORD_RAMP[6]` 0.811,
+ * `COALITION_RAMP[6]` 0.794, `UI[6]` 0.864) while five of the eight emissives
+ * never bloom at all (`red` 0.495, `blue` 0.556, `magenta` 0.575, `orange`
+ * 0.598, `green` 0.717). The ship's own running-light colour, `EMISSIVE.amber`
+ * at 0.730, clears the line by three thousandths.
+ *
+ * So do **not** read a hazing hull as a regression in the palette and go
+ * "restore" a brightness invariant: the palette never had one, and no edit to
+ * a single ramp entry can give it one while emissives run from 0.495 to 0.966.
+ *
+ * The remedy is an open decision, deliberately not taken here. The two
+ * candidates are (a) key the bloom on palette membership instead of luminance —
+ * bake an emissive mask into the alpha or a second channel at generation time
+ * and let the shader read that, which makes "only emissives bloom" exact and
+ * threshold-free; or (b) re-grade the palette so the emissive and hull
+ * luminance ranges genuinely separate, which is a visual-direction change to
+ * every sprite in the game, not a shader change. Until that call is made this
+ * number stays where it is, and this comment is the record of what it does.
  */
 export const BLOOM_THRESHOLD = 0.72;
 

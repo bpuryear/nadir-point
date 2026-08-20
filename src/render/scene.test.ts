@@ -10,15 +10,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { Container, Sprite } from 'pixi.js';
-import { LAYER_Z, makeScene, setLayerSprite } from './scene.js';
+import { makeScene, setLayerSprite } from './scene.js';
 import { makePlacement } from './parallax.js';
-
-describe('LAYER_Z', () => {
-  it('orders background, play, foreground back to front', () => {
-    expect(LAYER_Z.background).toBeLessThan(LAYER_Z.play);
-    expect(LAYER_Z.play).toBeLessThan(LAYER_Z.foreground);
-  });
-});
 
 describe('makeScene', () => {
   it('attaches the scene root to the given parent', () => {
@@ -31,6 +24,14 @@ describe('makeScene', () => {
     const parent = new Container();
     const scene = makeScene(parent);
     expect(scene.root.children).toEqual([scene.background, scene.play, scene.foreground]);
+  });
+
+  it('leaves draw order to insertion, with no per-frame sort to depend on', () => {
+    // There is no LAYER_Z constant any more, and sortableChildren stays off:
+    // a zIndex that silently does nothing unless someone remembers to enable
+    // sorting is worse than no zIndex at all.
+    const scene = makeScene(new Container());
+    expect(scene.root.sortableChildren).toBe(false);
   });
 
   it('creates a fresh scene graph on every call', () => {

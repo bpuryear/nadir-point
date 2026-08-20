@@ -10,12 +10,6 @@
 import { Container, type Sprite } from 'pixi.js';
 import type { LayerPlacement } from './parallax.js';
 
-export const LAYER_Z: Readonly<Record<'background' | 'play' | 'foreground', number>> = {
-  background: 0,
-  play: 1,
-  foreground: 2,
-};
-
 export interface Scene {
   root: Container;
   background: Container;
@@ -29,6 +23,11 @@ export function makeScene(parent: Container): Scene {
   const play = new Container();
   const foreground = new Container();
 
+  // Insertion order *is* the draw order. `sortableChildren` is deliberately
+  // left off and there is no z-index constant to set: with three containers in
+  // a fixed order there is nothing for a per-frame sort to decide, and a
+  // z-index that only works when someone remembers to enable sorting is a trap.
+  // Change the order here, not with a zIndex on a child.
   root.addChild(background, play, foreground);
   parent.addChild(root);
 
