@@ -18,7 +18,7 @@
  * via `crossfadeAlpha` — that alpha was otherwise computed and unused.
  */
 
-import { Sprite, type Ticker } from 'pixi.js';
+import { Sprite, TilingSprite, type Ticker } from 'pixi.js';
 import { buildHull } from '../gen/hull.js';
 import { buildModule, MODULE_CATALOGUE } from '../gen/module.js';
 import { compositeShip, type Loadout } from '../gen/composite.js';
@@ -36,7 +36,7 @@ import { createDevice, resizeDevice, type Device } from '../render/device.js';
 import { makeScene, setLayerSprite } from '../render/scene.js';
 import { atlasFromBins, textureFromPixBuf, type BinAtlas } from '../render/textures.js';
 import { makeCamera, followBody, snappedCentre } from '../render/camera.js';
-import { makePlacement, placeLayer, sortedLayers } from '../render/parallax.js';
+import { makePlacement, placeLayer, tiledLayers } from '../render/parallax.js';
 import { pivotOffset, tierCorrection } from '../render/lodpivot.js';
 import {
   advanceZoom, crossfadeAlpha, lodTierFor, makeZoom, setZoom, stepZoom, unitsPerPixel,
@@ -117,9 +117,20 @@ export async function boot(): Promise<Game> {
 
   // The place: one POI's parallax stack.
   const stack = buildPoiStack('graveyard', VIRTUAL_WIDTH, VIRTUAL_HEIGHT, rng.split('poi'));
-  const layers = sortedLayers(stack);
+  const layers = tiledLayers(stack, VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
+  // TilingSprite, not Sprite: each layer buffer is exactly one screen, so a
+  // plain sprite scrolled by the parallax offset slides off and leaves void
+  // behind it — the nearest background layer (parallax 0.45) clears the frame
+  // after about a thousand world units at CLOSE, and the foreground (1.6)
+  // after three hundred. The sprite covers the virtual canvas and never moves;
+  // only `tilePosition` scrolls (see render/scene.ts's setLayerSprite).
   const layerSprites = layers.map((layer) => {
-    const sprite = new Sprite(textureFromPixBuf(layer.buf));
+    const sprite = new TilingSprite({
+      texture: textureFromPixBuf(layer.buf),
+      width: VIRTUAL_WIDTH,
+      height: VIRTUAL_HEIGHT,
+      roundPixels: true,
+    });
     const target = layer.parallax > 1 ? scene.foreground : scene.background;
     target.addChild(sprite);
     return sprite;
