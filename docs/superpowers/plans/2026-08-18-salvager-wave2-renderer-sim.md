@@ -2699,6 +2699,17 @@ Everything above is machinery. This task is the first build where the game is a 
   - `function attachInput(state: InputState, host: HTMLElement, toWorld: (sx: number, sy: number) => Vec2): () => void`
   - `function drainInput(state: InputState): InputState` — snapshot and clear
 
+
+> **Amended during execution.** This task's `main.ts` originally built a single
+> atlas from `bakeRotations(ship.buf, ...)` — tier 0 only — and never imported
+> `buildLodSet` or `lodTierFor`. Zoom changed the sprite's *position* but never
+> its *texture*, so the four LOD tiers existed in the generator and went unused
+> at runtime, `crossfadeAlpha` was computed and never read, and acceptance item 6
+> ("at Wide the ship is a handful of pixels") could not pass. Bake all four tiers
+> into separate atlases and render two crossfading sprites, selecting with
+> `lodTierFor(zoom.level)`. Costs about +8% texture memory per ship, since the
+> tiers shrink quadratically.
+
 - [ ] **Step 1: Write the failing test for the pure key mapping**
 
 ```ts
