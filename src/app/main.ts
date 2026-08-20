@@ -22,7 +22,7 @@ import { Sprite } from 'pixi.js';
 import { buildHull } from '../gen/hull.js';
 import { buildModule, MODULE_CATALOGUE } from '../gen/module.js';
 import { compositeShip, type Loadout } from '../gen/composite.js';
-import { bakeRotations, binForHeading } from '../gen/rotate.js';
+import { bakeRotations, binForHeading, headingForBin } from '../gen/rotate.js';
 import { buildLodSet } from '../gen/lod.js';
 import { buildPoiStack } from '../gen/celestial.js';
 import { EMISSIVE, FACTION_PALETTE, NEUTRAL } from '../gen/palette.js';
@@ -37,6 +37,7 @@ import { makeScene } from '../render/scene.js';
 import { atlasFromBins, textureFromPixBuf, type BinAtlas } from '../render/textures.js';
 import { makeCamera, followBody, snappedCentre } from '../render/camera.js';
 import { makePlacement, placeLayer, sortedLayers } from '../render/parallax.js';
+import { pivotOffset, tierCorrection } from '../render/lodpivot.js';
 import {
   advanceZoom, crossfadeAlpha, lodTierFor, makeZoom, setZoom, stepZoom, unitsPerPixel,
 } from '../render/zoom.js';
@@ -77,6 +78,14 @@ export async function boot(): Promise<void> {
   const atlases: BinAtlas[] = tiers.map((tierBuf, i) =>
     atlasFromBins(bakeRotations(tierBuf, 64, i === 0 ? ship.plan : undefined)),
   );
+
+  // Tier 3 (WIDE) is generated from the bare hull profile, independent of the
+  // composite's own bounds, so it pivots on the hull centreline rather than
+  // the composite bbox centre tiers 0-2 all share (see render/lodpivot.ts).
+  // `shipPivotOffset` is the fixed, ship-relative gap between those two
+  // pivots; only tier 3's sprite ever needs the correction it drives.
+  const shipPivotOffset = pivotOffset(ship.buf.w, ship.buf.h, ship.centreX, ship.centreY);
+  const tierCorr = vec2();
 
   // Two sprites at the same screen position: `shipCurrent` shows the target
   // level, `shipPrevious` shows the level being faded out of. Outside a
@@ -153,15 +162,31 @@ export async function boot(): Promise<void> {
     const screenX = Math.round((body.position.x - centre.x) / upp + device.viewport.virtualWidth / 2);
     const screenY = Math.round((body.position.y - centre.y) / upp + device.viewport.virtualHeight / 2);
 
-    const currentAtlas = atlases[lodTierFor(zoom.level)]!;
+    // Tier 3's frame is centred on a different physical point of the ship
+    // than tiers 0-2 (see render/lodpivot.ts); only nudge the sprite that is
+    // actually showing tier 3, and only by as much as that tier's own bin
+    // angle and the render's current scale call for.
+    const currentTier = lodTierFor(zoom.level);
+    const currentAtlas = atlases[currentTier]!;
     shipCurrent.texture = currentAtlas.frames[bin]!;
-    shipCurrent.position.set(screenX, screenY);
+    if (currentTier === 3) {
+      tierCorrection(tierCorr, shipPivotOffset, headingForBin(bin), upp);
+      shipCurrent.position.set(screenX + tierCorr.x, screenY + tierCorr.y);
+    } else {
+      shipCurrent.position.set(screenX, screenY);
+    }
     shipCurrent.alpha = zoom.from === null ? 1 : crossfadeAlpha(zoom);
 
     if (zoom.from !== null) {
-      const previousAtlas = atlases[lodTierFor(zoom.from)]!;
+      const previousTier = lodTierFor(zoom.from);
+      const previousAtlas = atlases[previousTier]!;
       shipPrevious.texture = previousAtlas.frames[bin]!;
-      shipPrevious.position.set(screenX, screenY);
+      if (previousTier === 3) {
+        tierCorrection(tierCorr, shipPivotOffset, headingForBin(bin), upp);
+        shipPrevious.position.set(screenX + tierCorr.x, screenY + tierCorr.y);
+      } else {
+        shipPrevious.position.set(screenX, screenY);
+      }
       shipPrevious.alpha = 1 - crossfadeAlpha(zoom);
       shipPrevious.visible = true;
     } else {
