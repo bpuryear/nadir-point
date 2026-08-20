@@ -43,8 +43,8 @@ export const DEFAULT_POST: Readonly<PostSettings> = {
  * (`NEUTRAL[6]` 0.759, `NEUTRAL[7]` 0.895, `CONCORD_RAMP[6]` 0.811,
  * `COALITION_RAMP[6]` 0.794, `UI[6]` 0.864) while five of the eight emissives
  * never bloom at all (`red` 0.495, `blue` 0.556, `magenta` 0.575, `orange`
- * 0.598, `green` 0.717). The ship's own running-light colour, `EMISSIVE.amber`
- * at 0.730, clears the line by three thousandths.
+ * 0.598, `green` 0.717). `green` misses by three thousandths; the ship's own
+ * running-light colour, `EMISSIVE.amber` at 0.730, clears the line by 0.010.
  *
  * So do **not** read a hazing hull as a regression in the palette and go
  * "restore" a brightness invariant: the palette never had one, and no edit to
