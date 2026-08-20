@@ -22,29 +22,24 @@ import { Sprite, TilingSprite, type Ticker } from 'pixi.js';
 import { buildHull } from '../gen/hull.js';
 import { buildModule, MODULE_CATALOGUE } from '../gen/module.js';
 import { compositeShip, type Loadout } from '../gen/composite.js';
-import { bakeRotations, binForHeading, headingForBin } from '../gen/rotate.js';
+import { bakeRotations } from '../gen/rotate.js';
 import { buildLodSet } from '../gen/lod.js';
 import { buildPoiStack } from '../gen/celestial.js';
 import { EMISSIVE, FACTION_PALETTE, NEUTRAL } from '../gen/palette.js';
 import { CRUISER_BODY, makeBody } from '../sim/body.js';
-import { integrate } from '../sim/integrate.js';
-import { makeMoveOrder, steer, type MoveOrder } from '../sim/order.js';
 import { makeLoop } from '../sim/loop.js';
 import { makeRng } from '../sim/rng.js';
 import { vec2 } from '../sim/math/vec2.js';
 import { createDevice, presentDevice, resizeDevice, type Device } from '../render/device.js';
 import { makeScene, setLayerSprite } from '../render/scene.js';
 import { atlasFromBins, textureFromPixBuf, type BinAtlas } from '../render/textures.js';
-import { makeCamera, followBody, snappedCentre } from '../render/camera.js';
-import { makePlacement, placeLayer, tiledLayers } from '../render/parallax.js';
-import { pivotOffset, tierCorrection } from '../render/lodpivot.js';
-import {
-  advanceZoom, crossfadeAlpha, lodTierFor, makeZoom, setZoom, stepZoom, unitsPerPixel,
-} from '../render/zoom.js';
-import {
-  screenToWorld, VIRTUAL_HEIGHT, VIRTUAL_WIDTH, worldToScreen,
-} from '../render/viewport.js';
+import { makeCamera, snappedCentre } from '../render/camera.js';
+import { tiledLayers } from '../render/parallax.js';
+import { pivotOffset } from '../render/lodpivot.js';
+import { makeZoom, unitsPerPixel } from '../render/zoom.js';
+import { screenToWorld, VIRTUAL_HEIGHT, VIRTUAL_WIDTH } from '../render/viewport.js';
 import { makePostChain, type PostChain } from '../render/post.js';
+import { makeFrameState, updateFrame } from './frame.js';
 import { attachInput, drainInput, makeInput } from './input.js';
 
 const SEED = 'wave2';
@@ -101,7 +96,6 @@ export async function boot(): Promise<Game> {
   // `shipPivotOffset` is the fixed, ship-relative gap between those two
   // pivots; only tier 3's sprite ever needs the correction it drives.
   const shipPivotOffset = pivotOffset(ship.buf.w, ship.buf.h, ship.centreX, ship.centreY);
-  const tierCorr = vec2();
 
   // Two sprites at the same screen position: `shipCurrent` shows the target
   // level, `shipPrevious` shows the level being faded out of. Outside a
@@ -135,19 +129,22 @@ export async function boot(): Promise<Game> {
     target.addChild(sprite);
     return sprite;
   });
-  const placement = makePlacement();
 
   const body = makeBody(CRUISER_BODY);
   const camera = makeCamera(body.position);
   const zoom = makeZoom(1);
   const loop = makeLoop();
   const input = makeInput();
-  let order: MoveOrder | null = null;
+
+  // Everything the frame update needs, and nothing PixiJS. `updateFrame` in
+  // ./frame.ts owns the arithmetic; this file owns the sprites.
+  const frame = makeFrameState({
+    body, camera, zoom, loop, viewport: device.viewport, layers, shipPivotOffset,
+  });
 
   const centre = vec2();
   const screenPoint = vec2();
   const worldPoint = vec2();
-  const shipScreen = vec2();
 
   const detach = attachInput(input, host, (sx, sy) => {
     // Screen pixels to virtual-canvas pixels, then to world.
@@ -163,80 +160,28 @@ export async function boot(): Promise<Game> {
   globalThis.addEventListener('resize', onResize);
 
   const onFrame = (ticker: Ticker): void => {
-    const dt = ticker.deltaMS / 1000;
+    // The viewport is replaced wholesale on resize, so re-read it rather than
+    // capturing it once: a stale viewport would put every sprite half a
+    // letterbox out after the first window change.
+    frame.viewport = device.viewport;
 
-    const pending = drainInput(input);
-    if (pending.moveTarget !== null) order = makeMoveOrder(pending.moveTarget);
-    if (pending.zoomRequest !== null) setZoom(zoom, pending.zoomRequest);
-    if (pending.zoomStep !== 0) stepZoom(zoom, pending.zoomStep);
-    if (pending.timeScale !== null) loop.scale = pending.timeScale;
+    const out = updateFrame(frame, drainInput(input), ticker.deltaMS / 1000);
 
-    // Simulation: fixed ticks only.
-    // `loop.tickSeconds`, not the TICK_SECONDS constant: the loop is the thing
-    // that decided how many ticks to run, so it has to be the thing that says
-    // how long one is. Two sources of truth for the fixed timestep is exactly
-    // how a "fixed" timestep stops being fixed. `makeLoop()` defaults it to
-    // TICK_SECONDS, so this is that value — by derivation rather than by
-    // coincidence.
-    const ticks = loop.ticksFor(dt);
-    for (let i = 0; i < ticks; i++) {
-      integrate(body, steer(body, order), loop.tickSeconds);
-    }
+    shipCurrent.texture = atlases[out.current.tier]!.frames[out.bin]!;
+    shipCurrent.position.set(out.current.x, out.current.y);
+    shipCurrent.alpha = out.current.alpha;
 
-    // Render: reads the sim, writes nothing back to it.
-    advanceZoom(zoom, dt);
-    followBody(camera, body, dt);
-
-    const upp = unitsPerPixel(zoom.level);
-    snappedCentre(centre, camera, upp);
-
-    // Bin 0 is the unrotated source, which is drawn nose-up; a body heading of
-    // 0 points along +x. Hence the quarter turn. If the ship renders a quarter
-    // turn off, this sign is the first thing to check.
-    const bin = binForHeading(body.heading + Math.PI / 2);
-    // The shared transform, not a copy of its arithmetic: viewport.test.ts
-    // establishes that worldToScreen and screenToWorld round-trip at all four
-    // zoom divisors, and the input path above already uses screenToWorld. An
-    // inlined forward transform here would leave that round-trip property
-    // half-honoured in production, which is where it matters.
-    worldToScreen(shipScreen, body.position, centre, upp, device.viewport);
-    const screenX = Math.round(shipScreen.x);
-    const screenY = Math.round(shipScreen.y);
-
-    // Tier 3's frame is centred on a different physical point of the ship
-    // than tiers 0-2 (see render/lodpivot.ts); only nudge the sprite that is
-    // actually showing tier 3, and only by as much as that tier's own bin
-    // angle and the render's current scale call for.
-    const currentTier = lodTierFor(zoom.level);
-    const currentAtlas = atlases[currentTier]!;
-    shipCurrent.texture = currentAtlas.frames[bin]!;
-    if (currentTier === 3) {
-      tierCorrection(tierCorr, shipPivotOffset, headingForBin(bin), upp);
-      shipCurrent.position.set(screenX + tierCorr.x, screenY + tierCorr.y);
-    } else {
-      shipCurrent.position.set(screenX, screenY);
-    }
-    shipCurrent.alpha = zoom.from === null ? 1 : crossfadeAlpha(zoom);
-
-    if (zoom.from !== null) {
-      const previousTier = lodTierFor(zoom.from);
-      const previousAtlas = atlases[previousTier]!;
-      shipPrevious.texture = previousAtlas.frames[bin]!;
-      if (previousTier === 3) {
-        tierCorrection(tierCorr, shipPivotOffset, headingForBin(bin), upp);
-        shipPrevious.position.set(screenX + tierCorr.x, screenY + tierCorr.y);
-      } else {
-        shipPrevious.position.set(screenX, screenY);
-      }
-      shipPrevious.alpha = 1 - crossfadeAlpha(zoom);
-      shipPrevious.visible = true;
-    } else {
+    if (out.previous === null) {
       shipPrevious.visible = false;
+    } else {
+      shipPrevious.texture = atlases[out.previous.tier]!.frames[out.bin]!;
+      shipPrevious.position.set(out.previous.x, out.previous.y);
+      shipPrevious.alpha = out.previous.alpha;
+      shipPrevious.visible = true;
     }
 
-    for (let i = 0; i < layers.length; i++) {
-      placeLayer(placement, layers[i]!, centre, upp);
-      setLayerSprite(layerSprites[i]!, placement);
+    for (let i = 0; i < layerSprites.length; i++) {
+      setLayerSprite(layerSprites[i]!, out.layers[i]!);
     }
 
     // Draw the virtual canvas into its fixed-size framebuffer. Everything
