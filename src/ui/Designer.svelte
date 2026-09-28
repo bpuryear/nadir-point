@@ -111,7 +111,7 @@
     <div class="actions">
       <button class="btn small" onclick={copy}>Copy</button>
       <button class="btn small" disabled={app.library.length <= 1} onclick={remove}>Delete</button>
-      <button class="btn small" onclick={() => app.resetToIssue()}>Reset all to issue</button>
+      <button class="btn small" onclick={() => confirm('Discard every refit and custom pattern, and restore the issued patterns?') && app.resetToIssue()}>Reset all to issue</button>
     </div>
   </aside>
 

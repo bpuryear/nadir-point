@@ -37,6 +37,10 @@
       <p>NO SINGLE CAUSE STANDS OUT.</p>
     {/if}
 
+    {#if !won && r.causes.length}
+      <p class="note">UMPIRE'S NOTE: ANSWER CAUSE 1 IN THE DESIGN BUREAU, THEN RE-RUN THE SAME SEED. THE SAME SEED REPLAYS THE SAME ENGAGEMENT, SO ANY CHANGE IN THE RESULT IS YOUR CHANGE.</p>
+    {/if}
+
     <h2>OWN UNITS</h2>
     <table class="data">
       <thead><tr><th>Ship</th><th>Fate</th><th class="num">At</th><th class="num">Hull</th><th class="num">Dealt</th><th class="num">Taken</th><th class="num">Crew lost</th><th>Modules lost</th></tr></thead>
@@ -85,6 +89,11 @@
 </div>
 
 <style>
+  .note {
+    color: var(--amber);
+    border-left: 2px solid var(--amber);
+    padding-left: 10px;
+  }
   .sig {
     margin-top: 18px;
     font-size: 10px;
