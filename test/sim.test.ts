@@ -13,6 +13,7 @@ import { buildReport } from '../src/sim/report.ts';
 import { createRng, nextFloat, nextU32 } from '../src/sim/rng.ts';
 import { CHECK_BATTLES, exerciseBattle, mirrorBattle, runBattleCheck, runToEnd } from '../src/sim/run.ts';
 import { step } from '../src/sim/step.ts';
+import { ACTIVE } from '../src/sim/world.ts';
 import golden from './golden.json';
 
 describe('dmath', () => {
@@ -90,6 +91,35 @@ describe('determinism', () => {
       step(b);
       if (t % 60 === 0) expect(hashWorld(a)).toBe(hashWorld(b));
     }
+  });
+});
+
+describe('range keeping', () => {
+  // Share of samples in which an active ship's target is inside half its engagement range.
+  const closeShare = (spec: ReturnType<typeof mirrorBattle>, side: number | null): number => {
+    const w = createBattle(spec);
+    let close = 0;
+    let samples = 0;
+    while (!w.ended) {
+      step(w);
+      for (let i = 0; i < w.count; i++) {
+        const t = w.target[i];
+        if (w.status[i] !== ACTIVE || t < 0 || (side !== null && w.side[i] !== side)) continue;
+        const dx = w.x[t] - w.x[i];
+        const dy = w.y[t] - w.y[i];
+        samples++;
+        if (Math.sqrt(dx * dx + dy * dy) < 0.5 * w.designs[w.design[i]].engageRange) close++;
+      }
+    }
+    return close / samples;
+  };
+
+  it('strike ships break off their runs before they reach the target', () => {
+    expect(closeShare(exerciseBattle(EXERCISE_1, EXERCISE_1.issued, 1), 1)).toBeLessThan(0.05);
+  });
+
+  it('line ships stop at range instead of closing to point blank', () => {
+    expect(closeShare(mirrorBattle(1), null)).toBeLessThan(0.15);
   });
 });
 

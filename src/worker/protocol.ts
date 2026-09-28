@@ -1,6 +1,9 @@
 import type { BattleSpec } from '../sim/battle.ts';
 import type { BattleReport } from '../sim/report.ts';
 
+/** Playback speed a battle starts at: sim seconds per real second. */
+export const DEFAULT_PLAYBACK = 1;
+
 export type ToWorker =
   | { type: 'start'; spec: BattleSpec }
   | { type: 'speed'; value: number }

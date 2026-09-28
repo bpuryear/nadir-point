@@ -20,9 +20,10 @@ function reasonText(w: World, i: number): string {
   if (status !== ACTIVE) return 'Out of the battle.';
   const r = w.targetReason[i];
   if (w.target[i] < 0) return 'No target.';
-  if (r === REASON_NEAREST) return 'Nearest enemy (no priority criterion matched).';
-  const crit = w.designs[w.design[i]].design.doctrine.priority[r];
-  return `Priority ${r + 1}: ${CRITERION_TEXT[crit]}.`;
+  const doctrine = w.designs[w.design[i]].design.doctrine;
+  const why = r === REASON_NEAREST ? 'Nearest enemy (no priority criterion matched).' : `Priority ${r + 1}: ${CRITERION_TEXT[doctrine.priority[r]]}.`;
+  if (doctrine.role !== 'strike') return why;
+  return `${why} ${w.run[i] ? 'Breaking off to extend.' : 'Running in.'}`;
 }
 
 export function inspect(w: World, i: number): InspectDetail | null {

@@ -27,7 +27,7 @@ export const EXERCISE_1: ExerciseDef = {
   title: 'PICKET LINE',
   briefing: [
     'FLEET TRAINING DIRECTIVE 1. EXERCISE PICKET LINE.',
-    'OPPOSING FORCE: TWELVE LANCET-CLASS GUNBOATS, RAIDER FIT, UNDER STRIKE DOCTRINE. THEY WILL GO FOR YOUR HEAVY UNITS FIRST.',
+    'OPPOSING FORCE: SIXTEEN LANCET-CLASS GUNBOATS, RAIDER FIT, UNDER STRIKE DOCTRINE. THEY WILL MAKE ATTACK RUNS ON YOUR HEAVY UNITS FIRST.',
     'ALLOCATION: 7,000 REQUISITION. STANDARD PATTERNS ARE ISSUED. YOU MAY REFIT THEM.',
     'THE UMPIRES WILL NOT INTERVENE. REPORT THE CAUSES OF ANY LOSS IN FULL.',
   ],
@@ -37,7 +37,7 @@ export const EXERCISE_1: ExerciseDef = {
   budget: 7000,
   playerZone: { x0: 300, x1: 1600, y0: 600, y1: 3400 },
   enemyZone: { x0: 4400, x1: 5700, y0: 600, y1: 3400 },
-  enemy: [{ design: RAIDER_LANCET, count: 12 }],
+  enemy: [{ design: RAIDER_LANCET, count: 16 }],
   issued: [
     { design: byId('bastion-a'), count: 1 },
     { design: byId('warden-a'), count: 1 },

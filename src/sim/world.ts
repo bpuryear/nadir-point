@@ -83,6 +83,8 @@ export interface World {
   /** Targets as they were at the start of the tick; decisions read this. */
   targetPrev: Int32Array;
   targetReason: Int8Array;
+  /** Strike ships: 1 while breaking off after an attack run, 0 while running in. */
+  run: Uint8Array;
   retarget: Int32Array;
   lastHitTick: Int32Array;
   dcSupply: Float64Array;
@@ -182,6 +184,7 @@ export function createWorld(
     target: new Int32Array(units).fill(-1),
     targetPrev: new Int32Array(units).fill(-1),
     targetReason: new Int8Array(units).fill(REASON_NONE),
+    run: new Uint8Array(units),
     retarget: new Int32Array(units),
     lastHitTick: new Int32Array(units).fill(-1000),
     dcSupply: new Float64Array(units),

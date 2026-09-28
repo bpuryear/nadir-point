@@ -6,7 +6,7 @@ import { onFieldCount } from '../sim/run.ts';
 import { step } from '../sim/step.ts';
 import type { World } from '../sim/world.ts';
 import { inspect } from './inspect.ts';
-import type { EndedMsg, SnapshotMsg, ToWorker } from './protocol.ts';
+import { DEFAULT_PLAYBACK, type EndedMsg, type SnapshotMsg, type ToWorker } from './protocol.ts';
 import { createPrev, M_STRIDE, savePrev, U_STRIDE, writeModules, writeUnits, type PrevState } from './snapshot.ts';
 
 // Runs the sim at its fixed tick in real time, scaled by the playback speed,
@@ -25,7 +25,7 @@ const scope = self as unknown as WorkerScope;
 let world: World | null = null;
 let prev: PrevState | null = null;
 let battleId = 0;
-let speed = 2;
+let speed = DEFAULT_PLAYBACK;
 let paused = false;
 let skipping = false;
 let simClock = 0;

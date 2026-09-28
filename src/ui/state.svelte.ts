@@ -2,7 +2,7 @@ import { STANDARD_PATTERNS } from '../content/designs.ts';
 import { EXERCISE_1, type ExerciseDef } from '../content/exercises.ts';
 import type { Design } from '../content/types.ts';
 import type { BattleReport } from '../sim/report.ts';
-import type { InspectDetail } from '../worker/protocol.ts';
+import { DEFAULT_PLAYBACK, type InspectDetail } from '../worker/protocol.ts';
 
 export type Screen = 'briefing' | 'designer' | 'fleet' | 'battle' | 'report';
 
@@ -61,7 +61,7 @@ class AppState {
     onField: [0, 0],
     ended: false,
     winner: -1,
-    speed: 2,
+    speed: DEFAULT_PLAYBACK,
     paused: false,
     follow: true,
     selected: -1,

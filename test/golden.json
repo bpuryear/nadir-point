@@ -1,58 +1,58 @@
 {
-  "simVersion": 2,
+  "simVersion": 3,
   "battles": [
     {
       "name": "ex1-issued-1",
       "seed": 1,
       "checkpoints": {
-        "1": "9b46e71f12abb165",
-        "30": "5b5bf38f193ef915",
-        "300": "8fc90dfef513fc44",
-        "900": "58068d15ef7a64f7",
-        "1800": "a458367852acb6a6"
+        "1": "cfceff004149af65",
+        "30": "96cb1d7364a50c26",
+        "300": "1a1b5d2b18d60e1a",
+        "900": "39b65f4591ff29cc",
+        "1800": "75346205375686e8"
       },
-      "finalTick": 2930,
-      "finalHash": "8885e6b9a2669bb7",
+      "finalTick": 2723,
+      "finalHash": "10d35a6ee769e95f",
       "winner": 1,
       "onField": [
         0,
-        11
+        15
       ]
     },
     {
       "name": "ex1-issued-7",
       "seed": 7,
       "checkpoints": {
-        "1": "1275ed0e71710bb4",
-        "30": "c9f1694a6c30e2f8",
-        "300": "e3a256ebdcac5501",
-        "900": "847202df8e7b0805",
-        "1800": "c98f55d740c081cd"
+        "1": "b32da44b8fe685fa",
+        "30": "5d5300789a0acad1",
+        "300": "6b30ab90e802a755",
+        "900": "791665b708cc369a",
+        "1800": "18d408aa0f8c1017"
       },
-      "finalTick": 2730,
-      "finalHash": "351727d1eef0f65b",
+      "finalTick": 2886,
+      "finalHash": "ef7f4d204d1ac609",
       "winner": 1,
       "onField": [
         0,
-        12
+        16
       ]
     },
     {
       "name": "mirror-20260928",
       "seed": 20260928,
       "checkpoints": {
-        "1": "6e4dfddecbcedab0",
-        "30": "71a0678772066ad1",
-        "300": "1afc0051ea019d4b",
-        "900": "a1d1a0942b22ac02",
-        "1800": "624e41cdaa7d12ef"
+        "1": "afb0b22e534ce992",
+        "30": "bde6679f96a1808f",
+        "300": "6543725948d0c1c1",
+        "900": "936e54e72616505f",
+        "1800": "998471805c97323c"
       },
-      "finalTick": 2749,
-      "finalHash": "7fe58a44f93e7476",
-      "winner": 1,
+      "finalTick": 2755,
+      "finalHash": "2b726d4462267540",
+      "winner": 0,
       "onField": [
-        0,
-        3
+        2,
+        0
       ]
     }
   ]

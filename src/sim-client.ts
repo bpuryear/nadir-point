@@ -1,6 +1,6 @@
 import type { BattleSpec } from './sim/battle.ts';
 import { TICK_MS } from './sim/constants.ts';
-import type { EndedMsg, FromWorker, SnapshotMsg, ToWorker } from './worker/protocol.ts';
+import { DEFAULT_PLAYBACK, type EndedMsg, type FromWorker, type SnapshotMsg, type ToWorker } from './worker/protocol.ts';
 
 export interface Snapshot {
   meta: SnapshotMsg;
@@ -14,7 +14,7 @@ export class SimClient {
   private worker: Worker;
   private battleId = 0;
   latest: Snapshot | null = null;
-  speed = 2;
+  speed = DEFAULT_PLAYBACK;
   paused = false;
   onSnapshot: ((s: Snapshot) => void) | null = null;
   onEnded: ((m: EndedMsg) => void) | null = null;

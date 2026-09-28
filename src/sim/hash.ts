@@ -48,6 +48,7 @@ export function hashWorld(w: World): string {
   mixF64(h, w.armour, n * 4);
   mixF64(h, w.dcSupply, n);
   mixInts(h, w.target, n);
+  mixInts(h, w.run, n);
   mixF64(h, w.mHp, m);
   mixInts(h, w.mCooldown, m);
   return hex(h.a) + hex(h.b);

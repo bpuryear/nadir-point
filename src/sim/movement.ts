@@ -1,4 +1,5 @@
 import { DT } from './constants.ts';
+import type { CompiledDesign } from './design.ts';
 import { ACTIVE, CRIPPLED, ESCAPED, WITHDRAWING, type World } from './world.ts';
 
 // Decide a heading and speed for each unit from start-of-tick state; move all
@@ -7,6 +8,18 @@ import { ACTIVE, CRIPPLED, ESCAPED, WITHDRAWING, type World } from './world.ts';
 const EDGE_MARGIN = 400;
 const ESCAPE_DISTANCE = 200;
 const CLOSE_FACTOR = 1.15;
+/** Line ships stop at this fraction of engagement range. */
+const LINE_STANDOFF = 0.9;
+const LINE_HOLD_SPEED = 0.5;
+/** A bearing whose cosine exceeds this closes the range when the ship moves. */
+const CLOSING_BEARING = 0.3;
+/** Strike ships break off an attack run inside this fraction of engagement range... */
+const BREAK_FACTOR = 0.6;
+/** ...and turn back for the next run beyond this one. */
+const EXTEND_FACTOR = 1.3;
+/** While breaking off, the target sits 150° off the bow. */
+const BREAK_X = -0.8660254037844386;
+const BREAK_Y = 0.5;
 const DRIFT_DECAY_TICKS = 90;
 
 export function steer(w: World, i: number): void {
@@ -69,27 +82,59 @@ function planApproach(w: World, i: number): Plan {
   if (dist < 1e-6) return { x: w.hx[i], y: w.hy[i], speed: 0.5 };
   const ux = dx / dist;
   const uy = dy / dist;
-  const range = d.engageRange;
-  if (dist > range * CLOSE_FACTOR) return { x: ux, y: uy, speed: 1 };
+  return d.design.doctrine.role === 'strike' ? planRun(w, i, d, dist, ux, uy) : planHold(w, i, d, dist, ux, uy);
+}
 
-  // Inside range, hold the firing bearing. Ships have no reverse thrust; turning away
-  // to open the range would show the stern and mask the bow guns.
-  // Choose a heading that puts the target at bearing b.
-  const bx = d.bearingX;
-  let by = d.bearingY;
-  if (by !== 0 && isMirrorEqual(d.dpsByBearing, d.bearingDeg)) {
-    // Keep the target on whichever side it already is, rather than swinging across.
+/**
+ * Line ships close to engagement range and hold there on the firing bearing. Ships
+ * have no reverse thrust, so they brake early enough to stop at the standoff
+ * distance instead of turning away and showing the stern.
+ */
+function planHold(w: World, i: number, d: CompiledDesign, dist: number, ux: number, uy: number): Plan {
+  const range = d.engageRange;
+  const max = w.maxSpeed[i];
+  const brake = max > 0 ? Math.sqrt(2 * w.accel[i] * Math.max(0, dist - range * LINE_STANDOFF)) / max : 0;
+  if (dist > range * CLOSE_FACTOR) return { x: ux, y: uy, speed: Math.min(1, brake) };
+  const b = bearingToward(w, i, d.bearingX, d.bearingY, ux, uy, firesBothSides(d));
+  // A bearing that closes the range brakes to a stop; a broadside bearing circles.
+  const speed = d.bearingX > CLOSING_BEARING ? Math.min(LINE_HOLD_SPEED, brake) : LINE_HOLD_SPEED;
+  return { x: b.x, y: b.y, speed };
+}
+
+/**
+ * Strike ships make attack runs: in on the strafe bearing at full speed, break off
+ * before they reach the target, extend, then turn back for the next run.
+ */
+function planRun(w: World, i: number, d: CompiledDesign, dist: number, ux: number, uy: number): Plan {
+  const range = d.engageRange;
+  if (w.run[i] === 0 && dist < range * BREAK_FACTOR) w.run[i] = 1;
+  else if (w.run[i] === 1 && dist > range * EXTEND_FACTOR) w.run[i] = 0;
+  if (w.run[i] === 1) {
+    const b = bearingToward(w, i, BREAK_X, BREAK_Y, ux, uy, true);
+    return { x: b.x, y: b.y, speed: 1 };
+  }
+  if (dist > range * CLOSE_FACTOR) return { x: ux, y: uy, speed: 1 };
+  const b = bearingToward(w, i, d.bearingX, d.bearingY, ux, uy, firesBothSides(d));
+  return { x: b.x, y: b.y, speed: 1 };
+}
+
+/**
+ * The heading that puts the target at bearing (bx, by). With keepSide, the target
+ * stays on the side it is already on, rather than the ship swinging across.
+ */
+function bearingToward(w: World, i: number, bx: number, by: number, ux: number, uy: number, keepSide: boolean): { x: number; y: number } {
+  if (by !== 0 && keepSide) {
     const lateral = uy * w.hx[i] - ux * w.hy[i];
     if ((lateral > 0) !== (by > 0)) by = -by;
   }
-  // Line ships hold station; strike ships keep their speed up while they circle.
-  const holdSpeed = d.design.doctrine.role === 'strike' ? 1 : 0.5;
-  return { x: bx * ux + by * uy, y: bx * uy - by * ux, speed: holdSpeed };
+  return { x: bx * ux + by * uy, y: bx * uy - by * ux };
 }
 
-function isMirrorEqual(dps: number[], bearingDeg: number): boolean {
+/** True when the design fires as well at the mirror of its bearing as at the bearing. */
+function firesBothSides(d: CompiledDesign): boolean {
+  const dps = d.dpsByBearing;
   const n = dps.length;
-  const k = (((bearingDeg / 30) % n) + n) % n;
+  const k = (((d.bearingDeg / 30) % n) + n) % n;
   const mirror = (n - k) % n;
   return dps[mirror] >= dps[k] - 1e-9;
 }

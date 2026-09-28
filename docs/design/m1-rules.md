@@ -150,7 +150,7 @@ Rates halve if the ship was hit in the last 3 s. Each module has 400 points of s
 
 | Setting | Choices |
 |---|---|
-| Role | **Line**: hold at engagement range, keep the best firing bearing. **Strike**: go for priority targets anywhere on the map, at full speed, from short range. |
+| Role | **Line**: hold at engagement range, keep the best firing bearing. **Strike**: go for priority targets anywhere on the map and make attack runs on them at full speed. |
 | Engage at | Short (0.55), optimal (0.8) or long (0.95) × the damage-weighted mean weapon range |
 | Priority | Up to 3 criteria, in order: cruiser, destroyer, frigate, crippled, armour broken, threat (is shooting at me). Nearest is always the last fallback. |
 | Withdraw at | Structure fraction 0 (never) to 0.9 |
@@ -171,10 +171,26 @@ Rates halve if the ship was hit in the last 3 s. Each module has 400 points of s
 
 **Movement**
 
+Ships have no reverse thrust. To open the range, a ship must turn away and show its stern.
+
+*Line ships* hold at engagement range:
+
 | Distance to target | Line ships |
 |---|---|
-| More than 1.15 × engagement range | Close at full speed |
-| Otherwise | Hold the firing bearing: half speed for Line, full speed for Strike. Ships do not turn away to open the range; that would show the stern and mask the bow guns. |
+| More than 1.15 × engagement range | Close at full speed. |
+| Otherwise | Hold the firing bearing. If that bearing closes the range (its cosine is more than 0.3), brake to a stop at 0.9 × engagement range. A broadside bearing circles the target at half speed. |
+
+- Line ships brake in time: speed is capped at √(2 × acceleration × distance to the stop point), so they do not overshoot.
+- Line ships do not turn away to open the range.
+
+*Strike ships* make attack runs, always at full speed:
+
+| Phase | What the ship does | Changes to the other phase when |
+|---|---|---|
+| Run in | Close on the target. Inside 1.15 × engagement range, hold the strafe bearing. | The target is closer than 0.6 × engagement range |
+| Break off | Turn away until the target is 150° off the bow, on the side it already is, and extend. | The target is farther than 1.3 × engagement range |
+
+- A strike ship pays for each run: while it breaks off, it shows its stern to the target.
 
 When a ship falls below its withdraw threshold, it runs for its own edge. It has escaped once it passes the edge by 200 m.
 
