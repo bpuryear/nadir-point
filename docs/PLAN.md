@@ -1,6 +1,6 @@
 # Nadir Point: design and build plan
 
-Draft 1, 2026-09-28. This plan draws on the five research reports in [`docs/research/`](research/README.md) and on twelve decisions by the project owner. Section 2 is decided. Everything else is a proposal until we build it and test it.
+Draft 2, 2026-09-28. This plan draws on the five research reports in [`docs/research/`](research/README.md) and on seventeen decisions by the project owner. Draft 2 adds the answers to the open questions. Section 2 is decided. Everything else is a proposal until we build it and test it.
 
 ---
 
@@ -18,9 +18,9 @@ The gameplay model is Gratuitous Space Battles 1 and 2 (Positech, 2009 and 2015)
 
 | Topic | Decision |
 |---|---|
-| Audience | Free web game, on itch.io and/or its own site |
+| Audience | Free web game on its own site |
 | Online | Async challenges: players share fleets, and other players fight them locally |
-| Devices | Desktop only, mouse and keyboard |
+| Devices | Desktop only: mouse or trackpad, plus keyboard |
 | Art source | Code-built 3D for ships, modules and effects. AI images for backgrounds, portraits, insignia and UI illustration. |
 | Meta loop | Tour of duty: 8–12 battles with a persistent fleet. Scenarios and challenges sit beside it. |
 | Control in battle | Command signals only. No unit control. |
@@ -29,7 +29,11 @@ The gameplay model is Gratuitous Space Battles 1 and 2 (Positech, 2009 and 2015)
 | Setting | Two human blocs in a Cold War that went hot, plus one alien power |
 | Ship designer | Physical mounts in hull zones. Mount position matters in play. |
 | Battle size | 40–80 ships a side plus strike craft, about 300–500 units |
-| Name | Nadir Point |
+| Name | Nadir Point. Faction and world names stay as working names for now. |
+| Hosting | Vercel, for the game and the challenge server |
+| Reference machine | A regular MacBook (§8) |
+| Choir tour | At launch |
+| Image model | Owner delegated the choice: GPT Image 2.5 (§7.8) |
 
 ---
 
@@ -221,7 +225,19 @@ Doctrine is set for each ship or group.
 | **The Choir** (alien) | Beams and linked hulls | No crew, no capture, no retreat. Ships close together in formation share one defence field; break the formation and each ship weakens. The Choir **adapts**: it gains resistance to the damage type it has taken most in this battle. | Depends on formation; slow to switch targets |
 
 - The adaptation rule is our built-in answer to GSB's single-weapon spam.
-- **Launch scope:** tours for the Compact and the Directorate. The Choir is playable at launch in Exercises, War College and Challenges. A Choir tour comes later (see §11).
+- **Launch scope:** all three factions have a tour of duty at launch.
+
+**The Choir's tour** (proposal)
+
+The Choir has no crew, no Requisition and no paperwork of its own, so its tour needs different rules.
+
+- **Voice:** the Choir's tour is told through the enemy's paperwork. Your briefings are human intelligence reports: intercepts, partial decodes and analysts' guesses about what the Choir wants. The analysts are often wrong about you.
+- **Names:** your ships have no names you can read. The human navies give each one a reporting name, for example `GRAVEL-7`, and that name is what the reports call it.
+- **Resources:**
+  - **Lattice** replaces Requisition and salvage. You absorb it from wrecks on a field you hold.
+  - **Growth time** replaces yard time. Damaged ships regrow slowly between engagements. New hulls grow from Lattice.
+- **What persists:** each ship keeps the adaptation it earned in battle for the whole tour. When that ship dies, its adaptation dies with it.
+- **The enemy adapts too:** human fleets shift their weapon mix toward what beats you. GSB's Galactic Conquest used a similar "reactive arms race" for its campaign AI.
 
 ### 5.5 Challenges
 
@@ -352,7 +368,21 @@ Equipment hum, relays, teletype, switch clicks and clipped radio text. Very litt
 
 - Each asset type gets one reference set and one prompt template. We normalise the palette after generation, and the in-game colour grade unifies the rest.
 - A provenance log records the tool, model, prompt and date for each AI asset.
-- We disclose AI use on the store page. itch.io requires disclosure for asset packs and encourages it for games ([itch.io, 2024-11-20](https://itch.io/t/4309690/generative-ai-disclosure-tagging)).
+- We disclose AI use on the game's About page. Our own site has no disclosure rule, but we follow the practice of the stores. For example, itch.io requires disclosure for asset packs and encourages it for games ([itch.io, 2024-11-20](https://itch.io/t/4309690/generative-ai-disclosure-tagging)).
+
+**Model choice: OpenAI GPT Image 2.5** (the owner delegated the choice)
+
+| Question | Answer |
+|---|---|
+| Why this model | It ranks first on both public image leaderboards we checked: [LMArena text-to-image](https://arena.ai/leaderboard/text-to-image) (blind human votes, updated 2026-09-24): Sunburst 1424, Flare 1401, GPT Image 2 1383, next best from another company 1335. [Artificial Analysis](https://artificialanalysis.ai/image/leaderboard/text-to-image) gives the same top three. |
+| Which variant | `gpt-image-2.5-flare` for drafts and volume. `gpt-image-2.5-sunburst` for final assets and edits made against reference images; OpenAI built it for "tighter control across edits" ([9to5Mac, 2026-09-08](https://9to5mac.com/2026/09/08/openai-releases-chatgpt-images-2-5-with-sharper-details-and-more-precise-editing/)). |
+| Rights | OpenAI's terms assign output rights to the user "if any" ([terms](https://openai.com/policies/row-terms-of-use/)). |
+| Cost | Artificial Analysis lists about $211 per 1,000 images at maximum quality. With iterations, we expect roughly 500–1,500 images, which is about $100–$320. |
+| Tileable textures | The API has no tiling switch. We make textures seamless by offsetting each image and asking the model to repaint the seams. |
+| Confidence | Moderate-high that it gives the best single images; moderate that it keeps one style across hundreds of assets. Leaderboards do not measure style consistency. |
+
+- **Bake-off before volume work:** at the start of M5 we make the same 6 test assets (2 portraits, 2 backgrounds, 1 insignia, 1 trim texture) with GPT Image 2.5, Nano Banana 2 (up to 14 reference images) and FLUX.2. We keep GPT Image 2.5 unless another model wins clearly on our own look tests.
+- **Setup needed:** an OpenAI API key, stored as an environment secret, and network access to `api.openai.com` from the build environment.
 
 ---
 
@@ -368,8 +398,9 @@ Equipment hum, relays, teletype, switch clicks and clipped radio text. Very litt
 | Worker to renderer | Transferable snapshot buffers. No `SharedArrayBuffer`. | High |
 | Saves | IndexedDB, plus export and import files | High |
 | Share format | Fleet code: sim version, faction, designs, deployment and doctrine, compressed and base64url-encoded | High |
-| Challenge backend (M6) | A small API on Vercel (functions and a database). The server re-runs each submitted win to verify it. | Moderate |
-| Tests | Vitest for the sim; golden replay hashes; cross-browser determinism on Chromium, Firefox and WebKit through Playwright; screenshot tests for the look rules | High |
+| Hosting | Vercel: a static site, with a preview URL for every push that you can open on your MacBook | High |
+| Challenge backend (M6) | Vercel Functions, with Vercel Blob for fleet files and a Postgres database from the Vercel Marketplace for indexes and scores. The server re-runs each submitted win to verify it. | Moderate; we confirm the storage products at M6 |
+| Tests | Vitest for the sim; golden replay hashes; cross-browser determinism on Chromium, Firefox and WebKit through Playwright; screenshot tests for the look rules; a check on the owner's MacBook in Safari and Chrome at the end of each milestone | High |
 | Balance | A headless Node harness that runs random and seeded fleets round robin, reports win rate and cost efficiency per module, and flags dominant designs | High |
 
 **Why these choices** (details in [tech-stack](research/tech-stack.md))
@@ -377,15 +408,23 @@ Equipment hum, relays, teletype, switch clicks and clipped radio text. Very litt
 - **WebGL2 fallback:** WebGPU reaches about 86% of users and WebGL2 about 96% (caniuse, Sept 2026). three.js serves both from one shader codebase.
 - **Batched drawing:** three.js's WebGPU backend is slow with many separate meshes (issue #30560, still open). So we draw every ship and module through batched or instanced meshes, and each design bakes to one merged mesh when it is saved.
 - **Own trig:** JavaScript's `Math.sin`, `Math.tanh` and similar functions can return different results in different browsers and operating systems. Chrome 148 moved `tanh` to the OS maths library, for example. So the sim uses its own trig.
-- **No `SharedArrayBuffer`:** itch.io's `SharedArrayBuffer` option moves the game to another domain, and saved data in local storage is lost.
+- **No `SharedArrayBuffer` by default:** it needs special cross-origin headers, and Safari does not support the lighter `credentialless` variant. Vercel can send the headers if profiling ever demands it.
 
-**Performance budget** (reference machine to be agreed, see §11)
+**Reference machine: a regular MacBook**
+
+- **Floor:** a MacBook Air with an Apple M1 chip, the oldest Apple Silicon Air, with its built-in GPU. If it runs well there, newer MacBooks have headroom.
+- **Browsers:** Safari and Chrome on macOS. Safari has WebGPU only on macOS 26 and later (caniuse), so older macOS versions use the WebGL2 path, and that path must meet the budget too.
+- **Retina screens:** the 3D scene renders at a capped pixel ratio, about 1.25× the CSS size, with blur passes at half resolution. The UI text renders at full Retina sharpness.
+- **No fan:** a MacBook Air slows down under long, heavy load. We test the budget over a 10-minute battle, not over a short burst.
+- **Trackpad:** pinch to zoom, two-finger drag to pan, and click-and-drag for box selection, together with mouse and keyboard.
+
+**Performance budget** (on the floor machine)
 
 | Item | Budget |
 |---|---|
 | Units | 160 ships, 300 strike craft, 3,000 projectiles |
 | Sim tick | 6 ms or less at 30 Hz, in the worker |
-| Render | 60 fps at 1080p on a mid-range desktop GPU |
+| Render | 60 fps in a full-screen browser window, sustained over a 10-minute battle |
 | Draw calls | Fewer than 200 per frame |
 | Download before the first battle | Less than 15 MB |
 
@@ -397,14 +436,14 @@ Each milestone ends with something playable and a test that proves it works. Siz
 
 | # | Milestone | Contents | Exit test |
 |---|---|---|---|
-| M0 | Foundations | Repo, Vite and TypeScript, CI. Sim worker with fixed tick, seeded random numbers and our own trig. Golden-hash replay test. three.js scene with the tilt-shift camera and post chain. | The same battle gives the same hash in Chromium and Firefox. 500 grey boxes move at 60 fps. |
+| M0 | Foundations | Repo, Vite and TypeScript, CI. Vercel project with a preview URL for every push. Sim worker with fixed tick, seeded random numbers and our own trig. Golden-hash replay test. three.js scene with the tilt-shift camera, post chain and trackpad controls. | The same battle gives the same hash in Chromium, Firefox and WebKit. 500 grey boxes move at 60 fps on the owner's MacBook in Safari and Chrome. |
 | M1 | First fight | Compact only; frigate, destroyer and cruiser; about 15 modules. Mounts, arcs, armour per facing, module status lights. Hit and damage rules. Doctrine (role, range, priority, withdraw). Deployment and end-of-battle rules. After-action report with causes. Ship inspector that shows "why". Code-built placeholder art in the final palette. Tutorial exercise 1. | A new player designs a ship, loses, reads why, changes the design and wins. We test this with the owner. |
 | M2 | Depth | Full designer UI and Naval Register. Formations. Command signals and the flagship. Heat. Strike craft and carriers with fuel. The Directorate, with shields, missiles, ECM and the sensor picture. War College. Share codes. Balance harness v1. | The harness finds no design above an agreed win rate across the test pool. |
 | M3 | Tour of duty | Front map; port (yard, personnel, intel); persistence; Requisition, salvage, crew and yard time; captains with traits and portraits; prizes and scuttling; dispatches and teletype reports; end of tour, Archive, Memorial and merit unlocks; Exercises with scoring; tutorials 2–3. | The owner completes a tour, and losses change later decisions. |
-| M4 | The Choir | Alien faction with linked formations and adaptation; alien incursions in tours; Choir art. | The harness shows adaptation beats single-weapon fleets and loses to mixed fleets. |
-| M5 | Art and sound | AI pipeline and provenance log; final ship kits for all 3 factions; backgrounds; colour-grade states; audio. | The look tests pass: accent-colour share, and friend and foe readable in greyscale. |
+| M4 | The Choir | Alien faction with linked formations and adaptation. The Choir's tour: intelligence-report voice, reporting names, Lattice, growth time, persistent adaptation, adapting human enemies. Alien incursions in human tours. Choir art. | The harness shows adaptation beats single-weapon fleets and loses to mixed fleets. The owner completes a Choir tour. |
+| M5 | Art and sound | Image-model bake-off; AI pipeline and provenance log; final ship kits for all 3 factions; backgrounds; colour-grade states; audio. | The look tests pass: accent-colour share, and friend and foe readable in greyscale. |
 | M6 | Online challenges | Backend on Vercel; upload and download; server re-run check; retaliation chains; smallest-winning-fleet boards. | A challenge made on one machine is beaten on another and verified by the server. |
-| M7 | Release | Onboarding polish, settings, performance tiers, save export, itch.io page. | A cold player finishes the first tutorial without help. |
+| M7 | Release | Onboarding polish, settings, performance tiers, save export, public launch on Vercel. | A cold player finishes the first tutorial without help. |
 
 ---
 
@@ -419,17 +458,29 @@ Each milestone ends with something playable and a test that proves it works. Siz
 | Cross-browser determinism breaks | Medium | Our own maths; CI on three browser engines; a sim version stamp in every file |
 | Browser performance with 500 units and post-processing | Medium | Batched rendering from M0; budget tests in CI |
 | RSB launches in the same genre on Nov 16, 2026 | Certain | We are different: free in the browser, a persistent tour, physical mounts, free movement, grim tone |
-| AI art drifts in style or draws backlash | Medium | AI only for backgrounds, portraits and textures; fixed reference sets; disclosure |
+| AI art drifts in style or draws backlash | Medium | AI only for backgrounds, portraits and textures; fixed reference sets; a bake-off before volume work; disclosure |
+| Safari lags Chrome on WebGPU and WebGL2 behaviour | Medium | Safari in the milestone check from M0; the WebGL2 path must meet the budget on its own |
+| The MacBook Air slows down under long heavy load | Medium | Budget measured over 10-minute battles; capped render scale; half-resolution blur |
+| The Choir's tour doubles the campaign work | High | Share the front map, port screens and report system; the Choir changes the text and the resources, not the structure |
 
 ---
 
-## 11. Open questions for the owner
+## 11. Open questions
 
-1. **Image generation:** which service, and do you have an API key? We need it at M5. Placeholders work until then.
-2. **Choir tour:** at launch, or after?
-3. **Hosting:** itch.io, Vercel, or both? You already have Vercel connected.
-4. **Reference machine:** which PC should the performance budget target?
-5. **Names:** keep the working names for the factions and the world, or rename now?
+Answered on 2026-09-28 and moved into §2:
+
+| Question | Answer |
+|---|---|
+| Image generation | Owner delegated it: GPT Image 2.5, with a bake-off at M5 (§7.8) |
+| Choir tour | At launch (§5.4) |
+| Hosting | Vercel (§8) |
+| Reference machine | A regular MacBook; we use an M1 MacBook Air as the floor (§8) |
+| Names | Working names stay for now |
+
+Still open:
+
+1. **The exact MacBook:** which chip and macOS version do you have? The budget assumes an M1 Air as the floor. If yours is newer, we still test against the M1 Air floor.
+2. **OpenAI API key:** needed at M5, not before.
 
 ---
 
