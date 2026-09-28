@@ -7,8 +7,8 @@ test('check battles match the Node golden hashes', async ({ page }) => {
   const report = await page.waitForFunction(() => window.__determinism, null, { timeout: 150_000 }).then((h) => h.jsonValue());
   expect(report).toBeTruthy();
   for (const b of report!.battles) {
-    const want = golden.battles.find((g) => g.seed === b.seed);
-    expect(b.got, `seed ${b.seed}`).toEqual(want);
+    const want = golden.battles.find((g) => g.name === b.name);
+    expect(b.got, b.name).toEqual(want);
   }
   expect(report!.pass).toBe(true);
 });

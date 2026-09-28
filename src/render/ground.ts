@@ -3,7 +3,7 @@ import { abs, float, fract, fwidth, min, mx_noise_float, positionWorld, vec3 } f
 
 // A dark reference plane below the battle: faint 500 m grid plus dust, so the
 // tilt-shift blur has depth to work on.
-export function addGround(scene: Scene, centerX: number, centerZ: number): void {
+export function addGround(scene: Scene, centerX: number, centerZ: number): Mesh {
   const p = positionWorld.xz;
   const cell = p.div(500);
   const d = abs(fract(cell.sub(0.5)).sub(0.5)).div(fwidth(cell));
@@ -18,4 +18,5 @@ export function addGround(scene: Scene, centerX: number, centerZ: number): void 
   mesh.rotation.x = -Math.PI / 2;
   mesh.position.set(centerX, -320, centerZ);
   scene.add(mesh);
+  return mesh;
 }

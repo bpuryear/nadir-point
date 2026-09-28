@@ -13,8 +13,10 @@ export class CameraRig {
   focusX: number;
   focusZ: number;
   dist: number;
-  private readonly boundsW: number;
-  private readonly boundsH: number;
+  private boundsW: number;
+  private boundsH: number;
+  /** Called when the player pans or zooms by hand. */
+  onUserInput: (() => void) | null = null;
 
   constructor(aspect: number, mapW: number, mapH: number) {
     this.camera = new PerspectiveCamera(FOV_DEG, aspect, 50, 80000);
@@ -23,6 +25,16 @@ export class CameraRig {
     this.focusX = mapW / 2;
     this.focusZ = mapH / 2;
     this.dist = 15500;
+    this.apply();
+  }
+
+  /** Frame a new map: centre on it and pull back far enough to see it whole. */
+  setBounds(mapW: number, mapH: number): void {
+    this.boundsW = mapW;
+    this.boundsH = mapH;
+    this.focusX = mapW / 2;
+    this.focusZ = mapH / 2;
+    this.dist = Math.min(MAX_DIST, Math.max(MIN_DIST, Math.max(mapW, mapH * 1.6) * 1.55));
     this.apply();
   }
 
@@ -45,6 +57,26 @@ export class CameraRig {
   zoom(factor: number): void {
     this.dist = Math.min(MAX_DIST, Math.max(MIN_DIST, this.dist * factor));
     this.apply();
+  }
+
+  /** Ease toward a framing: used by the follow camera. dt in seconds. */
+  track(x: number, z: number, dist: number, dt: number): void {
+    const k = 1 - Math.exp(-dt * 1.6);
+    this.focusX += (x - this.focusX) * k;
+    this.focusZ += (z - this.focusZ) * k;
+    const target = Math.min(MAX_DIST, Math.max(MIN_DIST, dist));
+    this.dist += (target - this.dist) * k;
+    this.clampFocus();
+    this.apply();
+  }
+
+  /** Distance that fits a w × h box on the battle plane into the view. */
+  fitDistance(w: number, h: number): number {
+    const half = Math.tan((FOV_DEG * Math.PI) / 360);
+    const pitch = (PITCH_DEG * Math.PI) / 180;
+    const byWidth = w / (2 * half * this.camera.aspect);
+    const byHeight = (h * Math.sin(pitch)) / (2 * half);
+    return Math.max(byWidth, byHeight);
   }
 
   private clampFocus(): void {
@@ -81,6 +113,7 @@ export function attachControls(el: HTMLElement, rig: CameraRig): () => void {
   };
   const onPointerMove = (e: PointerEvent): void => {
     if (!dragging) return;
+    if (Math.abs(e.clientX - lastX) + Math.abs(e.clientY - lastY) > 0) rig.onUserInput?.();
     rig.panPixels(e.clientX - lastX, e.clientY - lastY, el.clientHeight);
     lastX = e.clientX;
     lastY = e.clientY;
@@ -92,6 +125,7 @@ export function attachControls(el: HTMLElement, rig: CameraRig): () => void {
 
   const onWheel = (e: WheelEvent): void => {
     e.preventDefault();
+    rig.onUserInput?.();
     const scale = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1;
     const dx = e.deltaX * scale;
     const dy = e.deltaY * scale;
@@ -112,6 +146,7 @@ export function attachControls(el: HTMLElement, rig: CameraRig): () => void {
   };
   const onGestureChange = (e: Event): void => {
     e.preventDefault();
+    rig.onUserInput?.();
     const scale = (e as unknown as { scale: number }).scale;
     rig.zoom(gestureScale / scale);
     gestureScale = scale;
@@ -137,9 +172,12 @@ export function attachControls(el: HTMLElement, rig: CameraRig): () => void {
     if (keys.has('d') || keys.has('arrowright')) px -= speed;
     if (keys.has('w') || keys.has('arrowup')) py += speed;
     if (keys.has('s') || keys.has('arrowdown')) py -= speed;
+    const zoomOut = keys.has('q') || keys.has('-');
+    const zoomIn = keys.has('e') || keys.has('=');
+    if (px || py || zoomOut || zoomIn) rig.onUserInput?.();
     if (px || py) rig.panPixels(px, py, el.clientHeight);
-    if (keys.has('q') || keys.has('-')) rig.zoom(1 + 1.2 * dt);
-    if (keys.has('e') || keys.has('=')) rig.zoom(1 / (1 + 1.2 * dt));
+    if (zoomOut) rig.zoom(1 + 1.2 * dt);
+    if (zoomIn) rig.zoom(1 / (1 + 1.2 * dt));
     raf = requestAnimationFrame(tick);
   };
   raf = requestAnimationFrame(tick);

@@ -1,12 +1,17 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { RAIDER_LANCET, STANDARD_PATTERNS } from '../src/content/designs.ts';
+import { EXERCISE_1 } from '../src/content/exercises.ts';
+import type { Design } from '../src/content/types.ts';
+import { createBattle } from '../src/sim/battle.ts';
 import { SIM_VERSION } from '../src/sim/constants.ts';
+import { compileDesign, validateDesign } from '../src/sim/design.ts';
 import { cos, sin } from '../src/sim/dmath.ts';
 import { hashWorld } from '../src/sim/hash.ts';
+import { buildReport } from '../src/sim/report.ts';
 import { createRng, nextFloat, nextU32 } from '../src/sim/rng.ts';
-import { CHECK_SEEDS, runBattleCheck } from '../src/sim/run.ts';
-import { createTestBattle } from '../src/sim/scenario.ts';
+import { CHECK_BATTLES, exerciseBattle, mirrorBattle, runBattleCheck, runToEnd } from '../src/sim/run.ts';
 import { step } from '../src/sim/step.ts';
 import golden from './golden.json';
 
@@ -40,25 +45,87 @@ describe('rng', () => {
   });
 });
 
+describe('designs', () => {
+  it('standard patterns and the raider are valid', () => {
+    for (const d of [...STANDARD_PATTERNS, RAIDER_LANCET]) expect(validateDesign(d), d.name).toEqual([]);
+  });
+
+  it('rejects a design that draws more power than it makes', () => {
+    const d: Design = { ...STANDARD_PATTERNS[2], modules: { ...STANDARD_PATTERNS[2].modules, C2: 'fire-control' } };
+    expect(validateDesign(d).join(' ')).toMatch(/Power draw/);
+  });
+
+  it('rejects a module that is too large for its mount', () => {
+    const d: Design = { ...STANDARD_PATTERNS[0], modules: { ...STANDARD_PATTERNS[0].modules, D1: 'md-l' } };
+    expect(validateDesign(d).join(' ')).toMatch(/too large/);
+  });
+
+  it('rejects a design with no bridge', () => {
+    const { C2: _bridge, ...rest } = STANDARD_PATTERNS[0].modules;
+    expect(validateDesign({ ...STANDARD_PATTERNS[0], modules: rest }).join(' ')).toMatch(/No bridge/);
+  });
+
+  it('strike doctrine strafes; line doctrine points the guns', () => {
+    expect(compileDesign(RAIDER_LANCET).bearingDeg).toBe(30);
+    expect(compileDesign({ ...RAIDER_LANCET, doctrine: { ...RAIDER_LANCET.doctrine, role: 'line' } }).bearingDeg).toBe(0);
+  });
+});
+
 describe('determinism', () => {
   it('golden file matches the current sim version', () => {
     expect(golden.simVersion).toBe(SIM_VERSION);
   });
 
-  it.each(CHECK_SEEDS)('seed %i reproduces the golden hashes', (seed) => {
-    const expected = golden.battles.find((b) => b.seed === seed);
+  it.each(CHECK_BATTLES.map((b) => [b.name, b]))('%s reproduces the golden hashes', (_name, b) => {
+    const expected = golden.battles.find((g) => g.name === b.name);
     expect(expected).toBeDefined();
-    expect(runBattleCheck(seed)).toEqual(expected);
+    expect(runBattleCheck(b.name, b.spec())).toEqual(expected);
   });
 
   it('two runs in one process agree tick by tick', () => {
-    const a = createTestBattle(3);
-    const b = createTestBattle(3);
-    for (let t = 0; t < 600; t++) {
+    const a = createBattle(mirrorBattle(3));
+    const b = createBattle(mirrorBattle(3));
+    for (let t = 0; t < 900; t++) {
       step(a);
       step(b);
       if (t % 60 === 0) expect(hashWorld(a)).toBe(hashWorld(b));
     }
+  });
+});
+
+describe('report', () => {
+  it('names at least one cause for the issued fleet losing Exercise 1', () => {
+    const w = runToEnd(createBattle(exerciseBattle(EXERCISE_1, EXERCISE_1.issued, 1)));
+    const r = buildReport(w);
+    expect(r.winner).toBe(1);
+    expect(r.causes.length).toBeGreaterThan(0);
+    expect(r.causes.every((c) => c.text.length > 20)).toBe(true);
+  });
+});
+
+describe('exercise 1 teaches its lesson', () => {
+  // The M1 exit test in numbers: the issued fleet loses, and the refit the
+  // report points to (more stern plate, per cause 1) wins.
+  const stern = (d: Design, extra: number): Design => ({
+    ...d,
+    id: `${d.id}-stern`,
+    armour: [d.armour[0], d.armour[1], d.armour[2], d.armour[3] + extra],
+  });
+  const winRate = (fleet: typeof EXERCISE_1.issued, seeds: number): number => {
+    let wins = 0;
+    for (let seed = 1; seed <= seeds; seed++) {
+      if (runToEnd(createBattle(exerciseBattle(EXERCISE_1, fleet, seed))).winner === 0) wins++;
+    }
+    return wins / seeds;
+  };
+
+  it('the issued fleet loses most engagements', () => {
+    expect(winRate(EXERCISE_1.issued, 20)).toBeLessThanOrEqual(0.3);
+  });
+
+  it('the issued fleet with thicker stern plate wins most engagements', () => {
+    const refit = EXERCISE_1.issued.map((o) => ({ design: stern(o.design, o.design.hull === 'bastion' ? 20 : o.design.hull === 'warden' ? 15 : 10), count: o.count }));
+    expect(winRate(refit, 20)).toBeGreaterThanOrEqual(0.7);
   });
 });
 
@@ -71,8 +138,8 @@ describe('sim code rules', () => {
     /\bperformance\b/,
   ];
 
-  it('src/sim uses no banned APIs', () => {
-    const dir = join(import.meta.dirname, '../src/sim');
+  it.each(['../src/sim', '../src/content'])('%s uses no banned APIs', (rel) => {
+    const dir = join(import.meta.dirname, rel);
     const offences: string[] = [];
     for (const file of readdirSync(dir)) {
       const lines = readFileSync(join(dir, file), 'utf8').split('\n');
@@ -84,5 +151,13 @@ describe('sim code rules', () => {
       });
     }
     expect(offences).toEqual([]);
+  });
+
+  it('src/sim imports nothing from rendering or the DOM', () => {
+    const dir = join(import.meta.dirname, '../src/sim');
+    for (const file of readdirSync(dir)) {
+      const src = readFileSync(join(dir, file), 'utf8');
+      expect(src, file).not.toMatch(/from ['"](three|.*\/render\/|.*\/ui\/)/);
+    }
   });
 });

@@ -434,6 +434,10 @@ Equipment hum, relays, teletype, switch clicks and clipped radio text. Very litt
 
 Each milestone ends with something playable and a test that proves it works. Sizes are relative; the order matters more than dates.
 
+**Status (2026-09-28)**
+- **M0: done.** Determinism passes in Chromium, Firefox and WebKit (CI) and in Safari on the owner's MacBook. Chrome on the MacBook ran the M0 bench at p99 11.8 ms. The Safari bench on the built-in Retina screen is deferred at the owner's request; the `?bench=600` mode stays in the build for it.
+- **M1: in progress.** Rules in `docs/design/m1-rules.md`.
+
 | # | Milestone | Contents | Exit test |
 |---|---|---|---|
 | M0 | Foundations | Repo, Vite and TypeScript, CI. Vercel project with a preview URL for every push. Sim worker with fixed tick, seeded random numbers and our own trig. Golden-hash replay test. three.js scene with the tilt-shift camera, post chain and trackpad controls. | The same battle gives the same hash in Chromium, Firefox and WebKit. 500 grey boxes move at 60 fps on the owner's MacBook in Safari and Chrome. |

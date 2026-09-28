@@ -1,58 +1,58 @@
 {
-  "simVersion": 1,
+  "simVersion": 2,
   "battles": [
     {
+      "name": "ex1-issued-1",
       "seed": 1,
-      "perSide": 250,
       "checkpoints": {
-        "1": "ea23a6dcca83baf0",
-        "30": "2d915f5b6246783f",
-        "300": "7ecd167337dbef2b",
-        "900": "0dcdd543f48bd8a7",
-        "1800": "3a5a11d37e98d04f"
+        "1": "9b46e71f12abb165",
+        "30": "5b5bf38f193ef915",
+        "300": "8fc90dfef513fc44",
+        "900": "58068d15ef7a64f7",
+        "1800": "a458367852acb6a6"
       },
-      "finalTick": 5504,
-      "finalHash": "11bd33fe573e355e",
-      "winner": 0,
-      "alive": [
-        10,
-        0
+      "finalTick": 2930,
+      "finalHash": "8885e6b9a2669bb7",
+      "winner": 1,
+      "onField": [
+        0,
+        11
       ]
     },
     {
+      "name": "ex1-issued-7",
       "seed": 7,
-      "perSide": 250,
       "checkpoints": {
-        "1": "d17a9c0085d3e418",
-        "30": "1d87050c74df42dc",
-        "300": "95fe7144fc83fb74",
-        "900": "825f043a42d049da",
-        "1800": "980c4563df9fd997"
+        "1": "1275ed0e71710bb4",
+        "30": "c9f1694a6c30e2f8",
+        "300": "e3a256ebdcac5501",
+        "900": "847202df8e7b0805",
+        "1800": "c98f55d740c081cd"
       },
-      "finalTick": 3369,
-      "finalHash": "90c57569815e59d9",
-      "winner": 0,
-      "alive": [
-        47,
-        0
+      "finalTick": 2730,
+      "finalHash": "351727d1eef0f65b",
+      "winner": 1,
+      "onField": [
+        0,
+        12
       ]
     },
     {
+      "name": "mirror-20260928",
       "seed": 20260928,
-      "perSide": 250,
       "checkpoints": {
-        "1": "227c474a78d97436",
-        "30": "ee50b3c6cd1b3552",
-        "300": "3b5a9f6fddc3d6c3",
-        "900": "76c11e5d0f9c7135",
-        "1800": "f498364b45062787"
+        "1": "6e4dfddecbcedab0",
+        "30": "71a0678772066ad1",
+        "300": "1afc0051ea019d4b",
+        "900": "a1d1a0942b22ac02",
+        "1800": "624e41cdaa7d12ef"
       },
-      "finalTick": 3811,
-      "finalHash": "1a8d03eb095849eb",
-      "winner": 0,
-      "alive": [
-        32,
-        0
+      "finalTick": 2749,
+      "finalHash": "7fe58a44f93e7476",
+      "winner": 1,
+      "onField": [
+        0,
+        3
       ]
     }
   ]

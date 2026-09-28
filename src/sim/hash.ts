@@ -31,20 +31,24 @@ function hex(n: number): string {
 export function hashWorld(w: World): string {
   const h: HashState = { a: 0x811c9dc5, b: 0x01000193 };
   const n = w.count;
+  const m = w.moduleCount;
   mixWord(h, w.tick);
   mixWord(h, n);
   mixWord(h, w.rng.a);
   mixWord(h, w.rng.b);
   mixWord(h, w.rng.c);
   mixWord(h, w.rng.d);
-  mixInts(h, w.alive, n);
+  mixInts(h, w.status, n);
   mixF64(h, w.x, n);
   mixF64(h, w.y, n);
   mixF64(h, w.hx, n);
   mixF64(h, w.hy, n);
   mixF64(h, w.speed, n);
-  mixF64(h, w.hp, n);
+  mixF64(h, w.structure, n);
+  mixF64(h, w.armour, n * 4);
+  mixF64(h, w.dcSupply, n);
   mixInts(h, w.target, n);
-  mixInts(h, w.cooldown, n);
+  mixF64(h, w.mHp, m);
+  mixInts(h, w.mCooldown, m);
   return hex(h.a) + hex(h.b);
 }

@@ -1,12 +1,12 @@
-// Run the M0 check battles headless in Node and print, or write, the golden hashes.
+// Run the check battles headless in Node and print, or write, the golden hashes.
 //   npm run battle            print results
 //   npm run battle -- --write update test/golden.json
 import { writeFileSync } from 'node:fs';
 import { SIM_VERSION } from '../src/sim/constants.ts';
-import { CHECK_SEEDS, runBattleCheck } from '../src/sim/run.ts';
+import { CHECK_BATTLES, runBattleCheck } from '../src/sim/run.ts';
 
 const t0 = performance.now();
-const results = CHECK_SEEDS.map((seed) => runBattleCheck(seed));
+const results = CHECK_BATTLES.map((b) => runBattleCheck(b.name, b.spec()));
 const ms = performance.now() - t0;
 const totalTicks = results.reduce((s, r) => s + r.finalTick, 0);
 
