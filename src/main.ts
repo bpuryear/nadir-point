@@ -68,6 +68,7 @@ async function boot(): Promise<void> {
     } else if (e.key === 'r' || e.key === 'R') {
       seed++;
       restartAt = 0;
+      hud.markRestart(performance.now());
       sim.start(seed, perSide);
     } else if (e.key === 'b' || e.key === 'B') {
       stage.blur = stage.blur > 0 ? 0 : 1;
@@ -91,6 +92,7 @@ async function boot(): Promise<void> {
     if (restartAt && now >= restartAt) {
       restartAt = 0;
       seed++;
+      hud.markRestart(now);
       sim.start(seed, perSide);
     }
     if (now - lastHud > 250) {

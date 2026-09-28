@@ -23,7 +23,19 @@ export interface BenchResult {
   worstFps1: number;
   simAvg: number;
   simMax: number;
+  worstFrame: number;
+  over20: number;
+  over33: number;
+  over50: number;
+  /** Frames over 20 ms that started within 2 s after a battle restart. */
+  over20NearRestart: number;
+  battles: number;
+  hidden: number;
+  simOver2: number;
 }
+
+const SPIKE_MS = 20;
+const RESTART_WINDOW_MS = 2000;
 
 const WINNER = ['SIDE A HOLDS THE FIELD', 'SIDE B HOLDS THE FIELD', '', 'NEITHER SIDE HOLDS THE FIELD'];
 
@@ -35,11 +47,21 @@ export class Hud {
   private lastFrame = 0;
   private simSamples: number[] = [];
   private fpsWindow: number[] = [];
+  private spikes: { at: number; dt: number }[] = [];
+  private restarts: number[] = [];
+  private hiddenCount = 0;
 
   constructor(root: HTMLElement) {
     this.stats = root.querySelector<HTMLElement>('#stats')!;
     this.banner = root.querySelector<HTMLElement>('#banner')!;
     this.benchEl = root.querySelector<HTMLElement>('#bench')!;
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.hiddenCount++;
+    });
+  }
+
+  markRestart(now: number): void {
+    this.restarts.push(now);
   }
 
   toggle(): void {
@@ -52,7 +74,10 @@ export class Hud {
       const dt = now - this.lastFrame;
       this.fpsWindow.push(dt);
       if (this.fpsWindow.length > 90) this.fpsWindow.shift();
-      if (recording) this.frameTimes.push(dt);
+      if (recording) {
+        this.frameTimes.push(dt);
+        if (dt > SPIKE_MS) this.spikes.push({ at: this.lastFrame, dt });
+      }
     }
     this.lastFrame = now;
   }
@@ -106,6 +131,14 @@ export class Hud {
       worstFps1: worstAvg ? 1000 / worstAvg : 0,
       simAvg: sim.length ? sim.reduce((a, b) => a + b, 0) / sim.length : 0,
       simMax: sim.length ? Math.max(...sim) : 0,
+      worstFrame: n ? ft[n - 1] : 0,
+      over20: this.spikes.length,
+      over33: this.spikes.filter((f) => f.dt > 33).length,
+      over50: this.spikes.filter((f) => f.dt > 50).length,
+      over20NearRestart: this.spikes.filter((f) => this.restarts.some((r) => f.at >= r && f.at - r < RESTART_WINDOW_MS)).length,
+      battles: this.restarts.length + 1,
+      hidden: this.hiddenCount,
+      simOver2: sim.filter((v) => v > 2).length,
     };
   }
 
@@ -114,14 +147,22 @@ export class Hud {
       `NADIR POINT M0 BENCH`,
       `backend      ${info.backend}`,
       `canvas       ${info.canvasW}x${info.canvasH} @ DPR ${info.pixelRatio.toFixed(2)}`,
+      `display      ${screen.width}x${screen.height}, devicePixelRatio ${window.devicePixelRatio}`,
       `duration     ${r.seconds.toFixed(0)} s, ${r.frames} frames`,
       `avg fps      ${r.avgFps.toFixed(1)}`,
       `frame p50    ${r.p50.toFixed(2)} ms`,
       `frame p95    ${r.p95.toFixed(2)} ms`,
       `frame p99    ${r.p99.toFixed(2)} ms`,
       `worst 1% fps ${r.worstFps1.toFixed(1)}`,
+      `worst frame  ${r.worstFrame.toFixed(1)} ms`,
+      `over 20 ms   ${r.over20} frames (${r.over20NearRestart} within 2 s of a battle restart)`,
+      `over 33 ms   ${r.over33} frames`,
+      `over 50 ms   ${r.over50} frames`,
+      `battles      ${r.battles}`,
+      `tab hidden   ${r.hidden} times`,
       `sim avg      ${r.simAvg.toFixed(3)} ms/tick`,
       `sim max      ${r.simMax.toFixed(3)} ms/tick`,
+      `sim > 2 ms   ${r.simOver2} batches`,
       `user agent   ${navigator.userAgent}`,
     ];
     this.benchEl.hidden = false;
