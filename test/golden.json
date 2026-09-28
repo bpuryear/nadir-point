@@ -1,0 +1,59 @@
+{
+  "simVersion": 1,
+  "battles": [
+    {
+      "seed": 1,
+      "perSide": 250,
+      "checkpoints": {
+        "1": "ea23a6dcca83baf0",
+        "30": "2d915f5b6246783f",
+        "300": "7ecd167337dbef2b",
+        "900": "0dcdd543f48bd8a7",
+        "1800": "3a5a11d37e98d04f"
+      },
+      "finalTick": 5504,
+      "finalHash": "11bd33fe573e355e",
+      "winner": 0,
+      "alive": [
+        10,
+        0
+      ]
+    },
+    {
+      "seed": 7,
+      "perSide": 250,
+      "checkpoints": {
+        "1": "d17a9c0085d3e418",
+        "30": "1d87050c74df42dc",
+        "300": "95fe7144fc83fb74",
+        "900": "825f043a42d049da",
+        "1800": "980c4563df9fd997"
+      },
+      "finalTick": 3369,
+      "finalHash": "90c57569815e59d9",
+      "winner": 0,
+      "alive": [
+        47,
+        0
+      ]
+    },
+    {
+      "seed": 20260928,
+      "perSide": 250,
+      "checkpoints": {
+        "1": "227c474a78d97436",
+        "30": "ee50b3c6cd1b3552",
+        "300": "3b5a9f6fddc3d6c3",
+        "900": "76c11e5d0f9c7135",
+        "1800": "f498364b45062787"
+      },
+      "finalTick": 3811,
+      "finalHash": "1a8d03eb095849eb",
+      "winner": 0,
+      "alive": [
+        32,
+        0
+      ]
+    }
+  ]
+}

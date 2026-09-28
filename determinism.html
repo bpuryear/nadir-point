@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>Nadir Point · Determinism</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 24px;
+        background: #080807;
+        color: #c9c5b8;
+        font: 12px/1.6 ui-monospace, 'SF Mono', Menlo, monospace;
+      }
+      body[data-result='pass'] pre::first-line {
+        color: #d9822b;
+      }
+      body[data-result='fail'] pre::first-line {
+        color: #e0664f;
+      }
+    </style>
+  </head>
+  <body>
+    <pre id="out"></pre>
+    <script type="module" src="/src/determinism.ts"></script>
+  </body>
+</html>

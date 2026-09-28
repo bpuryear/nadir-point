@@ -31,7 +31,7 @@ The gameplay model is Gratuitous Space Battles 1 and 2 (Positech, 2009 and 2015)
 | Battle size | 40–80 ships a side plus strike craft, about 300–500 units |
 | Name | Nadir Point. Faction and world names stay as working names for now. |
 | Hosting | Vercel, for the game and the challenge server |
-| Reference machine | A regular MacBook (§8) |
+| Reference machine | A 13-inch MacBook Pro with Apple M1 (§8) |
 | Choir tour | At launch |
 | Image model | Owner delegated the choice: GPT Image 2.5 (§7.8) |
 
@@ -410,12 +410,12 @@ Equipment hum, relays, teletype, switch clicks and clipped radio text. Very litt
 - **Own trig:** JavaScript's `Math.sin`, `Math.tanh` and similar functions can return different results in different browsers and operating systems. Chrome 148 moved `tanh` to the OS maths library, for example. So the sim uses its own trig.
 - **No `SharedArrayBuffer` by default:** it needs special cross-origin headers, and Safari does not support the lighter `credentialless` variant. Vercel can send the headers if profiling ever demands it.
 
-**Reference machine: a regular MacBook**
+**Reference machine: a 13-inch MacBook Pro with Apple M1**
 
-- **Floor:** a MacBook Air with an Apple M1 chip, the oldest Apple Silicon Air, with its built-in GPU. If it runs well there, newer MacBooks have headroom.
+- **Floor:** the owner's machine, a 13-inch MacBook Pro with Apple M1 and its built-in 8-core GPU. Newer MacBooks have headroom.
 - **Browsers:** Safari and Chrome on macOS. Safari has WebGPU only on macOS 26 and later (caniuse), so older macOS versions use the WebGL2 path, and that path must meet the budget too.
 - **Retina screens:** the 3D scene renders at a capped pixel ratio, about 1.25× the CSS size, with blur passes at half resolution. The UI text renders at full Retina sharpness.
-- **No fan:** a MacBook Air slows down under long, heavy load. We test the budget over a 10-minute battle, not over a short burst.
+- **Long load:** the M1 MacBook Pro has a fan, so it holds its speed better than a fanless Air. We still measure the budget over a 10-minute battle, not over a short burst.
 - **Trackpad:** pinch to zoom, two-finger drag to pan, and click-and-drag for box selection, together with mouse and keyboard.
 
 **Performance budget** (on the floor machine)
@@ -460,7 +460,7 @@ Each milestone ends with something playable and a test that proves it works. Siz
 | RSB launches in the same genre on Nov 16, 2026 | Certain | We are different: free in the browser, a persistent tour, physical mounts, free movement, grim tone |
 | AI art drifts in style or draws backlash | Medium | AI only for backgrounds, portraits and textures; fixed reference sets; a bake-off before volume work; disclosure |
 | Safari lags Chrome on WebGPU and WebGL2 behaviour | Medium | Safari in the milestone check from M0; the WebGL2 path must meet the budget on its own |
-| The MacBook Air slows down under long heavy load | Medium | Budget measured over 10-minute battles; capped render scale; half-resolution blur |
+| The MacBook slows down under long heavy load | Low | Budget measured over 10-minute battles; capped render scale; half-resolution blur |
 | The Choir's tour doubles the campaign work | High | Share the front map, port screens and report system; the Choir changes the text and the resources, not the structure |
 
 ---
@@ -474,13 +474,12 @@ Answered on 2026-09-28 and moved into §2:
 | Image generation | Owner delegated it: GPT Image 2.5, with a bake-off at M5 (§7.8) |
 | Choir tour | At launch (§5.4) |
 | Hosting | Vercel (§8) |
-| Reference machine | A regular MacBook; we use an M1 MacBook Air as the floor (§8) |
+| Reference machine | A 13-inch MacBook Pro with Apple M1 (§8) |
 | Names | Working names stay for now |
 
 Still open:
 
-1. **The exact MacBook:** which chip and macOS version do you have? The budget assumes an M1 Air as the floor. If yours is newer, we still test against the M1 Air floor.
-2. **OpenAI API key:** needed at M5, not before.
+1. **OpenAI API key:** needed at M5, not before.
 
 ---
 
