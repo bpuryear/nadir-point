@@ -436,7 +436,7 @@ Each milestone ends with something playable and a test that proves it works. Siz
 
 **Status (2026-09-28)**
 - **M0: done.** Determinism passes in Chromium, Firefox and WebKit (CI) and in Safari on the owner's MacBook. Chrome on the MacBook ran the M0 bench at p99 11.8 ms. The Safari bench on the built-in Retina screen is deferred at the owner's request; the `?bench=600` mode stays in the build for it.
-- **M1: in progress.** Rules in `docs/design/m1-rules.md`.
+- **M1: built; waiting on the owner's playtest.** Rules in `docs/design/m1-rules.md`. The exit loop (lose Exercise 1, read cause 1, refit, win on the same seed) passes as an automated browser test (`e2e/lesson.spec.ts`) and as balance guards in the unit tests. Not in M1 yet: manual ship placement (auto-deploy only) and extra tutorial exercises; both move to M2.
 
 | # | Milestone | Contents | Exit test |
 |---|---|---|---|
